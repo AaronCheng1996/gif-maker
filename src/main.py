@@ -325,6 +325,17 @@ class MainWindow(QMainWindow):
         selected_rows = [item.row() for item in self.materials_list.selectedIndexes()]
         if selected_rows:
             duration = self.timeline.duration_spinbox.value()
+            
+            # Auto-set output size based on first material if timeline is empty
+            if len(self.timeline.frames) == 0 and selected_rows:
+                first_material_row = selected_rows[0]
+                if first_material_row < len(self.material_manager):
+                    material = self.material_manager.get_material(first_material_row)
+                    if material:
+                        img, name = material
+                        self.width_spinbox.setValue(img.width)
+                        self.height_spinbox.setValue(img.height)
+            
             for row in selected_rows:
                 self.timeline.add_frame(row, duration)
         else:
