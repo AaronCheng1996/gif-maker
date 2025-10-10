@@ -20,10 +20,14 @@ wheels/
 .installed.cfg
 *.egg
 
+# PyInstaller
+*.manifest
+*.spec
+
 # Virtual Environment
 venv/
-env/
 ENV/
+env/
 
 # IDE
 .vscode/
@@ -37,17 +41,5 @@ ENV/
 Thumbs.db
 
 # Project specific
-src/assets/samples/*
-!src/assets/samples/.gitkeep
+output.gif
 *.gif
-output/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Temporary files
-tmp/
-temp/
-*.tmp

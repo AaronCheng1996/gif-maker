@@ -73,6 +73,22 @@ Or from the root directory:
 python run.py
 ```
 
+### Build as Executable (Windows)
+
+To create a standalone `.exe` file:
+
+```bash
+# Install PyInstaller
+pip install pyinstaller
+
+# Build the executable
+python build_exe.py
+```
+
+The executable will be created at `dist/GIF-Maker.exe`.
+
+For detailed instructions, see [build_instructions.md](build_instructions.md).
+
 ## 📖 User Guide
 
 ### Basic Workflow
