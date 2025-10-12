@@ -122,6 +122,21 @@ class MainWindow(QMainWindow):
         self.clear_materials_btn.clicked.connect(self.clear_materials)
         layout.addWidget(self.clear_materials_btn)
         
+        # Export materials section
+        export_group = QGroupBox("Export Materials")
+        export_layout = QVBoxLayout()
+        
+        self.export_selected_btn = QPushButton("Export Selected Images")
+        self.export_selected_btn.clicked.connect(self.export_selected_materials)
+        export_layout.addWidget(self.export_selected_btn)
+        
+        self.export_all_btn = QPushButton("Export All Images")
+        self.export_all_btn.clicked.connect(self.export_all_materials)
+        export_layout.addWidget(self.export_all_btn)
+        
+        export_group.setLayout(export_layout)
+        layout.addWidget(export_group)
+        
         widget.setLayout(layout)
         return widget
     
@@ -234,6 +249,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Load GIF", self.load_gif_material)
         file_menu.addSeparator()
         file_menu.addAction("Export GIF", self.export_gif)
+        file_menu.addAction("Export Selected Materials", self.export_selected_materials)
+        file_menu.addAction("Export All Materials", self.export_all_materials)
         file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
         
@@ -361,6 +378,108 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.material_manager.clear()
             self.refresh_materials_list()
+    
+    def export_selected_materials(self):
+        selected_rows = [item.row() for item in self.materials_list.selectedIndexes()]
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Please select at least one material to export!")
+            return
+        
+        # Ask for export directory
+        export_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Export Directory",
+            ""
+        )
+        
+        if not export_dir:
+            return
+        
+        try:
+            exported_count = 0
+            used_names = set()  # Track used filenames to avoid duplicates
+            
+            for row in selected_rows:
+                if row < len(self.material_manager):
+                    material = self.material_manager.get_material(row)
+                    if material:
+                        img, name = material
+                        # Clean filename (remove invalid characters)
+                        safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                        if not safe_name:
+                            safe_name = f"material_{row}"
+                        
+                        # Ensure unique filename
+                        base_name = safe_name
+                        counter = 1
+                        final_name = base_name
+                        
+                        while f"{final_name}.png" in used_names:
+                            final_name = f"{base_name}_{counter}"
+                            counter += 1
+                        
+                        used_names.add(f"{final_name}.png")
+                        
+                        # Export as PNG
+                        export_path = f"{export_dir}/{final_name}.png"
+                        img.save(export_path, "PNG")
+                        exported_count += 1
+            
+            QMessageBox.information(self, "Success", 
+                f"Successfully exported {exported_count} images to:\n{export_dir}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export images:\n{str(e)}")
+    
+    def export_all_materials(self):
+        if len(self.material_manager) == 0:
+            QMessageBox.warning(self, "Warning", "No materials to export!")
+            return
+        
+        # Ask for export directory
+        export_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Export Directory",
+            ""
+        )
+        
+        if not export_dir:
+            return
+        
+        try:
+            exported_count = 0
+            used_names = set()  # Track used filenames to avoid duplicates
+            
+            for i in range(len(self.material_manager)):
+                material = self.material_manager.get_material(i)
+                if material:
+                    img, name = material
+                    # Clean filename (remove invalid characters)
+                    safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    if not safe_name:
+                        safe_name = f"material_{i}"
+                    
+                    # Ensure unique filename
+                    base_name = safe_name
+                    counter = 1
+                    final_name = base_name
+                    
+                    while f"{final_name}.png" in used_names:
+                        final_name = f"{base_name}_{counter}"
+                        counter += 1
+                    
+                    used_names.add(f"{final_name}.png")
+                    
+                    # Export as PNG
+                    export_path = f"{export_dir}/{final_name}.png"
+                    img.save(export_path, "PNG")
+                    exported_count += 1
+            
+            QMessageBox.information(self, "Success", 
+                f"Successfully exported {exported_count} images to:\n{export_dir}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export images:\n{str(e)}")
     
     def on_sequence_changed(self):
         self.update_preview()

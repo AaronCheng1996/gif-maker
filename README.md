@@ -13,13 +13,17 @@ A powerful GIF animation editor designed for game developers and animators, allo
    - ✅ Load single images as materials
    - ✅ Load GIFs and automatically extract frames
    - ✅ Batch load multiple images
-   - ✅ Material preview with thumbnails and management (add, remove, clear)
-   - ✅ Multi-selection support (Ctrl+click, Shift+click, drag selection)
+- ✅ Material preview with thumbnails and management (add, remove, clear)
+- ✅ Multi-selection support (Ctrl+click, Shift+click, drag selection)
+- ✅ Export materials as PNG files (selected or all)
 
 2. **Image Splitting Tool (Tile Splitter)**
    - ✅ Split by grid count (e.g., 4x4 grid)
    - ✅ Split by tile size (e.g., 32x32 pixels)
-   - ✅ Automatically add split tiles to material library
+   - ✅ Batch split multiple images with same settings
+   - ✅ Pre-select positions to keep before splitting
+   - ✅ Position selector grid for easy tile selection
+   - ✅ Automatically add selected tiles to material library
    - ✅ Perfect for processing game sprite sheets
 
 3. **Timeline Editor**
@@ -46,7 +50,12 @@ A powerful GIF animation editor designed for game developers and animators, allo
    - ✅ Transparent background support
    - ✅ Automatic GIF file size optimization
 
-7. **Graphical User Interface (GUI)**
+7. **Material Export**
+   - ✅ Export selected materials as PNG files
+   - ✅ Export all materials at once
+   - ✅ Automatic filename sanitization
+
+8. **Graphical User Interface (GUI)**
    - ✅ Modern interface based on PyQt6
    - ✅ Three-column layout: Material Management | Timeline | Preview
    - ✅ Tabbed tool panel
@@ -101,9 +110,11 @@ For detailed instructions, see [build_instructions.md](build_instructions.md).
 
 2. **Split Sprite Sheet (Optional)**
    - Switch to "Tile Splitter" tab
-   - Load the image to split
+   - Load single image or multiple images for batch processing
    - Choose splitting method (grid count or tile size)
-   - Click split button, tiles will automatically be added to material library
+   - Select which positions to keep using the position grid
+   - Click split button to process only selected positions
+   - Selected tiles are automatically added to materials
 
 3. **Edit Timeline**
    - Select one or more materials from the list
@@ -120,6 +131,11 @@ For detailed instructions, see [build_instructions.md](build_instructions.md).
 
 5. **Export GIF**
    - Click "Export GIF" to save file
+
+6. **Export Materials (Optional)**
+   - Select materials and click "Export Selected Images" to save as PNG files
+   - Or click "Export All Images" to export all materials
+   - Useful for getting split tiles or individual frames
 
 ### Advanced Features
 
@@ -138,6 +154,42 @@ Select a range of frames and reverse their order:
 - Result: Frame 1 → Frame 4 → Frame 3 → Frame 2
 
 This is useful for creating back-and-forth animations or correcting frame order.
+
+### Advanced Tile Splitting Features
+
+#### Batch Processing Multiple Images
+
+You can split multiple images at once with the same settings:
+
+1. **Load Multiple Images**:
+   - Click "Load Multiple Images" in Tile Splitter
+   - Select multiple sprite sheets or images
+   - All images will be processed with the same grid/size settings
+
+2. **Consistent Splitting**:
+   - Set the same grid count (e.g., 6x6) for all images
+   - Or use the same tile size (e.g., 64x64 pixels)
+   - All images will be split identically
+
+#### Pre-Select Positions Before Splitting
+
+Choose which positions to extract before processing:
+
+1. **Position Grid**:
+   - Visual grid showing all possible positions (e.g., 6x6 = 36 positions)
+   - Click buttons to select/deselect positions
+   - Each button shows coordinates (row, column)
+
+2. **Batch Processing**:
+   - Selected positions are applied to ALL loaded images
+   - Only tiles from selected positions are extracted
+   - Much more efficient than extracting all tiles first
+
+3. **Example Use Case**:
+   - Load 3 sprite sheets, set 6x6 grid
+   - Click positions (1,1) and (1,2) in the grid
+   - Click "Split by Grid"
+   - Only 6 tiles total (2 positions × 3 images) are added to materials
 
 ## 📁 Project Structure
 
