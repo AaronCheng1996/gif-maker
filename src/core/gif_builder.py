@@ -28,13 +28,25 @@ class GifBuilder:
         img = ensure_rgba(material_image)
         
         if self.output_size:
-            background = create_background(self.output_size, self.background_color)
-            
-            if img.size[0] > self.output_size[0] or img.size[1] > self.output_size[1]:
-                img.thumbnail(self.output_size, Image.Resampling.LANCZOS)
-            
-            result = paste_center(background, img)
-            return result
+            # If transparent background, don't create a background image
+            if self.background_color[3] == 0:
+                # Just resize if needed, keep transparency
+                if img.size[0] > self.output_size[0] or img.size[1] > self.output_size[1]:
+                    img.thumbnail(self.output_size, Image.Resampling.LANCZOS)
+                
+                # Create a transparent background of the output size
+                transparent_bg = Image.new('RGBA', self.output_size, (0, 0, 0, 0))
+                result = paste_center(transparent_bg, img)
+                return result
+            else:
+                # Create solid background
+                background = create_background(self.output_size, self.background_color)
+                
+                if img.size[0] > self.output_size[0] or img.size[1] > self.output_size[1]:
+                    img.thumbnail(self.output_size, Image.Resampling.LANCZOS)
+                
+                result = paste_center(background, img)
+                return result
         else:
             return img
     
@@ -61,11 +73,18 @@ class GifBuilder:
             material_img, _ = material
             frame_img = self.prepare_frame(material_img)
             
+            # Convert RGBA to appropriate format for GIF
             if frame_img.mode == 'RGBA':
                 if self.background_color[3] == 0:
-                    frame_img = frame_img.convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
-                    frame_img.info['transparency'] = 255
+                    # For transparent background, convert to P mode with transparency
+                    # method: 0=MEDIANCUT, 2=FASTOCTREE, 3=LIBIMAGEQUANT
+                    frame_img = frame_img.quantize(colors=255, method=2)
+                    # Find the transparent color index (usually 0 for transparent pixels)
+                    if 'transparency' not in frame_img.info:
+                        # Set the first palette entry (index 0) as transparent
+                        frame_img.info['transparency'] = 0
                 else:
+                    # For solid background, composite with background color
                     rgb_bg = Image.new('RGB', frame_img.size, self.background_color[:3])
                     rgb_bg.paste(frame_img, mask=frame_img.split()[3])
                     frame_img = rgb_bg
@@ -91,11 +110,18 @@ class GifBuilder:
         for img in images:
             frame_img = self.prepare_frame(img)
             
+            # Convert RGBA to appropriate format for GIF
             if frame_img.mode == 'RGBA':
                 if self.background_color[3] == 0:
-                    frame_img = frame_img.convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
-                    frame_img.info['transparency'] = 255
+                    # For transparent background, convert to P mode with transparency
+                    # method: 0=MEDIANCUT, 2=FASTOCTREE, 3=LIBIMAGEQUANT
+                    frame_img = frame_img.quantize(colors=255, method=2)
+                    # Find the transparent color index (usually 0 for transparent pixels)
+                    if 'transparency' not in frame_img.info:
+                        # Set the first palette entry (index 0) as transparent
+                        frame_img.info['transparency'] = 0
                 else:
+                    # For solid background, composite with background color
                     rgb_bg = Image.new('RGB', frame_img.size, self.background_color[:3])
                     rgb_bg.paste(frame_img, mask=frame_img.split()[3])
                     frame_img = rgb_bg
@@ -122,7 +148,7 @@ class GifBuilder:
         }
         
         if self.background_color[3] == 0:
-            save_kwargs['transparency'] = 255
+            # For transparent GIF, set disposal method to clear to background
             save_kwargs['disposal'] = 2
         
         frames[0].save(output_path, **save_kwargs)
@@ -145,4 +171,3 @@ class GifBuilder:
             frames.append((frame_img, frame.duration))
         
         return frames
-
