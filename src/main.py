@@ -9,8 +9,8 @@ from PyQt6.QtGui import QIcon, QPixmap, QImage
 
 from PIL import Image
 
-from .core import MaterialManager, SequenceEditor, GifBuilder
-from .widgets import PreviewWidget, TimelineWidget, TileEditorWidget
+from .core import MaterialManager, SequenceEditor, GifBuilder, LayeredSequenceEditor, Layer, LayeredFrame
+from .widgets import PreviewWidget, TimelineWidget, TileEditorWidget, LayerEditorWidget
 
 
 class MainWindow(QMainWindow):
@@ -19,11 +19,15 @@ class MainWindow(QMainWindow):
         
         self.material_manager = MaterialManager()
         self.sequence_editor = SequenceEditor()
+        self.layered_sequence_editor = LayeredSequenceEditor()
         self.gif_builder = GifBuilder()
+        
+        # Mode: 'simple' or 'layered'
+        self.editing_mode = 'simple'
         
         self.init_ui()
         self.setWindowTitle("GIF Maker - Animation Editor")
-        self.resize(1400, 800)
+        self.resize(1600, 900)
     
     def init_ui(self):
         central_widget = QWidget()
@@ -144,12 +148,61 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout()
         
+        # Mode switcher
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Editing Mode:"))
+        
+        self.simple_mode_btn = QPushButton("Simple Mode")
+        self.simple_mode_btn.setCheckable(True)
+        self.simple_mode_btn.setChecked(True)
+        self.simple_mode_btn.clicked.connect(lambda: self.switch_mode('simple'))
+        mode_layout.addWidget(self.simple_mode_btn)
+        
+        self.layered_mode_btn = QPushButton("Layered Mode")
+        self.layered_mode_btn.setCheckable(True)
+        self.layered_mode_btn.clicked.connect(lambda: self.switch_mode('layered'))
+        mode_layout.addWidget(self.layered_mode_btn)
+        
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
+        
+        # Timeline
         self.timeline = TimelineWidget()
         self.timeline.set_material_manager(self.material_manager)
         self.timeline.sequence_changed.connect(self.on_sequence_changed)
         layout.addWidget(self.timeline)
         
-        sequence_group = QGroupBox("Sequence Operations")
+        # Layer editor (initially hidden)
+        self.layer_editor = LayerEditorWidget()
+        self.layer_editor.set_material_manager(self.material_manager)
+        self.layer_editor.layers_changed.connect(self.on_layers_changed)
+        self.layer_editor.setVisible(False)
+        layout.addWidget(self.layer_editor)
+        
+        # Frame controls for layered mode
+        self.layered_frame_controls = QGroupBox("Frame Controls")
+        layered_controls_layout = QVBoxLayout()
+        
+        btn_layout = QHBoxLayout()
+        self.add_layered_frame_btn = QPushButton("Add Frame")
+        self.add_layered_frame_btn.clicked.connect(self.add_layered_frame)
+        btn_layout.addWidget(self.add_layered_frame_btn)
+        
+        self.edit_frame_layers_btn = QPushButton("Edit Frame Layers")
+        self.edit_frame_layers_btn.clicked.connect(self.edit_frame_layers)
+        btn_layout.addWidget(self.edit_frame_layers_btn)
+        
+        self.remove_layered_frame_btn = QPushButton("Remove Frame")
+        self.remove_layered_frame_btn.clicked.connect(self.remove_layered_frame)
+        btn_layout.addWidget(self.remove_layered_frame_btn)
+        
+        layered_controls_layout.addLayout(btn_layout)
+        self.layered_frame_controls.setLayout(layered_controls_layout)
+        self.layered_frame_controls.setVisible(False)
+        layout.addWidget(self.layered_frame_controls)
+        
+        # Sequence operations (for simple mode)
+        self.sequence_group = QGroupBox("Sequence Operations")
         sequence_layout = QVBoxLayout()
         
         repeat_layout = QHBoxLayout()
@@ -169,8 +222,8 @@ class MainWindow(QMainWindow):
         self.reverse_btn.clicked.connect(self.reverse_sequence)
         sequence_layout.addWidget(self.reverse_btn)
         
-        sequence_group.setLayout(sequence_layout)
-        layout.addWidget(sequence_group)
+        self.sequence_group.setLayout(sequence_layout)
+        layout.addWidget(self.sequence_group)
         
         panel.setLayout(layout)
         return panel
@@ -483,10 +536,9 @@ class MainWindow(QMainWindow):
     
     def on_sequence_changed(self):
         self.update_preview()
-        pass
     
     def repeat_sequence(self):
-        selected_rows = sorted(set([index.row() for index in self.timeline.timeline_table.selectedIndexes()]))
+        selected_rows = sorted({index.row() for index in self.timeline.timeline_table.selectedIndexes()})
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select frames to repeat!")
             return
@@ -503,7 +555,7 @@ class MainWindow(QMainWindow):
         self.timeline.refresh_display()
     
     def reverse_sequence(self):
-        selected_rows = sorted(set([index.row() for index in self.timeline.timeline_table.selectedIndexes()]))
+        selected_rows = sorted({index.row() for index in self.timeline.timeline_table.selectedIndexes()})
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select frames to reverse!")
             return
@@ -517,49 +569,11 @@ class MainWindow(QMainWindow):
         self.timeline.refresh_display()
     
     def update_preview(self):
-        if len(self.timeline.frames) == 0:
-            QMessageBox.warning(self, "Warning", "Timeline is empty!")
-            return
-        
-        try:
-            self.sequence_editor.clear()
-            for material_idx, duration in self.timeline.frames:
-                self.sequence_editor.add_frame(material_idx, duration)
+        if self.editing_mode == 'simple':
+            if len(self.timeline.frames) == 0:
+                QMessageBox.warning(self, "Warning", "Timeline is empty!")
+                return
             
-            self.gif_builder.set_output_size(
-                self.width_spinbox.value(),
-                self.height_spinbox.value()
-            )
-            self.gif_builder.set_loop(self.loop_spinbox.value())
-            
-            if self.transparent_bg_checkbox.isChecked():
-                self.gif_builder.set_background_color(0, 0, 0, 0)
-            else:
-                self.gif_builder.set_background_color(255, 255, 255, 255)
-            
-            frames = self.gif_builder.get_preview_frames(
-                self.material_manager,
-                self.sequence_editor
-            )
-            
-            self.preview.set_frames(frames)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to update preview:\n{str(e)}")
-    
-    def export_gif(self):
-        if len(self.timeline.frames) == 0:
-            QMessageBox.warning(self, "Warning", "Timeline is empty!")
-            return
-        
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save GIF",
-            "output.gif",
-            "GIF Files (*.gif)"
-        )
-        
-        if file_path:
             try:
                 self.sequence_editor.clear()
                 for material_idx, duration in self.timeline.frames:
@@ -576,17 +590,180 @@ class MainWindow(QMainWindow):
                 else:
                     self.gif_builder.set_background_color(255, 255, 255, 255)
                 
-                self.gif_builder.build_from_sequence(
+                frames = self.gif_builder.get_preview_frames(
                     self.material_manager,
-                    self.sequence_editor,
-                    file_path
+                    self.sequence_editor
                 )
+                
+                self.preview.set_frames(frames)
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to update preview:\n{str(e)}")
+        
+        else:  # layered mode
+            self.update_layered_preview()
+    
+    def export_gif(self):
+        if self.editing_mode == 'simple':
+            if len(self.timeline.frames) == 0:
+                QMessageBox.warning(self, "Warning", "Timeline is empty!")
+                return
+        else:  # layered mode
+            if len(self.layered_sequence_editor) == 0:
+                QMessageBox.warning(self, "Warning", "No frames to export!")
+                return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save GIF",
+            "output.gif",
+            "GIF Files (*.gif)"
+        )
+        
+        if file_path:
+            try:
+                self.gif_builder.set_output_size(
+                    self.width_spinbox.value(),
+                    self.height_spinbox.value()
+                )
+                self.gif_builder.set_loop(self.loop_spinbox.value())
+                
+                if self.transparent_bg_checkbox.isChecked():
+                    self.gif_builder.set_background_color(0, 0, 0, 0)
+                else:
+                    self.gif_builder.set_background_color(255, 255, 255, 255)
+                
+                if self.editing_mode == 'simple':
+                    self.sequence_editor.clear()
+                    for material_idx, duration in self.timeline.frames:
+                        self.sequence_editor.add_frame(material_idx, duration)
+                    
+                    self.gif_builder.build_from_sequence(
+                        self.material_manager,
+                        self.sequence_editor,
+                        file_path
+                    )
+                else:  # layered mode
+                    self.gif_builder.build_from_layered_sequence(
+                        self.layered_sequence_editor.get_frames(),
+                        self.material_manager,
+                        file_path
+                    )
                 
                 QMessageBox.information(self, "Success", 
                     f"GIF saved successfully!\n{file_path}")
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export GIF:\n{str(e)}")
+    
+    def switch_mode(self, mode: str):
+        """Switch between simple and layered editing modes"""
+        if mode == self.editing_mode:
+            return
+        
+        self.editing_mode = mode
+        
+        if mode == 'simple':
+            self.simple_mode_btn.setChecked(True)
+            self.layered_mode_btn.setChecked(False)
+            self.timeline.setVisible(True)
+            self.layer_editor.setVisible(False)
+            self.layered_frame_controls.setVisible(False)
+            self.sequence_group.setVisible(True)
+        else:  # layered
+            self.simple_mode_btn.setChecked(False)
+            self.layered_mode_btn.setChecked(True)
+            self.timeline.setVisible(False)
+            self.layer_editor.setVisible(True)
+            self.layered_frame_controls.setVisible(True)
+            self.sequence_group.setVisible(False)
+    
+    def add_layered_frame(self):
+        """Add a new empty layered frame"""
+        if not self.material_manager or len(self.material_manager) == 0:
+            QMessageBox.warning(self, "Warning", "No materials available!")
+            return
+        
+        # Create a frame with a single layer from the first material
+        new_frame = LayeredFrame(duration=100, name=f"Frame {len(self.layered_sequence_editor) + 1}")
+        layer = Layer(material_index=0, name="Layer 1")
+        new_frame.add_layer(layer)
+        
+        self.layered_sequence_editor.add_frame(new_frame)
+        self.refresh_layered_timeline()
+        QMessageBox.information(self, "Success", "New frame added!")
+    
+    def edit_frame_layers(self):
+        """Edit layers of the selected frame"""
+        selected_rows = [item.row() for item in self.timeline.timeline_table.selectedIndexes()]
+        
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Please select a frame to edit!")
+            return
+        
+        frame_idx = selected_rows[0]
+        if frame_idx >= len(self.layered_sequence_editor):
+            QMessageBox.warning(self, "Warning", "Invalid frame selection!")
+            return
+        
+        frame = self.layered_sequence_editor.get_frame(frame_idx)
+        self.layer_editor.set_frame(frame)
+        QMessageBox.information(self, "Info", f"Editing layers for Frame {frame_idx + 1}")
+    
+    def remove_layered_frame(self):
+        """Remove selected layered frame"""
+        selected_rows = sorted({item.row() for item in self.timeline.timeline_table.selectedIndexes()}, reverse=True)
+        
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Please select a frame to remove!")
+            return
+        
+        for row in selected_rows:
+            if 0 <= row < len(self.layered_sequence_editor):
+                self.layered_sequence_editor.remove_frame(row)
+        
+        self.refresh_layered_timeline()
+    
+    def refresh_layered_timeline(self):
+        """Refresh timeline to show layered frames"""
+        self.timeline.clear_timeline()
+        
+        for i, frame in enumerate(self.layered_sequence_editor.get_frames()):
+            # For now, use the first layer's material for preview
+            if len(frame.layers) > 0:
+                first_layer = frame.layers[0]
+                self.timeline.add_frame(first_layer.material_index, frame.duration)
+    
+    def on_layers_changed(self):
+        """Handle layer changes"""
+        self.update_layered_preview()
+    
+    def update_layered_preview(self):
+        """Update preview for layered mode"""
+        if len(self.layered_sequence_editor) == 0:
+            return
+        
+        try:
+            self.gif_builder.set_output_size(
+                self.width_spinbox.value(),
+                self.height_spinbox.value()
+            )
+            self.gif_builder.set_loop(self.loop_spinbox.value())
+            
+            if self.transparent_bg_checkbox.isChecked():
+                self.gif_builder.set_background_color(0, 0, 0, 0)
+            else:
+                self.gif_builder.set_background_color(255, 255, 255, 255)
+            
+            frames = self.gif_builder.get_layered_preview_frames(
+                self.layered_sequence_editor.get_frames(),
+                self.material_manager
+            )
+            
+            self.preview.set_frames(frames)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to update preview:\n{str(e)}")
     
     def show_about(self):
         QMessageBox.about(

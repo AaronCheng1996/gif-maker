@@ -4,8 +4,6 @@ GIF Maker - Quick Launch Script
 
 使用方式：
     python run.py
-
-或直接双击运行此文件（如果 Python 已正确配置）
 """
 
 import sys
@@ -26,15 +24,15 @@ if __name__ == '__main__':
     try:
         main()
     except ImportError as e:
-        print(f"错误：缺少必要的依赖库")
-        print(f"详情：{e}")
+        print("error: missing necessary dependencies")
+        print(f"details: {e}")
         print()
-        print("请运行以下命令安装依赖：")
+        print("please run the following command to install dependencies:")
         print("    pip install -r requirements.txt")
         sys.exit(1)
     except Exception as e:
-        print(f"错误：程序启动失败")
-        print(f"详情：{e}")
+        print("error: program startup failed")
+        print(f"details: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
