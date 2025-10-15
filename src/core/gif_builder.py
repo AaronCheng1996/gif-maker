@@ -77,13 +77,22 @@ class GifBuilder:
             # Convert RGBA to appropriate format for GIF
             if frame_img.mode == 'RGBA':
                 if self.background_color[3] == 0:
-                    # For transparent background, convert to P mode with transparency
-                    # method: 0=MEDIANCUT, 2=FASTOCTREE, 3=LIBIMAGEQUANT
-                    frame_img = frame_img.quantize(colors=255, method=2)
-                    # Find the transparent color index (usually 0 for transparent pixels)
-                    if 'transparency' not in frame_img.info:
-                        # Set the first palette entry (index 0) as transparent
-                        frame_img.info['transparency'] = 0
+                    # For transparent background, properly handle alpha channel
+                    # Split alpha channel
+                    alpha = frame_img.split()[3]
+                    
+                    # Create a mask for transparent pixels (alpha < 128)
+                    # Pixels with alpha >= 128 are considered opaque
+                    frame_img = frame_img.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
+                    
+                    # Set transparent pixels based on alpha channel
+                    # Find a color index to use for transparency
+                    mask = Image.eval(alpha, lambda a: 255 if a < 128 else 0)
+                    
+                    # Paste the palette image on a transparent background
+                    # This ensures truly transparent pixels are marked correctly
+                    frame_img.paste(255, mask)
+                    frame_img.info['transparency'] = 255
                 else:
                     # For solid background, composite with background color
                     rgb_bg = Image.new('RGB', frame_img.size, self.background_color[:3])
@@ -114,13 +123,22 @@ class GifBuilder:
             # Convert RGBA to appropriate format for GIF
             if frame_img.mode == 'RGBA':
                 if self.background_color[3] == 0:
-                    # For transparent background, convert to P mode with transparency
-                    # method: 0=MEDIANCUT, 2=FASTOCTREE, 3=LIBIMAGEQUANT
-                    frame_img = frame_img.quantize(colors=255, method=2)
-                    # Find the transparent color index (usually 0 for transparent pixels)
-                    if 'transparency' not in frame_img.info:
-                        # Set the first palette entry (index 0) as transparent
-                        frame_img.info['transparency'] = 0
+                    # For transparent background, properly handle alpha channel
+                    # Split alpha channel
+                    alpha = frame_img.split()[3]
+                    
+                    # Create a mask for transparent pixels (alpha < 128)
+                    # Pixels with alpha >= 128 are considered opaque
+                    frame_img = frame_img.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
+                    
+                    # Set transparent pixels based on alpha channel
+                    # Find a color index to use for transparency
+                    mask = Image.eval(alpha, lambda a: 255 if a < 128 else 0)
+                    
+                    # Paste the palette image on a transparent background
+                    # This ensures truly transparent pixels are marked correctly
+                    frame_img.paste(255, mask)
+                    frame_img.info['transparency'] = 255
                 else:
                     # For solid background, composite with background color
                     rgb_bg = Image.new('RGB', frame_img.size, self.background_color[:3])
@@ -237,10 +255,22 @@ class GifBuilder:
             # Convert RGBA to appropriate format for GIF
             if composited.mode == 'RGBA':
                 if self.background_color[3] == 0:
-                    # For transparent background, convert to P mode with transparency
-                    composited = composited.quantize(colors=255, method=2)
-                    if 'transparency' not in composited.info:
-                        composited.info['transparency'] = 0
+                    # For transparent background, properly handle alpha channel
+                    # Split alpha channel
+                    alpha = composited.split()[3]
+                    
+                    # Create a mask for transparent pixels (alpha < 128)
+                    # Pixels with alpha >= 128 are considered opaque
+                    composited = composited.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
+                    
+                    # Set transparent pixels based on alpha channel
+                    # Find a color index to use for transparency
+                    mask = Image.eval(alpha, lambda a: 255 if a < 128 else 0)
+                    
+                    # Paste the palette image on a transparent background
+                    # This ensures truly transparent pixels are marked correctly
+                    composited.paste(255, mask)
+                    composited.info['transparency'] = 255
                 else:
                     # For solid background, composite with background color
                     rgb_bg = Image.new('RGB', composited.size, self.background_color[:3])

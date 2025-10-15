@@ -68,7 +68,14 @@ A powerful GIF animation editor designed for game developers and animators, allo
    - Export all materials at once
    - Automatic filename sanitization
 
-8. **Graphical User Interface (GUI)**
+8. **Timeline Template System**
+   - Export current timeline as reusable template
+   - Save frame sequences, layer positions, and settings
+   - Import template and apply to different materials
+   - Perfect for creating similar animations with different tile sets
+   - Choose between "Use First N" or "Use Selected" materials when importing
+
+9. **Graphical User Interface (GUI)**
    - Modern interface based on PyQt6
    - Three-column layout: Material Management | Timeline | Preview
    - Tabbed tool panel

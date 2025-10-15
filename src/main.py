@@ -10,7 +10,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QImage
 
 from PIL import Image
 
-from .core import MaterialManager, SequenceEditor, GifBuilder, LayeredSequenceEditor, Layer, LayeredFrame
+from .core import MaterialManager, SequenceEditor, GifBuilder, LayeredSequenceEditor, Layer, LayeredFrame, TemplateManager
 from .widgets import PreviewWidget, TimelineWidget, TileEditorWidget, LayerEditorWidget
 
 
@@ -21,6 +21,15 @@ class MainWindow(QMainWindow):
         self.material_manager = MaterialManager()
         self.layered_sequence_editor = LayeredSequenceEditor()
         self.gif_builder = GifBuilder()
+        
+        # Remember last used directories
+        self.last_image_dir = ""
+        self.last_gif_dir = ""
+        self.last_export_dir = ""
+        self.last_template_dir = ""
+        
+        # Template storage: {name: template_dict}
+        self.templates = {}
         
         self.init_ui()
         self.setWindowTitle("GIF Maker - Layered Animation Editor")
@@ -255,12 +264,62 @@ class MainWindow(QMainWindow):
         self.preview_all_checkbox.stateChanged.connect(self.on_preview_mode_changed)
         preview_controls.addWidget(self.preview_all_checkbox)
         preview_controls.addStretch()
+
+        self.info_label = QLabel("Frame: 0/0")
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_controls.addWidget(self.info_label)
         
         layout.addLayout(preview_controls)
         
-        # Preview at top (with more space)
+        # Preview (dynamic height based on content)
         self.preview = PreviewWidget()
-        layout.addWidget(self.preview, stretch=3)
+        self.preview.frame_info_changed.connect(self.on_preview_frame_info_changed)
+        self.preview.setMaximumHeight(400)  # Limit max height (accounts for control buttons)
+        layout.addWidget(self.preview, stretch=0)  # No stretch, use natural size
+        
+        # Template management section (more space)
+        template_group = QGroupBox("Template Manager")
+        template_layout = QVBoxLayout()
+        template_layout.setSpacing(3)
+        
+        # Template list (larger for easier management)
+        self.template_list = QListWidget()
+        self.template_list.setMinimumHeight(120)  # More visible space
+        self.template_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        template_layout.addWidget(self.template_list)
+        
+        # Template action buttons (2 rows)
+        template_row1 = QHBoxLayout()
+        self.save_template_btn = QPushButton("💾 Save")
+        self.save_template_btn.clicked.connect(self.quick_save_template)
+        self.save_template_btn.setToolTip("Save current timeline as template")
+        template_row1.addWidget(self.save_template_btn)
+        
+        self.apply_template_btn = QPushButton("✓ Apply")
+        self.apply_template_btn.clicked.connect(self.quick_apply_template)
+        self.apply_template_btn.setToolTip("Apply selected template to current materials")
+        template_row1.addWidget(self.apply_template_btn)
+        template_layout.addLayout(template_row1)
+        
+        template_row2 = QHBoxLayout()
+        self.import_template_btn = QPushButton("📂 Import")
+        self.import_template_btn.clicked.connect(self.quick_import_template)
+        self.import_template_btn.setToolTip("Import template from file")
+        template_row2.addWidget(self.import_template_btn)
+        
+        self.export_template_btn = QPushButton("💾 Export")
+        self.export_template_btn.clicked.connect(self.quick_export_template)
+        self.export_template_btn.setToolTip("Export selected template to file")
+        template_row2.addWidget(self.export_template_btn)
+        
+        self.remove_template_btn = QPushButton("🗑 Remove")
+        self.remove_template_btn.clicked.connect(self.remove_template)
+        self.remove_template_btn.setToolTip("Remove selected template from list")
+        template_row2.addWidget(self.remove_template_btn)
+        template_layout.addLayout(template_row2)
+        
+        template_group.setLayout(template_layout)
+        layout.addWidget(template_group, stretch=1)  # Allow template section to expand
         
         # Compact settings section
         settings_group = QGroupBox("Settings")
@@ -329,6 +388,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Export Selected Materials", self.export_selected_materials)
         file_menu.addAction("Export All Materials", self.export_all_materials)
         file_menu.addSeparator()
+        file_menu.addAction("Export Template", self.export_template)
+        file_menu.addAction("Import Template", self.import_template)
+        file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
         
         help_menu = menubar.addMenu("Help")
@@ -338,12 +400,15 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Image",
-            "",
+            self.last_image_dir,
             "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         
         if file_path:
             try:
+                # Remember the directory
+                self.last_image_dir = str(Path(file_path).parent)
+                
                 self.material_manager.load_from_image(file_path)
                 self.refresh_materials_list()
                 QMessageBox.information(self, "Success", "Image loaded successfully!")
@@ -354,12 +419,15 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select GIF",
-            "",
+            self.last_gif_dir,
             "GIF Files (*.gif)"
         )
         
         if file_path:
             try:
+                # Remember the directory
+                self.last_gif_dir = str(Path(file_path).parent)
+                
                 self.material_manager.load_from_gif(file_path)
                 self.refresh_materials_list()
                 QMessageBox.information(self, "Success", 
@@ -371,12 +439,15 @@ class MainWindow(QMainWindow):
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Images",
-            "",
+            self.last_image_dir,
             "Image Files (*.png *.jpg *.jpeg *.bmp)"
         )
         
         if file_paths:
             try:
+                # Remember the directory from the first file
+                self.last_image_dir = str(Path(file_paths[0]).parent)
+                
                 for file_path in file_paths:
                     self.material_manager.load_from_image(file_path)
                 self.refresh_materials_list()
@@ -386,9 +457,22 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to load images:\n{str(e)}")
     
     def on_tiles_created(self, tiles):
+        """
+        Handle tiles created from tile splitter
+        tiles: List[Tuple[Image, str]] - (tile_image, source_filename)
+        """
         try:
-            name_prefix = "Tile"
-            self.material_manager.add_materials_from_list(tiles, name_prefix)
+            # Group tiles by source filename to number them per source
+            from collections import defaultdict
+            tile_counters = defaultdict(int)
+            
+            for tile_img, source_filename in tiles:
+                tile_counters[source_filename] += 1
+                tile_number = tile_counters[source_filename]
+                # Create name like: "filename_tile_1", "filename_tile_2", etc.
+                tile_name = f"{source_filename}_tile_{tile_number}"
+                self.material_manager.add_material(tile_img, tile_name)
+            
             self.refresh_materials_list()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to add tiles:\n{str(e)}")
@@ -507,13 +591,16 @@ class MainWindow(QMainWindow):
         export_dir = QFileDialog.getExistingDirectory(
             self,
             "Select Export Directory",
-            ""
+            self.last_export_dir
         )
         
         if not export_dir:
             return
         
         try:
+            # Remember the directory
+            self.last_export_dir = export_dir
+            
             exported_count = 0
             used_names = set()  # Track used filenames to avoid duplicates
             
@@ -558,13 +645,16 @@ class MainWindow(QMainWindow):
         export_dir = QFileDialog.getExistingDirectory(
             self,
             "Select Export Directory",
-            ""
+            self.last_export_dir
         )
         
         if not export_dir:
             return
         
         try:
+            # Remember the directory
+            self.last_export_dir = export_dir
+            
             exported_count = 0
             used_names = set()  # Track used filenames to avoid duplicates
             
@@ -656,15 +746,23 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No frames to export!")
             return
         
+        # Construct default path
+        default_path = "output.gif"
+        if self.last_export_dir:
+            default_path = str(Path(self.last_export_dir) / "output.gif")
+        
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save GIF",
-            "output.gif",
+            default_path,
             "GIF Files (*.gif)"
         )
         
         if file_path:
             try:
+                # Remember the directory
+                self.last_export_dir = str(Path(file_path).parent)
+                
                 self.gif_builder.set_output_size(
                     self.width_spinbox.value(),
                     self.height_spinbox.value()
@@ -1220,10 +1318,16 @@ class MainWindow(QMainWindow):
         """Handle layer changes - only update preview, don't refresh timeline to avoid losing focus"""
         self.update_preview()
     
+    def on_preview_frame_info_changed(self, current: int, total: int, duration: int):
+        """Handle preview frame info change"""
+        if total > 0:
+            self.info_label.setText(f"Frame: {current}/{total} | Duration: {duration}ms")
+        else:
+            self.info_label.setText("Frame: 0/0")
+    
     def on_transparent_bg_changed(self):
         """Handle transparent background checkbox change"""
-        # Update preview to show/hide checkerboard
-        self.preview.set_checkerboard(self.transparent_bg_checkbox.isChecked())
+        # Update preview with new transparency setting
         self.update_preview()
     
     def on_preview_mode_changed(self):
@@ -1310,6 +1414,426 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
     
+    def export_template(self):
+        """Export current timeline as a template"""
+        if len(self.layered_sequence_editor) == 0:
+            QMessageBox.warning(self, "Warning", "No frames to export as template!")
+            return
+        
+        # Construct default path
+        default_path = "timeline_template.json"
+        if self.last_template_dir:
+            default_path = str(Path(self.last_template_dir) / "timeline_template.json")
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Template",
+            default_path,
+            "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            try:
+                # Remember the directory
+                self.last_template_dir = str(Path(file_path).parent)
+                
+                # Export template
+                template = TemplateManager.export_template(
+                    self.layered_sequence_editor,
+                    self.width_spinbox.value(),
+                    self.height_spinbox.value(),
+                    self.loop_spinbox.value(),
+                    self.transparent_bg_checkbox.isChecked(),
+                    len(self.material_manager)
+                )
+                
+                # Save to file
+                TemplateManager.save_template_to_file(template, file_path)
+                
+                # Show info
+                info = TemplateManager.get_template_info(template)
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Template saved successfully!\n\n"
+                    f"Frames: {info['frame_count']}\n"
+                    f"Materials used: {info['unique_materials_used']}/{info['material_count']}\n"
+                    f"Total layers: {info['total_layers']}\n"
+                    f"Duration: {info['total_duration_ms']}ms\n"
+                    f"Output size: {info['output_size'][0]}x{info['output_size'][1]}\n\n"
+                    f"File: {file_path}"
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export template:\n{str(e)}")
+    
+    def import_template(self):
+        """Import and apply a template"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Template",
+            self.last_template_dir,
+            "JSON Files (*.json)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # Remember the directory
+            self.last_template_dir = str(Path(file_path).parent)
+            
+            # Load template
+            template = TemplateManager.load_template_from_file(file_path)
+            
+            # Get template info
+            info = TemplateManager.get_template_info(template)
+            
+            # Check if we have enough materials
+            materials_needed = info['unique_materials_used']
+            materials_available = len(self.material_manager)
+            
+            if materials_available == 0:
+                QMessageBox.warning(
+                    self,
+                    "Warning",
+                    f"No materials loaded!\n\n"
+                    f"This template requires {materials_needed} materials.\n"
+                    f"Please load materials first before importing a template."
+                )
+                return
+            
+            # Show template info and ask for confirmation
+            reply = QMessageBox.question(
+                self,
+                "Import Template",
+                f"Template Info:\n"
+                f"• Frames: {info['frame_count']}\n"
+                f"• Materials needed: {materials_needed}\n"
+                f"• Total layers: {info['total_layers']}\n"
+                f"• Duration: {info['total_duration_ms']}ms\n"
+                f"• Output size: {info['output_size'][0]}x{info['output_size'][1]}\n\n"
+                f"Available materials: {materials_available}\n\n"
+                f"Import Method:\n"
+                f"• Use First N: Uses first {materials_needed} materials in order\n"
+                f"• Use Selected: Uses selected materials (must select {materials_needed} materials)\n\n"
+                f"Choose import method:",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            
+            # Determine material mapping
+            material_mapping = {}
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # Use first N materials
+                if materials_available < materials_needed:
+                    QMessageBox.warning(
+                        self,
+                        "Warning",
+                        f"Not enough materials!\n\n"
+                        f"Template needs {materials_needed} materials, but only {materials_available} available.\n"
+                        f"Please load more materials first."
+                    )
+                    return
+                
+                # Create 1:1 mapping for first N materials
+                for i in range(materials_needed):
+                    material_mapping[i] = i
+                    
+            else:  # No = Use Selected
+                # Get selected materials
+                selected_rows = sorted([item.row() for item in self.materials_list.selectedIndexes()])
+                
+                if len(selected_rows) != materials_needed:
+                    QMessageBox.warning(
+                        self,
+                        "Warning",
+                        f"Please select exactly {materials_needed} materials!\n\n"
+                        f"Currently selected: {len(selected_rows)}\n"
+                        f"Required: {materials_needed}"
+                    )
+                    return
+                
+                # Create mapping from template indices to selected material indices
+                for template_idx in range(materials_needed):
+                    material_mapping[template_idx] = selected_rows[template_idx]
+            
+            # Apply template
+            new_editor, settings = TemplateManager.apply_template(template, material_mapping)
+            
+            # Replace current sequence
+            self.layered_sequence_editor = new_editor
+            
+            # Apply settings
+            if settings:
+                self.width_spinbox.setValue(settings.get('output_width', 400))
+                self.height_spinbox.setValue(settings.get('output_height', 400))
+                self.loop_spinbox.setValue(settings.get('loop_count', 0))
+                self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', False))
+            
+            # Refresh UI
+            self.refresh_timeline()
+            self.update_preview()
+            
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Template imported successfully!\n\n"
+                f"Created {info['frame_count']} frames with {info['total_layers']} total layers."
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to import template:\n{str(e)}")
+    
+    def quick_save_template(self):
+        """Quick save current timeline as template"""
+        if len(self.layered_sequence_editor) == 0:
+            QMessageBox.warning(self, "Warning", "No frames to save as template!")
+            return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        
+        # Ask for template name
+        name, ok = QInputDialog.getText(
+            self,
+            "Save Template",
+            "Template name:",
+            text=f"Template_{len(self.templates) + 1}"
+        )
+        
+        if ok and name:
+            try:
+                # Create template
+                template = TemplateManager.export_template(
+                    self.layered_sequence_editor,
+                    self.width_spinbox.value(),
+                    self.height_spinbox.value(),
+                    self.loop_spinbox.value(),
+                    self.transparent_bg_checkbox.isChecked(),
+                    len(self.material_manager)
+                )
+                
+                # Store template
+                self.templates[name] = template
+                
+                # Update list
+                self.refresh_template_list()
+                
+                # Select the newly added template
+                items = self.template_list.findItems(name, Qt.MatchFlag.MatchExactly)
+                if items:
+                    self.template_list.setCurrentItem(items[0])
+                
+                info = TemplateManager.get_template_info(template)
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Template '{name}' saved!\n\n"
+                    f"Frames: {info['frame_count']}\n"
+                    f"Materials: {info['unique_materials_used']}\n"
+                    f"Total layers: {info['total_layers']}"
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save template:\n{str(e)}")
+    
+    def quick_apply_template(self):
+        """Quick apply selected template"""
+        current_item = self.template_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Warning", "Please select a template to apply!")
+            return
+        
+        template_name = current_item.text().split(" - ")[0]  # Extract name before " - "
+        if template_name not in self.templates:
+            QMessageBox.warning(self, "Warning", "Template not found!")
+            return
+        
+        template = self.templates[template_name]
+        
+        try:
+            # Get template info
+            info = TemplateManager.get_template_info(template)
+            materials_needed = info['unique_materials_used']
+            materials_available = len(self.material_manager)
+            
+            if materials_available < materials_needed:
+                QMessageBox.warning(
+                    self,
+                    "Warning",
+                    f"Not enough materials!\n\n"
+                    f"Template needs: {materials_needed}\n"
+                    f"Available: {materials_available}\n\n"
+                    f"Please load more materials first."
+                )
+                return
+            
+            # Apply template using first N materials
+            material_mapping = {i: i for i in range(materials_needed)}
+            new_editor, settings = TemplateManager.apply_template(template, material_mapping)
+            
+            # Replace current sequence
+            self.layered_sequence_editor = new_editor
+            
+            # Apply settings
+            if settings:
+                self.width_spinbox.setValue(settings.get('output_width', 400))
+                self.height_spinbox.setValue(settings.get('output_height', 400))
+                self.loop_spinbox.setValue(settings.get('loop_count', 0))
+                self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', False))
+            
+            # Refresh UI
+            self.refresh_timeline()
+            self.update_preview()
+            
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Template '{template_name}' applied!\n\n"
+                f"Created {info['frame_count']} frames."
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to apply template:\n{str(e)}")
+    
+    def quick_import_template(self):
+        """Quick import template from file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Template",
+            self.last_template_dir,
+            "JSON Files (*.json)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # Remember the directory
+            self.last_template_dir = str(Path(file_path).parent)
+            
+            # Load template
+            template = TemplateManager.load_template_from_file(file_path)
+            
+            # Get template name from filename
+            template_name = Path(file_path).stem
+            
+            # Check if name already exists, add number if needed
+            original_name = template_name
+            counter = 1
+            while template_name in self.templates:
+                template_name = f"{original_name}_{counter}"
+                counter += 1
+            
+            # Store template
+            self.templates[template_name] = template
+            
+            # Refresh list
+            self.refresh_template_list()
+            
+            # Select the newly imported template
+            items = self.template_list.findItems(template_name, Qt.MatchFlag.MatchContains)
+            if items:
+                self.template_list.setCurrentItem(items[0])
+            
+            info = TemplateManager.get_template_info(template)
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Template '{template_name}' imported!\n\n"
+                f"Frames: {info['frame_count']}\n"
+                f"Materials needed: {info['unique_materials_used']}"
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to import template:\n{str(e)}")
+    
+    def quick_export_template(self):
+        """Quick export selected template to file"""
+        current_item = self.template_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Warning", "Please select a template to export!")
+            return
+        
+        template_name = current_item.text().split(" - ")[0]
+        if template_name not in self.templates:
+            QMessageBox.warning(self, "Warning", "Template not found!")
+            return
+        
+        template = self.templates[template_name]
+        
+        # Construct default path
+        default_filename = f"{template_name}.json"
+        default_path = default_filename
+        if self.last_template_dir:
+            default_path = str(Path(self.last_template_dir) / default_filename)
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Template",
+            default_path,
+            "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            try:
+                # Remember the directory
+                self.last_template_dir = str(Path(file_path).parent)
+                
+                # Save to file
+                TemplateManager.save_template_to_file(template, file_path)
+                
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Template '{template_name}' exported!\n\n"
+                    f"File: {file_path}"
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export template:\n{str(e)}")
+    
+    def remove_template(self):
+        """Remove selected template from list"""
+        current_item = self.template_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Warning", "Please select a template to remove!")
+            return
+        
+        template_name = current_item.text().split(" - ")[0]
+        if template_name not in self.templates:
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirm",
+            f"Remove template '{template_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            del self.templates[template_name]
+            self.refresh_template_list()
+    
+    def refresh_template_list(self):
+        """Refresh template list widget"""
+        self.template_list.clear()
+        
+        for name, template in self.templates.items():
+            info = TemplateManager.get_template_info(template)
+            item_text = f"{name} - {info['frame_count']} frames, {info['unique_materials_used']} mats"
+            self.template_list.addItem(item_text)
+    
     def show_about(self):
         QMessageBox.about(
             self,
@@ -1323,6 +1847,7 @@ class MainWindow(QMainWindow):
             "<li>Drag-and-drop timeline editing</li>"
             "<li>Real-time preview</li>"
             "<li>Customizable frame duration and sequence</li>"
+            "<li>Export and import timeline templates</li>"
             "</ul>"
             "<p>Version 1.0</p>"
         )

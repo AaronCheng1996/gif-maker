@@ -4,6 +4,7 @@ from .sequence_editor import SequenceEditor, Frame
 from .gif_builder import GifBuilder
 from .layer_system import Layer, LayeredFrame, LayerCompositor
 from .layered_sequence_editor import LayeredSequenceEditor
+from .template_manager import TemplateManager
 
 __all__ = [
     'ImageLoader',
@@ -15,5 +16,6 @@ __all__ = [
     'LayeredFrame',
     'LayerCompositor',
     'LayeredSequenceEditor',
+    'TemplateManager',
 ]
 

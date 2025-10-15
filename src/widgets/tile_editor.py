@@ -11,7 +11,7 @@ from typing import List, Tuple
 
 class TileEditorWidget(QWidget):
     
-    tiles_created = pyqtSignal(list)
+    tiles_created = pyqtSignal(list)  # List[Tuple[Image, str]] - (tile_image, source_filename)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -334,17 +334,19 @@ class TileEditorWidget(QWidget):
         try:
             from ..core.image_loader import ImageLoader
             
-            selected_tiles = []
+            selected_tiles = []  # List[Tuple[Image, str]]
             
             for img_idx in selected_rows:
                 if img_idx < len(self.loaded_images):
-                    img, _ = self.loaded_images[img_idx]
+                    img, img_path = self.loaded_images[img_idx]
+                    source_filename = Path(img_path).stem  # Get filename without extension
                     tiles = ImageLoader.split_into_tiles(img, rows, cols)
                     
                     for row, col in self.selected_positions:
                         tile_idx = row * cols + col
                         if tile_idx < len(tiles):
-                            selected_tiles.append(tiles[tile_idx])
+                            # Attach source filename to each tile
+                            selected_tiles.append((tiles[tile_idx], source_filename))
             
             if not selected_tiles:
                 QMessageBox.warning(self, "Warning", "No valid tiles found for selected positions!")
@@ -386,11 +388,12 @@ class TileEditorWidget(QWidget):
         try:
             from ..core.image_loader import ImageLoader
             
-            selected_tiles = []
+            selected_tiles = []  # List[Tuple[Image, str]]
             
             for img_idx in selected_rows:
                 if img_idx < len(self.loaded_images):
-                    img, _ = self.loaded_images[img_idx]
+                    img, img_path = self.loaded_images[img_idx]
+                    source_filename = Path(img_path).stem  # Get filename without extension
                     tiles = ImageLoader.split_by_tile_size(img, tile_width, tile_height)
                     
                     img_width, img_height = img.size
@@ -399,7 +402,8 @@ class TileEditorWidget(QWidget):
                     for row, col in self.selected_positions:
                         tile_idx = row * cols + col
                         if tile_idx < len(tiles):
-                            selected_tiles.append(tiles[tile_idx])
+                            # Attach source filename to each tile
+                            selected_tiles.append((tiles[tile_idx], source_filename))
             
             if not selected_tiles:
                 QMessageBox.warning(self, "Warning", "No valid tiles found for selected positions!")

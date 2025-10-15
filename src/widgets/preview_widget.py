@@ -6,34 +6,26 @@ from typing import List, Tuple
 
 
 class PreviewWidget(QWidget):
+    # Signal to emit frame info: (current_frame, total_frames, duration)
+    frame_info_changed = pyqtSignal(int, int, int)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         
         self.frames: List[Tuple[Image.Image, int]] = []  # (image, duration)
         self.current_frame_index = 0
         self.is_playing = False
-        self.use_checkerboard = False  # Show checkerboard for transparency
         
         self.init_ui()
         
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
     
-    def set_checkerboard(self, enabled: bool):
-        """Enable or disable checkerboard background for transparency preview"""
-        self.use_checkerboard = enabled
-        if self.frames:
-            self.show_current_frame()
-    
     def init_ui(self):
         layout = QVBoxLayout()
-        
-        self.preview_label = QLabel("No Preview")
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(400, 400)
-        self.preview_label.setStyleSheet("QLabel { background-color: #f0f0f0; border: 2px solid #ccc; }")
-        layout.addWidget(self.preview_label)
-        
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)  # Add spacing between elements
+
         control_layout = QHBoxLayout()
         
         self.play_button = QPushButton("▶ Play")
@@ -54,9 +46,14 @@ class PreviewWidget(QWidget):
         
         layout.addLayout(control_layout)
         
-        self.info_label = QLabel("Frame: 0/0")
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.info_label)
+        # Preview area
+        self.preview_label = QLabel("No Preview")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setMinimumHeight(180)  # Slightly smaller to leave room for controls
+        self.preview_label.setScaledContents(False)  # Don't stretch, maintain aspect ratio
+        # Light gray background to make transparent areas visible, but not distracting
+        self.preview_label.setStyleSheet("QLabel { background-color: #e8e8e8; border: 2px solid #ccc; }")
+        layout.addWidget(self.preview_label)
         
         self.setLayout(layout)
     
@@ -66,10 +63,9 @@ class PreviewWidget(QWidget):
         
         if self.frames:
             self.show_current_frame()
-            self.update_info()
         else:
             self.preview_label.setText("No Frames")
-            self.info_label.setText("Frame: 0/0")
+            self.frame_info_changed.emit(0, 0, 0)
     
     def show_current_frame(self):
         if not self.frames or self.current_frame_index >= len(self.frames):
@@ -77,41 +73,34 @@ class PreviewWidget(QWidget):
         
         pil_image, _ = self.frames[self.current_frame_index]
         
-        pixmap = self.pil_to_pixmap(pil_image, self.use_checkerboard)
+        pixmap = self.pil_to_pixmap(pil_image)
         
+        # Get label width and calculate appropriate height to maintain aspect ratio
+        label_width = self.preview_label.width()
+        if label_width < 10:  # Not yet sized
+            label_width = 400
+        
+        # Scale to fit width while maintaining aspect ratio
         scaled_pixmap = pixmap.scaled(
-            self.preview_label.size(),
+            label_width,
+            self.preview_label.maximumHeight() if self.preview_label.maximumHeight() > 0 else 10000,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
         
+        # Adjust label height to match scaled pixmap, but ensure minimum
+        new_height = max(scaled_pixmap.height(), self.preview_label.minimumHeight())
+        self.preview_label.setFixedHeight(new_height)
+        
         self.preview_label.setPixmap(scaled_pixmap)
         self.update_info()
     
-    def pil_to_pixmap(self, pil_image: Image.Image, use_checkerboard: bool = False) -> QPixmap:
-        """Convert PIL image to QPixmap, optionally with checkerboard background for transparency"""
+    def pil_to_pixmap(self, pil_image: Image.Image) -> QPixmap:
+        """Convert PIL image to QPixmap with transparency support"""
         if pil_image.mode != 'RGBA':
             pil_image = pil_image.convert('RGBA')
         
-        # If checkerboard requested and image has transparency, composite on checkerboard
-        if use_checkerboard:
-            # Create checkerboard background
-            checker_size = 16
-            width, height = pil_image.size
-            checker = Image.new('RGB', (width, height), 'white')
-            
-            for y in range(0, height, checker_size):
-                for x in range(0, width, checker_size):
-                    if ((x // checker_size) + (y // checker_size)) % 2 == 1:
-                        for dy in range(min(checker_size, height - y)):
-                            for dx in range(min(checker_size, width - x)):
-                                checker.putpixel((x + dx, y + dy), (204, 204, 204))
-            
-            # Composite image on checkerboard
-            checker = checker.convert('RGBA')
-            checker.paste(pil_image, (0, 0), pil_image)
-            pil_image = checker
-        
+        # Direct conversion - much faster, no checkerboard overhead
         data = pil_image.tobytes('raw', 'RGBA')
         
         qimage = QImage(
@@ -176,16 +165,18 @@ class PreviewWidget(QWidget):
         self.show_current_frame()
     
     def update_info(self):
+        """Emit signal with current frame info"""
         if self.frames:
             total = len(self.frames)
             current = self.current_frame_index + 1
             _, duration = self.frames[self.current_frame_index]
-            self.info_label.setText(f"Frame: {current}/{total} | Duration: {duration}ms")
+            self.frame_info_changed.emit(current, total, duration)
         else:
-            self.info_label.setText("Frame: 0/0")
+            self.frame_info_changed.emit(0, 0, 0)
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # Update preview when widget is resized to adjust height dynamically
         if self.frames:
             self.show_current_frame()
 
