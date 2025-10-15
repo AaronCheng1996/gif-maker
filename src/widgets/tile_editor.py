@@ -64,59 +64,65 @@ class TileEditorWidget(QWidget):
         self.images_table.verticalHeader().setVisible(False)
         layout.addWidget(self.images_table, stretch=1)  # Give it stretch to take remaining space
         
-        # Split settings section (compact)
+        # Split settings section (compact, multi-row)
         settings_group = QGroupBox("Split Settings")
-        settings_layout = QHBoxLayout()
+        settings_layout = QVBoxLayout()
+        settings_layout.setSpacing(5)
         
-        # Grid settings
-        settings_layout.addWidget(QLabel("Grid:"))
+        # Grid settings row
+        grid_layout = QHBoxLayout()
+        grid_layout.addWidget(QLabel("Grid:"))
         self.rows_spinbox = QSpinBox()
         self.rows_spinbox.setMinimum(1)
         self.rows_spinbox.setMaximum(100)
         self.rows_spinbox.setValue(4)
         self.rows_spinbox.setMaximumWidth(50)
         self.rows_spinbox.valueChanged.connect(self.update_position_selector)
-        settings_layout.addWidget(self.rows_spinbox)
+        grid_layout.addWidget(self.rows_spinbox)
         
-        settings_layout.addWidget(QLabel("×"))
+        grid_layout.addWidget(QLabel("×"))
         self.cols_spinbox = QSpinBox()
         self.cols_spinbox.setMinimum(1)
         self.cols_spinbox.setMaximum(100)
         self.cols_spinbox.setValue(4)
         self.cols_spinbox.setMaximumWidth(50)
         self.cols_spinbox.valueChanged.connect(self.update_position_selector)
-        settings_layout.addWidget(self.cols_spinbox)
+        grid_layout.addWidget(self.cols_spinbox)
         
         self.split_by_grid_button = QPushButton("Split by Grid")
         self.split_by_grid_button.clicked.connect(self.split_by_grid)
         self.split_by_grid_button.setMaximumHeight(25)
-        settings_layout.addWidget(self.split_by_grid_button)
+        grid_layout.addWidget(self.split_by_grid_button)
+        grid_layout.addStretch()
         
-        settings_layout.addWidget(QLabel("|"))
+        settings_layout.addLayout(grid_layout)
         
-        # Size settings
-        settings_layout.addWidget(QLabel("Size:"))
+        # Size settings row
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("Size:"))
         self.tile_width_spinbox = QSpinBox()
         self.tile_width_spinbox.setMinimum(1)
         self.tile_width_spinbox.setMaximum(10000)
         self.tile_width_spinbox.setValue(32)
         self.tile_width_spinbox.setMaximumWidth(50)
-        settings_layout.addWidget(self.tile_width_spinbox)
+        size_layout.addWidget(self.tile_width_spinbox)
         
-        settings_layout.addWidget(QLabel("×"))
+        size_layout.addWidget(QLabel("×"))
         self.tile_height_spinbox = QSpinBox()
         self.tile_height_spinbox.setMinimum(1)
         self.tile_height_spinbox.setMaximum(10000)
         self.tile_height_spinbox.setValue(32)
         self.tile_height_spinbox.setMaximumWidth(50)
-        settings_layout.addWidget(self.tile_height_spinbox)
+        size_layout.addWidget(self.tile_height_spinbox)
         
         self.split_by_size_button = QPushButton("Split by Size")
         self.split_by_size_button.clicked.connect(self.split_by_size)
         self.split_by_size_button.setMaximumHeight(25)
-        settings_layout.addWidget(self.split_by_size_button)
+        size_layout.addWidget(self.split_by_size_button)
+        size_layout.addStretch()
         
-        settings_layout.addStretch()
+        settings_layout.addLayout(size_layout)
+        
         settings_group.setLayout(settings_layout)
         layout.addWidget(settings_group)
         
@@ -313,7 +319,7 @@ class TileEditorWidget(QWidget):
     
     def split_by_grid(self):
         # Get selected images
-        selected_rows = sorted(set(item.row() for item in self.images_table.selectedIndexes()))
+        selected_rows = sorted({item.row() for item in self.images_table.selectedIndexes()})
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select at least one image from the table!")
             return
@@ -332,7 +338,7 @@ class TileEditorWidget(QWidget):
             
             for img_idx in selected_rows:
                 if img_idx < len(self.loaded_images):
-                    img, path = self.loaded_images[img_idx]
+                    img, _ = self.loaded_images[img_idx]
                     tiles = ImageLoader.split_into_tiles(img, rows, cols)
                     
                     for row, col in self.selected_positions:
@@ -365,7 +371,7 @@ class TileEditorWidget(QWidget):
     
     def split_by_size(self):
         # Get selected images
-        selected_rows = sorted(set(item.row() for item in self.images_table.selectedIndexes()))
+        selected_rows = sorted({item.row() for item in self.images_table.selectedIndexes()})
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select at least one image from the table!")
             return
@@ -384,12 +390,11 @@ class TileEditorWidget(QWidget):
             
             for img_idx in selected_rows:
                 if img_idx < len(self.loaded_images):
-                    img, path = self.loaded_images[img_idx]
+                    img, _ = self.loaded_images[img_idx]
                     tiles = ImageLoader.split_by_tile_size(img, tile_width, tile_height)
                     
                     img_width, img_height = img.size
                     cols = img_width // tile_width
-                    rows = img_height // tile_height
                     
                     for row, col in self.selected_positions:
                         tile_idx = row * cols + col

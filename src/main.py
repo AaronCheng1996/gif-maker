@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
                               QTableWidgetItem)
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QItemSelectionModel
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 
 from PIL import Image
@@ -154,11 +154,6 @@ class MainWindow(QMainWindow):
         self.timeline.apply_duration_requested.connect(self.on_apply_duration)
         layout.addWidget(self.timeline, stretch=2)
         
-        # Frame controls (compact)
-        frame_controls = QGroupBox("Frame Tools")
-        frame_controls_layout = QVBoxLayout()
-        frame_controls_layout.setSpacing(3)
-        
         # Row 1: Basic operations (more compact buttons)
         btn_row1 = QHBoxLayout()
         self.duplicate_frame_btn = QPushButton("Copy")
@@ -190,7 +185,7 @@ class MainWindow(QMainWindow):
         self.refresh_timeline_btn.setToolTip("Refresh Timeline")
         btn_row1.addWidget(self.refresh_timeline_btn)
         
-        frame_controls_layout.addLayout(btn_row1)
+        layout.addLayout(btn_row1)
         
         # Batch offset (single row)
         offset_layout = QHBoxLayout()
@@ -212,7 +207,7 @@ class MainWindow(QMainWindow):
         self.apply_batch_offset_btn.setMaximumHeight(25)
         offset_layout.addWidget(self.apply_batch_offset_btn)
         offset_layout.addStretch()
-        frame_controls_layout.addLayout(offset_layout)
+        layout.addLayout(offset_layout)
         
         # Batch layer buttons (compact)
         batch_row1 = QHBoxLayout()
@@ -220,17 +215,14 @@ class MainWindow(QMainWindow):
         self.batch_add_same_layer_btn.clicked.connect(self.batch_add_same_layer)
         self.batch_add_same_layer_btn.setMaximumHeight(25)
         batch_row1.addWidget(self.batch_add_same_layer_btn)
-        frame_controls_layout.addLayout(batch_row1)
+        layout.addLayout(batch_row1)
         
         batch_row2 = QHBoxLayout()
         self.batch_add_matched_layers_btn = QPushButton("+ Matched (1:1)")
         self.batch_add_matched_layers_btn.clicked.connect(self.batch_add_matched_layers)
         self.batch_add_matched_layers_btn.setMaximumHeight(25)
         batch_row2.addWidget(self.batch_add_matched_layers_btn)
-        frame_controls_layout.addLayout(batch_row2)
-        
-        frame_controls.setLayout(frame_controls_layout)
-        layout.addWidget(frame_controls, stretch=0)
+        layout.addLayout(batch_row2)
         
         # Layer editor
         self.layer_editor = LayerEditorWidget()
@@ -443,22 +435,40 @@ class MainWindow(QMainWindow):
                         self.width_spinbox.setValue(img.width)
                         self.height_spinbox.setValue(img.height)
             
+            # Determine insertion position
+            # If timeline has selected frames, insert after the last selected frame
+            # Otherwise, append to the end
+            timeline_selected_rows = sorted({idx.row() for idx in self.timeline.timeline_table.selectedIndexes()})
+            
+            if timeline_selected_rows:
+                # Insert after the last selected row
+                insert_position = timeline_selected_rows[-1] + 1
+            else:
+                # No selection, append to end
+                insert_position = len(self.layered_sequence_editor)
+            
             # Create a new LayeredFrame for each selected material
+            frames_to_add = []
             for material_idx in selected_rows:
                 new_frame = LayeredFrame(
                     duration=duration,
-                    name=f"Frame {len(self.layered_sequence_editor) + 1}"
+                    name=f"Frame {len(self.layered_sequence_editor) + len(frames_to_add) + 1}"
                 )
                 layer = Layer(material_index=material_idx, name="Layer 1")
                 new_frame.add_layer(layer)
-                self.layered_sequence_editor.add_frame(new_frame)
+                frames_to_add.append(new_frame)
+            
+            # Insert frames at the determined position
+            for i, frame in enumerate(frames_to_add):
+                self.layered_sequence_editor.insert_frame(insert_position + i, frame)
             
             self.refresh_timeline()
             
-            # Auto-select the last added frame
-            if len(self.layered_sequence_editor) > 0:
-                last_idx = len(self.layered_sequence_editor) - 1
-                self.timeline.timeline_table.selectRow(last_idx)
+            # Auto-select the newly added frames
+            if len(frames_to_add) > 0:
+                self.timeline.timeline_table.clearSelection()
+                for i in range(len(frames_to_add)):
+                    self.timeline.timeline_table.selectRow(insert_position + i)
         
         except Exception as e:
             print(f"ERROR in add_selected_to_timeline: {e}")
@@ -619,9 +629,9 @@ class MainWindow(QMainWindow):
                 return
             
             # Get unique frame indices
-            frame_indices = sorted(set([item.data(Qt.ItemDataRole.UserRole) 
-                                        for item in selected_items 
-                                        if item.data(Qt.ItemDataRole.UserRole) is not None]))
+            frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) 
+                                   for item in selected_items 
+                                   if item.data(Qt.ItemDataRole.UserRole) is not None})
             
             if not frame_indices:
                 return
@@ -702,9 +712,9 @@ class MainWindow(QMainWindow):
             return
         
         # Get unique frame indices (selectedIndexes includes all cells, we need unique rows)
-        frame_indices = sorted(set([item.data(Qt.ItemDataRole.UserRole) 
-                                    for item in selected_items 
-                                    if item.data(Qt.ItemDataRole.UserRole) is not None]))
+        frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) 
+                                for item in selected_items 
+                                if item.data(Qt.ItemDataRole.UserRole) is not None})
         
         if not frame_indices:
             return
@@ -712,6 +722,7 @@ class MainWindow(QMainWindow):
         # Copy all selected frames as a group and insert after the last selected frame
         # This produces: [1,2,3] -> [1,2,3,1,2,3] instead of [1,1,2,2,3,3]
         insert_position = frame_indices[-1] + 1
+        num_duplicated = 0
         
         for frame_idx in frame_indices:
             if frame_idx < len(self.layered_sequence_editor):
@@ -722,17 +733,21 @@ class MainWindow(QMainWindow):
                     duplicated_frame = original_frame.copy()
                     self.layered_sequence_editor.frames.insert(insert_position, duplicated_frame)
                     insert_position += 1
+                    num_duplicated += 1
         
         self.refresh_timeline()
         
-        # Auto-select the first duplicated frame
-        if frame_indices:
-            new_idx = frame_indices[-1] + 1
-            for row in range(self.timeline.timeline_table.rowCount()):
-                item = self.timeline.timeline_table.item(row, 0)
-                if item and item.data(Qt.ItemDataRole.UserRole) == new_idx:
-                    self.timeline.timeline_table.selectRow(row)
-                    break
+        # Auto-select all duplicated frames using selection model
+        if num_duplicated > 0:
+            selection_model = self.timeline.timeline_table.selectionModel()
+            self.timeline.timeline_table.clearSelection()
+            
+            start_position = frame_indices[-1] + 1
+            for i in range(num_duplicated):
+                new_row = start_position + i
+                for col in range(self.timeline.timeline_table.columnCount()):
+                    index = self.timeline.timeline_table.model().index(new_row, col)
+                    selection_model.select(index, QItemSelectionModel.SelectionFlag.Select)
     
     def remove_frame(self):
         """Remove selected frames"""
@@ -743,9 +758,9 @@ class MainWindow(QMainWindow):
             return
         
         # Get unique frame indices (selectedIndexes includes all cells, we need unique rows)
-        frame_indices = sorted(set([item.data(Qt.ItemDataRole.UserRole) 
-                                    for item in selected_items 
-                                    if item.data(Qt.ItemDataRole.UserRole) is not None]), 
+        frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) 
+                               for item in selected_items 
+                               if item.data(Qt.ItemDataRole.UserRole) is not None}, 
                               reverse=True)
         
         if not frame_indices:
@@ -759,58 +774,62 @@ class MainWindow(QMainWindow):
         self.refresh_timeline()
     
     def move_frame_up(self):
-        """Move selected frame up (earlier in timeline)"""
-        selected_items = self.timeline.timeline_table.selectedIndexes()
+        """Move selected frame(s) up (earlier in timeline)"""
+        # Get unique selected row indices
+        selected_rows = sorted({idx.row() for idx in self.timeline.timeline_table.selectedIndexes()})
         
-        if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select a frame to move!")
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Please select at least one frame to move!")
             return
         
-        if len(selected_items) > 1:
-            QMessageBox.warning(self, "Warning", "Please select only one frame to move!")
-            return
+        # Check if first selected frame is already at the top
+        if selected_rows[0] == 0:
+            return  # Cannot move up
         
-        # Get actual frame index
-        frame_index = selected_items[0].data(Qt.ItemDataRole.UserRole)
-        if frame_index is None:
-            return
+        # Move frames up one position (process from top to bottom to avoid conflicts)
+        for row in selected_rows:
+            self.layered_sequence_editor.move_frame(row, row - 1)
         
-        if frame_index > 0:
-            self.layered_sequence_editor.move_frame(frame_index, frame_index - 1)
-            self.refresh_timeline()
-            # Select the moved frame (find the new table row)
-            for row in range(self.timeline.timeline_table.rowCount()):
-                item = self.timeline.timeline_table.item(row, 0)
-                if item and item.data(Qt.ItemDataRole.UserRole) == frame_index - 1:
-                    self.timeline.timeline_table.selectRow(row)
-                    break
+        self.refresh_timeline()
+        
+        # Re-select the moved frames at their new positions using selection model
+        selection_model = self.timeline.timeline_table.selectionModel()
+        self.timeline.timeline_table.clearSelection()
+        
+        for row in selected_rows:
+            new_row = row - 1
+            for col in range(self.timeline.timeline_table.columnCount()):
+                index = self.timeline.timeline_table.model().index(new_row, col)
+                selection_model.select(index, QItemSelectionModel.SelectionFlag.Select)
     
     def move_frame_down(self):
-        """Move selected frame down (later in timeline)"""
-        selected_items = self.timeline.timeline_table.selectedIndexes()
+        """Move selected frame(s) down (later in timeline)"""
+        # Get unique selected row indices
+        selected_rows = sorted({idx.row() for idx in self.timeline.timeline_table.selectedIndexes()})
         
-        if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select a frame to move!")
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Please select at least one frame to move!")
             return
         
-        if len(selected_items) > 1:
-            QMessageBox.warning(self, "Warning", "Please select only one frame to move!")
-            return
+        # Check if last selected frame is already at the bottom
+        if selected_rows[-1] >= len(self.layered_sequence_editor) - 1:
+            return  # Cannot move down
         
-        # Get actual frame index
-        frame_index = selected_items[0].data(Qt.ItemDataRole.UserRole)
-        if frame_index is None:
-            return
+        # Move frames down one position (process from bottom to top to avoid conflicts)
+        for row in reversed(selected_rows):
+            self.layered_sequence_editor.move_frame(row, row + 1)
         
-        if frame_index < len(self.layered_sequence_editor) - 1:
-            self.layered_sequence_editor.move_frame(frame_index, frame_index + 1)
-            self.refresh_timeline()
-            # Select the moved frame (find the new table row)
-            for row in range(self.timeline.timeline_table.rowCount()):
-                item = self.timeline.timeline_table.item(row, 0)
-                if item and item.data(Qt.ItemDataRole.UserRole) == frame_index + 1:
-                    self.timeline.timeline_table.selectRow(row)
-                    break
+        self.refresh_timeline()
+        
+        # Re-select the moved frames at their new positions using selection model
+        selection_model = self.timeline.timeline_table.selectionModel()
+        self.timeline.timeline_table.clearSelection()
+        
+        for row in selected_rows:
+            new_row = row + 1
+            for col in range(self.timeline.timeline_table.columnCount()):
+                index = self.timeline.timeline_table.model().index(new_row, col)
+                selection_model.select(index, QItemSelectionModel.SelectionFlag.Select)
     
     def apply_batch_offset(self):
         """Apply offset to all layers in selected frames"""
@@ -821,9 +840,9 @@ class MainWindow(QMainWindow):
             return
         
         # Get unique frame indices (selectedIndexes includes all cells, we need unique rows)
-        frame_indices = sorted(set([item.data(Qt.ItemDataRole.UserRole) 
-                                    for item in selected_items 
-                                    if item.data(Qt.ItemDataRole.UserRole) is not None]))
+        frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) 
+                               for item in selected_items 
+                               if item.data(Qt.ItemDataRole.UserRole) is not None})
         
         if not frame_indices:
             QMessageBox.warning(self, "Warning", "No valid frames selected!")
