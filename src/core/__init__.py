@@ -5,6 +5,7 @@ from .gif_builder import GifBuilder
 from .layer_system import Layer, LayeredFrame, LayerCompositor
 from .layered_sequence_editor import LayeredSequenceEditor
 from .template_manager import TemplateManager
+from .batch_processor import BatchProcessor, BatchProcessingError
 
 __all__ = [
     'ImageLoader',
@@ -17,5 +18,7 @@ __all__ = [
     'LayerCompositor',
     'LayeredSequenceEditor',
     'TemplateManager',
+    'BatchProcessor',
+    'BatchProcessingError',
 ]
 

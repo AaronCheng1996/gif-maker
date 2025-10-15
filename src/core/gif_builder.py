@@ -172,6 +172,97 @@ class GifBuilder:
         
         frames[0].save(output_path, **save_kwargs)
     
+    def resize_gif(self, input_path: str, output_path: str, scale_factor: float = 0.5):
+        """
+        Resize an existing GIF file
+        
+        Args:
+            input_path: Path to input GIF file
+            output_path: Path for output GIF file
+            scale_factor: Scale factor (0.5 = half size, 2.0 = double size)
+        """
+        try:
+            with Image.open(input_path) as gif:
+                # Get all frames
+                frames = []
+                durations = []
+                
+                # Get loop count from original GIF
+                loop = 0
+                if 'loop' in gif.info:
+                    loop = gif.info['loop']
+                
+                # Extract frames
+                for frame_index in range(gif.n_frames):
+                    gif.seek(frame_index)
+                    frame = gif.copy()
+                    
+                    # Resize frame
+                    new_size = (
+                        int(frame.width * scale_factor),
+                        int(frame.height * scale_factor)
+                    )
+                    resized_frame = frame.resize(new_size, Image.Resampling.LANCZOS)
+                    
+                    frames.append(resized_frame)
+                    
+                    # Get duration
+                    duration = gif.info.get('duration', 100)  # Default 100ms
+                    durations.append(duration)
+                
+                # Save resized GIF
+                if frames:
+                    save_kwargs = {
+                        'format': 'GIF',
+                        'save_all': True,
+                        'append_images': frames[1:],
+                        'duration': durations,
+                        'loop': loop,
+                        'optimize': True,
+                        'disposal': 2
+                    }
+                    
+                    frames[0].save(output_path, **save_kwargs)
+                    
+        except Exception as e:
+            raise ValueError(f"Failed to resize GIF: {str(e)}")
+    
+    def get_gif_info(self, gif_path: str) -> dict:
+        """
+        Get information about a GIF file
+        
+        Args:
+            gif_path: Path to GIF file
+        
+        Returns:
+            Dictionary with GIF information
+        """
+        try:
+            with Image.open(gif_path) as gif:
+                frames = []
+                total_duration = 0
+                
+                for frame_index in range(gif.n_frames):
+                    gif.seek(frame_index)
+                    frame = gif.copy()
+                    frames.append(frame)
+                    
+                    duration = gif.info.get('duration', 100)
+                    total_duration += duration
+                
+                return {
+                    'frame_count': gif.n_frames,
+                    'size': (gif.width, gif.height),
+                    'total_duration_ms': total_duration,
+                    'loop': gif.info.get('loop', 0),
+                    'mode': gif.mode,
+                    'has_transparency': 'transparency' in gif.info,
+                    'file_size_bytes': Path(gif_path).stat().st_size
+                }
+                
+        except Exception as e:
+            raise ValueError(f"Failed to read GIF info: {str(e)}")
+    
     def get_preview_frames(
         self,
         material_manager: MaterialManager,

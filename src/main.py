@@ -11,7 +11,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QImage
 from PIL import Image
 
 from .core import MaterialManager, SequenceEditor, GifBuilder, LayeredSequenceEditor, Layer, LayeredFrame, TemplateManager
-from .widgets import PreviewWidget, TimelineWidget, TileEditorWidget, LayerEditorWidget
+from .widgets import PreviewWidget, TimelineWidget, TileEditorWidget, LayerEditorWidget, BatchProcessorWidget
 
 
 class MainWindow(QMainWindow):
@@ -79,6 +79,18 @@ class MainWindow(QMainWindow):
         scroll_area.setWidget(self.tile_editor)
         scroll_area.setWidgetResizable(True)
         tabs.addTab(scroll_area, "Tile Splitter")
+        
+        # Batch Processor tab
+        self.batch_processor = BatchProcessorWidget()
+        self.batch_processor.batch_complete.connect(self.on_batch_complete)
+        
+        batch_scroll_area = QScrollArea()
+        batch_scroll_area.setWidget(self.batch_processor)
+        batch_scroll_area.setWidgetResizable(True)
+        tabs.addTab(batch_scroll_area, "Batch Process")
+        
+        # Update batch processor templates when templates change
+        self.batch_processor.set_templates(self.templates)
         
         layout.addWidget(tabs)
         
@@ -477,6 +489,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to add tiles:\n{str(e)}")
     
+    def on_batch_complete(self, success_count: int, fail_count: int):
+        """
+        Handle batch processing completion
+        
+        Args:
+            success_count: Number of successfully processed images
+            fail_count: Number of failed images
+        """
+        # Currently just a placeholder - the batch processor widget handles the notification
+        # Could add additional actions here if needed (e.g., logging, statistics)
+        pass
+    
     def refresh_materials_list(self):
         self.materials_list.clear()
         
@@ -780,11 +804,46 @@ class MainWindow(QMainWindow):
                     file_path
                 )
                 
-                QMessageBox.information(self, "Success", 
-                    f"GIF saved successfully!\n{file_path}")
+                # Ask if user wants to create a resized version
+                reply = QMessageBox.question(
+                    self,
+                    "Export Complete",
+                    f"GIF saved successfully!\n{file_path}\n\n"
+                    f"Would you like to create a half-size version for testing?\n"
+                    f"This is useful for previewing large GIFs.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.create_resized_version(file_path, 0.5)
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export GIF:\n{str(e)}")
+    
+    def create_resized_version(self, original_path: str, scale_factor: float = 0.5):
+        """Create a resized version of the exported GIF"""
+        try:
+            original_file = Path(original_path)
+            resized_name = f"{original_file.stem}_50pct{original_file.suffix}"
+            resized_path = original_file.parent / resized_name
+            
+            self.gif_builder.resize_gif(str(original_path), str(resized_path), scale_factor)
+            
+            QMessageBox.information(
+                self,
+                "Resize Complete",
+                f"Half-size version created!\n{resized_path}\n\n"
+                f"Original: {original_file.name}\n"
+                f"Resized: {resized_name}"
+            )
+            
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Resize Failed",
+                f"Failed to create resized version:\n{str(e)}"
+            )
     
     def on_timeline_selection_changed(self):
         """Handle timeline selection change - auto-edit the selected frame"""
@@ -1833,6 +1892,10 @@ class MainWindow(QMainWindow):
             info = TemplateManager.get_template_info(template)
             item_text = f"{name} - {info['frame_count']} frames, {info['unique_materials_used']} mats"
             self.template_list.addItem(item_text)
+        
+        # Update batch processor templates
+        if hasattr(self, 'batch_processor'):
+            self.batch_processor.set_templates(self.templates)
     
     def show_about(self):
         QMessageBox.about(
