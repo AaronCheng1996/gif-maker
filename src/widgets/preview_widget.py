@@ -12,11 +12,18 @@ class PreviewWidget(QWidget):
         self.frames: List[Tuple[Image.Image, int]] = []  # (image, duration)
         self.current_frame_index = 0
         self.is_playing = False
+        self.use_checkerboard = False  # Show checkerboard for transparency
         
         self.init_ui()
         
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
+    
+    def set_checkerboard(self, enabled: bool):
+        """Enable or disable checkerboard background for transparency preview"""
+        self.use_checkerboard = enabled
+        if self.frames:
+            self.show_current_frame()
     
     def init_ui(self):
         layout = QVBoxLayout()
@@ -70,7 +77,7 @@ class PreviewWidget(QWidget):
         
         pil_image, _ = self.frames[self.current_frame_index]
         
-        pixmap = self.pil_to_pixmap(pil_image)
+        pixmap = self.pil_to_pixmap(pil_image, self.use_checkerboard)
         
         scaled_pixmap = pixmap.scaled(
             self.preview_label.size(),
@@ -81,9 +88,29 @@ class PreviewWidget(QWidget):
         self.preview_label.setPixmap(scaled_pixmap)
         self.update_info()
     
-    def pil_to_pixmap(self, pil_image: Image.Image) -> QPixmap:
+    def pil_to_pixmap(self, pil_image: Image.Image, use_checkerboard: bool = False) -> QPixmap:
+        """Convert PIL image to QPixmap, optionally with checkerboard background for transparency"""
         if pil_image.mode != 'RGBA':
             pil_image = pil_image.convert('RGBA')
+        
+        # If checkerboard requested and image has transparency, composite on checkerboard
+        if use_checkerboard:
+            # Create checkerboard background
+            checker_size = 16
+            width, height = pil_image.size
+            checker = Image.new('RGB', (width, height), 'white')
+            
+            for y in range(0, height, checker_size):
+                for x in range(0, width, checker_size):
+                    if ((x // checker_size) + (y // checker_size)) % 2 == 1:
+                        for dy in range(min(checker_size, height - y)):
+                            for dx in range(min(checker_size, width - x)):
+                                checker.putpixel((x + dx, y + dy), (204, 204, 204))
+            
+            # Composite image on checkerboard
+            checker = checker.convert('RGBA')
+            checker.paste(pil_image, (0, 0), pil_image)
+            pil_image = checker
         
         data = pil_image.tobytes('raw', 'RGBA')
         

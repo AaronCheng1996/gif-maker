@@ -64,36 +64,44 @@ class Layer:
         Apply layer transformations to an image
         Returns the processed image
         """
-        img = ensure_rgba(image.copy())
-        
-        # Apply crop
-        if self.crop_width is not None and self.crop_height is not None:
-            img_width, img_height = img.size
+        try:
+            img = ensure_rgba(image.copy())
             
-            # Ensure crop region is within bounds
-            crop_x = max(0, min(self.crop_x, img_width - 1))
-            crop_y = max(0, min(self.crop_y, img_height - 1))
-            crop_right = min(crop_x + self.crop_width, img_width)
-            crop_bottom = min(crop_y + self.crop_height, img_height)
+            # Apply crop
+            if self.crop_width is not None and self.crop_height is not None:
+                img_width, img_height = img.size
+                
+                # Ensure crop region is within bounds
+                crop_x = max(0, min(self.crop_x, img_width - 1))
+                crop_y = max(0, min(self.crop_y, img_height - 1))
+                crop_right = min(crop_x + self.crop_width, img_width)
+                crop_bottom = min(crop_y + self.crop_height, img_height)
+                
+                if crop_right > crop_x and crop_bottom > crop_y:
+                    img = img.crop((crop_x, crop_y, crop_right, crop_bottom))
             
-            if crop_right > crop_x and crop_bottom > crop_y:
-                img = img.crop((crop_x, crop_y, crop_right, crop_bottom))
-        
-        # Apply scale
-        if abs(self.scale - 1.0) > 0.001 and self.scale > 0:
-            new_width = int(img.width * self.scale)
-            new_height = int(img.height * self.scale)
-            if new_width > 0 and new_height > 0:
-                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Apply opacity
-        if self.opacity < 1.0:
-            # Create a copy and adjust alpha channel
-            alpha = img.split()[3]
-            alpha = alpha.point(lambda p: int(p * self.opacity))
-            img.putalpha(alpha)
-        
-        return img
+            # Apply scale
+            if abs(self.scale - 1.0) > 0.001 and self.scale > 0:
+                new_width = max(1, int(img.width * self.scale))
+                new_height = max(1, int(img.height * self.scale))
+                if new_width > 0 and new_height > 0:
+                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Apply opacity
+            if self.opacity < 1.0 and self.opacity >= 0:
+                # Create a copy and adjust alpha channel
+                if img.mode == 'RGBA':
+                    alpha = img.split()[3]
+                    alpha = alpha.point(lambda p: int(p * self.opacity))
+                    img.putalpha(alpha)
+            
+            return img
+        except Exception as e:
+            print(f"ERROR in Layer.apply_to_image: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return original image if transformation fails
+            return ensure_rgba(image.copy())
 
 
 @dataclass

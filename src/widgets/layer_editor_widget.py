@@ -31,6 +31,7 @@ class LayerEditorWidget(QWidget):
         self.current_frame: Optional[LayeredFrame] = None
         self.material_manager = None
         self.selected_layer_index: Optional[int] = None
+        self._updating_properties = False  # Flag to prevent feedback loop
         
         self.init_ui()
     
@@ -43,7 +44,7 @@ class LayerEditorWidget(QWidget):
         layout.addWidget(title)
         
         # Layer list
-        list_label = QLabel("Layers (bottom to top)")
+        list_label = QLabel("Layers (▼ = bottom layer, ▲ = top layer)")
         layout.addWidget(list_label)
         
         self.layer_list = QTableWidget()
@@ -66,32 +67,39 @@ class LayerEditorWidget(QWidget):
         self.layer_list.itemSelectionChanged.connect(self.on_layer_selected)
         layout.addWidget(self.layer_list)
         
-        # Layer controls
+        # Layer controls (compact)
         controls_layout = QHBoxLayout()
         
-        self.add_layer_btn = QPushButton("Add Layer")
+        self.add_layer_btn = QPushButton("+ Layer")
         self.add_layer_btn.clicked.connect(self.add_layer)
+        self.add_layer_btn.setMaximumHeight(25)
         controls_layout.addWidget(self.add_layer_btn)
         
-        self.remove_layer_btn = QPushButton("Remove")
+        self.remove_layer_btn = QPushButton("Del")
         self.remove_layer_btn.clicked.connect(self.remove_layer)
+        self.remove_layer_btn.setMaximumHeight(25)
         controls_layout.addWidget(self.remove_layer_btn)
         
         self.move_up_btn = QPushButton("▲")
         self.move_up_btn.clicked.connect(self.move_layer_up)
-        self.move_up_btn.setMaximumWidth(40)
+        self.move_up_btn.setMaximumWidth(30)
+        self.move_up_btn.setMaximumHeight(25)
+        self.move_up_btn.setToolTip("Move layer up in list (send backward in rendering)")
         controls_layout.addWidget(self.move_up_btn)
         
         self.move_down_btn = QPushButton("▼")
         self.move_down_btn.clicked.connect(self.move_layer_down)
-        self.move_down_btn.setMaximumWidth(40)
+        self.move_down_btn.setMaximumWidth(30)
+        self.move_down_btn.setMaximumHeight(25)
+        self.move_down_btn.setToolTip("Move layer down in list (bring forward in rendering)")
         controls_layout.addWidget(self.move_down_btn)
         
         layout.addLayout(controls_layout)
         
-        # Layer properties group
-        props_group = QGroupBox("Layer Properties")
+        # Layer properties group (compact)
+        props_group = QGroupBox("Properties")
         props_layout = QVBoxLayout()
+        props_layout.setSpacing(2)
         
         # Name
         name_layout = QHBoxLayout()
@@ -101,89 +109,77 @@ class LayerEditorWidget(QWidget):
         name_layout.addWidget(self.name_input)
         props_layout.addLayout(name_layout)
         
-        # Position
+        # Position (compact)
         pos_layout = QHBoxLayout()
-        pos_layout.addWidget(QLabel("Position:"))
-        
-        pos_layout.addWidget(QLabel("X:"))
+        pos_layout.addWidget(QLabel("Pos:"))
         self.x_spinbox = QSpinBox()
         self.x_spinbox.setRange(-4096, 4096)
+        self.x_spinbox.setMaximumWidth(70)
         self.x_spinbox.valueChanged.connect(self.on_property_changed)
         pos_layout.addWidget(self.x_spinbox)
-        
-        pos_layout.addWidget(QLabel("Y:"))
         self.y_spinbox = QSpinBox()
         self.y_spinbox.setRange(-4096, 4096)
+        self.y_spinbox.setMaximumWidth(70)
         self.y_spinbox.valueChanged.connect(self.on_property_changed)
         pos_layout.addWidget(self.y_spinbox)
-        
+        pos_layout.addStretch()
         props_layout.addLayout(pos_layout)
         
-        # Crop
-        crop_layout = QVBoxLayout()
-        crop_enabled_layout = QHBoxLayout()
-        self.crop_enabled_checkbox = QCheckBox("Enable Crop")
+        # Crop (collapsible)
+        self.crop_enabled_checkbox = QCheckBox("Crop")
         self.crop_enabled_checkbox.stateChanged.connect(self.on_crop_enabled_changed)
-        crop_enabled_layout.addWidget(self.crop_enabled_checkbox)
-        crop_layout.addLayout(crop_enabled_layout)
+        props_layout.addWidget(self.crop_enabled_checkbox)
         
-        crop_pos_layout = QHBoxLayout()
-        crop_pos_layout.addWidget(QLabel("Crop X:"))
+        crop_layout = QHBoxLayout()
         self.crop_x_spinbox = QSpinBox()
         self.crop_x_spinbox.setRange(0, 4096)
+        self.crop_x_spinbox.setMaximumWidth(55)
         self.crop_x_spinbox.valueChanged.connect(self.on_property_changed)
-        crop_pos_layout.addWidget(self.crop_x_spinbox)
-        
-        crop_pos_layout.addWidget(QLabel("Y:"))
+        crop_layout.addWidget(self.crop_x_spinbox)
         self.crop_y_spinbox = QSpinBox()
         self.crop_y_spinbox.setRange(0, 4096)
+        self.crop_y_spinbox.setMaximumWidth(55)
         self.crop_y_spinbox.valueChanged.connect(self.on_property_changed)
-        crop_pos_layout.addWidget(self.crop_y_spinbox)
-        crop_layout.addLayout(crop_pos_layout)
-        
-        crop_size_layout = QHBoxLayout()
-        crop_size_layout.addWidget(QLabel("Width:"))
+        crop_layout.addWidget(self.crop_y_spinbox)
         self.crop_width_spinbox = QSpinBox()
         self.crop_width_spinbox.setRange(1, 4096)
+        self.crop_width_spinbox.setMaximumWidth(55)
         self.crop_width_spinbox.valueChanged.connect(self.on_property_changed)
-        crop_size_layout.addWidget(self.crop_width_spinbox)
-        
-        crop_size_layout.addWidget(QLabel("Height:"))
+        crop_layout.addWidget(self.crop_width_spinbox)
         self.crop_height_spinbox = QSpinBox()
         self.crop_height_spinbox.setRange(1, 4096)
+        self.crop_height_spinbox.setMaximumWidth(55)
         self.crop_height_spinbox.valueChanged.connect(self.on_property_changed)
-        crop_size_layout.addWidget(self.crop_height_spinbox)
-        crop_layout.addLayout(crop_size_layout)
-        
+        crop_layout.addWidget(self.crop_height_spinbox)
+        crop_layout.addStretch()
         props_layout.addLayout(crop_layout)
         
-        # Scale
-        scale_layout = QHBoxLayout()
-        scale_layout.addWidget(QLabel("Scale:"))
+        # Scale & Opacity (compact, same row)
+        transform_layout = QHBoxLayout()
+        transform_layout.addWidget(QLabel("Scale:"))
         self.scale_spinbox = QDoubleSpinBox()
         self.scale_spinbox.setRange(0.01, 10.0)
         self.scale_spinbox.setSingleStep(0.1)
         self.scale_spinbox.setValue(1.0)
+        self.scale_spinbox.setMaximumWidth(60)
         self.scale_spinbox.valueChanged.connect(self.on_property_changed)
-        scale_layout.addWidget(self.scale_spinbox)
-        props_layout.addLayout(scale_layout)
+        transform_layout.addWidget(self.scale_spinbox)
         
-        # Opacity
-        opacity_layout = QHBoxLayout()
-        opacity_layout.addWidget(QLabel("Opacity:"))
+        transform_layout.addWidget(QLabel("Opacity:"))
         self.opacity_spinbox = QDoubleSpinBox()
         self.opacity_spinbox.setRange(0.0, 1.0)
         self.opacity_spinbox.setSingleStep(0.1)
         self.opacity_spinbox.setValue(1.0)
+        self.opacity_spinbox.setMaximumWidth(60)
         self.opacity_spinbox.valueChanged.connect(self.on_property_changed)
-        opacity_layout.addWidget(self.opacity_spinbox)
-        props_layout.addLayout(opacity_layout)
+        transform_layout.addWidget(self.opacity_spinbox)
         
-        # Visible
         self.visible_checkbox = QCheckBox("Visible")
         self.visible_checkbox.setChecked(True)
         self.visible_checkbox.stateChanged.connect(self.on_property_changed)
-        props_layout.addWidget(self.visible_checkbox)
+        transform_layout.addWidget(self.visible_checkbox)
+        transform_layout.addStretch()
+        props_layout.addLayout(transform_layout)
         
         props_group.setLayout(props_layout)
         layout.addWidget(props_group)
@@ -199,6 +195,10 @@ class LayerEditorWidget(QWidget):
     
     def set_frame(self, frame: Optional[LayeredFrame]):
         """Set the frame to edit"""
+        # Clear current selection first to avoid issues
+        self.selected_layer_index = None
+        self.set_property_controls_enabled(False)
+        
         self.current_frame = frame
         self.refresh_layer_list()
     
@@ -208,13 +208,25 @@ class LayerEditorWidget(QWidget):
     
     def refresh_layer_list(self):
         """Refresh the layer list display"""
+        # Save current selection
+        current_selection = self.selected_layer_index
+        
+        # Block signals during refresh to prevent triggering selection changes
+        self.layer_list.blockSignals(True)
         self.layer_list.setRowCount(0)
         
         if not self.current_frame:
+            self.layer_list.blockSignals(False)
             return
         
         for i, layer in enumerate(self.current_frame.layers):
             self.add_layer_row(i, layer)
+        
+        # Restore selection if valid
+        if current_selection is not None and current_selection < len(self.current_frame.layers):
+            self.layer_list.selectRow(current_selection)
+        
+        self.layer_list.blockSignals(False)
     
     def add_layer_row(self, row_index: int, layer: Layer):
         """Add a row to the layer table"""
@@ -261,22 +273,33 @@ class LayerEditorWidget(QWidget):
     def add_layer(self):
         """Add a new layer from selected material"""
         if not self.current_frame:
-            QMessageBox.warning(self, "Warning", "No frame is being edited!")
+            QMessageBox.warning(self, "Warning", "No frame is being edited!\nPlease select a frame in Timeline first.")
             return
         
         if not self.material_manager or len(self.material_manager) == 0:
-            QMessageBox.warning(self, "Warning", "No materials available!")
+            QMessageBox.warning(self, "Warning", "No materials available!\nPlease load some images first in the Materials tab.")
             return
         
         # Show material selector dialog
-        dialog = MaterialSelectorDialog(self.material_manager, self)
-        if dialog.exec():
-            material_index = dialog.get_selected_material_index()
-            if material_index is not None:
-                new_layer = Layer(material_index=material_index, name=f"Layer {len(self.current_frame) + 1}")
-                self.current_frame.add_layer(new_layer)
-                self.refresh_layer_list()
-                self.layers_changed.emit()
+        try:
+            dialog = MaterialSelectorDialog(self.material_manager, self)
+            result = dialog.exec()
+            
+            if result:
+                material_index = dialog.get_selected_material_index()
+                
+                if material_index is not None:
+                    new_layer = Layer(material_index=material_index, name=f"Layer {len(self.current_frame) + 1}")
+                    self.current_frame.add_layer(new_layer)
+                    self.refresh_layer_list()
+                    self.layers_changed.emit()
+                else:
+                    QMessageBox.warning(self, "Warning", "No material was selected!")
+        except Exception as e:
+            print(f"ERROR in add_layer: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to add layer:\n{str(e)}")
     
     def remove_layer(self):
         """Remove the selected layer"""
@@ -290,25 +313,27 @@ class LayerEditorWidget(QWidget):
         self.layers_changed.emit()
     
     def move_layer_up(self):
-        """Move selected layer up (increase z-index)"""
+        """Move selected layer up in list (decrease z-index, send to back)"""
         if not self.current_frame or self.selected_layer_index is None:
             return
         
-        if self.selected_layer_index < len(self.current_frame.layers) - 1:
-            self.current_frame.move_layer(self.selected_layer_index, self.selected_layer_index + 1)
-            self.selected_layer_index += 1
+        # Up in list = decrease index = send backward
+        if self.selected_layer_index > 0:
+            self.current_frame.move_layer(self.selected_layer_index, self.selected_layer_index - 1)
+            self.selected_layer_index -= 1
             self.refresh_layer_list()
             self.layer_list.selectRow(self.selected_layer_index)
             self.layers_changed.emit()
     
     def move_layer_down(self):
-        """Move selected layer down (decrease z-index)"""
+        """Move selected layer down in list (increase z-index, bring to front)"""
         if not self.current_frame or self.selected_layer_index is None:
             return
         
-        if self.selected_layer_index > 0:
-            self.current_frame.move_layer(self.selected_layer_index, self.selected_layer_index - 1)
-            self.selected_layer_index -= 1
+        # Down in list = increase index = bring forward
+        if self.selected_layer_index < len(self.current_frame.layers) - 1:
+            self.current_frame.move_layer(self.selected_layer_index, self.selected_layer_index + 1)
+            self.selected_layer_index += 1
             self.refresh_layer_list()
             self.layer_list.selectRow(self.selected_layer_index)
             self.layers_changed.emit()
@@ -332,18 +357,8 @@ class LayerEditorWidget(QWidget):
     
     def load_layer_properties(self, layer: Layer):
         """Load layer properties into controls"""
-        # Block signals to avoid triggering on_property_changed
-        self.name_input.blockSignals(True)
-        self.x_spinbox.blockSignals(True)
-        self.y_spinbox.blockSignals(True)
-        self.crop_enabled_checkbox.blockSignals(True)
-        self.crop_x_spinbox.blockSignals(True)
-        self.crop_y_spinbox.blockSignals(True)
-        self.crop_width_spinbox.blockSignals(True)
-        self.crop_height_spinbox.blockSignals(True)
-        self.scale_spinbox.blockSignals(True)
-        self.opacity_spinbox.blockSignals(True)
-        self.visible_checkbox.blockSignals(True)
+        # Use flag to prevent triggering on_property_changed while loading
+        self._updating_properties = True
         
         self.name_input.setText(layer.name)
         self.x_spinbox.setValue(layer.x)
@@ -366,18 +381,8 @@ class LayerEditorWidget(QWidget):
         self.opacity_spinbox.setValue(layer.opacity)
         self.visible_checkbox.setChecked(layer.visible)
         
-        # Unblock signals
-        self.name_input.blockSignals(False)
-        self.x_spinbox.blockSignals(False)
-        self.y_spinbox.blockSignals(False)
-        self.crop_enabled_checkbox.blockSignals(False)
-        self.crop_x_spinbox.blockSignals(False)
-        self.crop_y_spinbox.blockSignals(False)
-        self.crop_width_spinbox.blockSignals(False)
-        self.crop_height_spinbox.blockSignals(False)
-        self.scale_spinbox.blockSignals(False)
-        self.opacity_spinbox.blockSignals(False)
-        self.visible_checkbox.blockSignals(False)
+        # Re-enable property change handling
+        self._updating_properties = False
     
     def on_crop_enabled_changed(self):
         """Handle crop enabled checkbox change"""
@@ -390,38 +395,56 @@ class LayerEditorWidget(QWidget):
     
     def on_property_changed(self):
         """Handle property change"""
+        if self._updating_properties:  # Prevent feedback loop
+            return
+            
         if not self.current_frame or self.selected_layer_index is None:
+            return
+        
+        # Safety check: ensure selected layer index is valid
+        if self.selected_layer_index >= len(self.current_frame.layers):
+            print(f"WARNING: selected_layer_index {self.selected_layer_index} is out of range (total layers: {len(self.current_frame.layers)})")
+            self.selected_layer_index = None
             return
         
         layer = self.current_frame.get_layer(self.selected_layer_index)
         if not layer:
+            print(f"WARNING: Could not get layer at index {self.selected_layer_index}")
             return
         
-        layer.name = self.name_input.text()
-        layer.x = self.x_spinbox.value()
-        layer.y = self.y_spinbox.value()
-        
-        # Crop
-        if self.crop_enabled_checkbox.isChecked():
-            layer.crop_x = self.crop_x_spinbox.value()
-            layer.crop_y = self.crop_y_spinbox.value()
-            layer.crop_width = self.crop_width_spinbox.value()
-            layer.crop_height = self.crop_height_spinbox.value()
-        else:
-            layer.crop_width = None
-            layer.crop_height = None
-        
-        layer.scale = self.scale_spinbox.value()
-        layer.opacity = self.opacity_spinbox.value()
-        layer.visible = self.visible_checkbox.isChecked()
-        
-        # Refresh the list to show updated info
-        if self.selected_layer_index is not None:
-            visible_text = "✓" if layer.visible else "✗"
-            layer_text = f"{visible_text} {layer.name}"
-            self.layer_list.item(self.selected_layer_index, 2).setText(layer_text)
-        
-        self.layers_changed.emit()
+        try:
+            layer.name = self.name_input.text()
+            layer.x = self.x_spinbox.value()
+            layer.y = self.y_spinbox.value()
+            
+            # Crop
+            if self.crop_enabled_checkbox.isChecked():
+                layer.crop_x = self.crop_x_spinbox.value()
+                layer.crop_y = self.crop_y_spinbox.value()
+                layer.crop_width = self.crop_width_spinbox.value()
+                layer.crop_height = self.crop_height_spinbox.value()
+            else:
+                layer.crop_width = None
+                layer.crop_height = None
+            
+            layer.scale = self.scale_spinbox.value()
+            layer.opacity = self.opacity_spinbox.value()
+            layer.visible = self.visible_checkbox.isChecked()
+            
+            # Update the layer name in the list without rebuilding the entire list
+            if self.selected_layer_index is not None and self.selected_layer_index < self.layer_list.rowCount():
+                visible_text = "✓" if layer.visible else "✗"
+                layer_text = f"{visible_text} {layer.name}"
+                item = self.layer_list.item(self.selected_layer_index, 2)
+                if item:
+                    item.setText(layer_text)
+            
+            # Emit signal to update preview (but not refresh the whole UI)
+            self.layers_changed.emit()
+        except Exception as e:
+            print(f"ERROR in on_property_changed: {e}")
+            import traceback
+            traceback.print_exc()
     
     def set_property_controls_enabled(self, enabled: bool):
         """Enable or disable property controls"""
