@@ -217,6 +217,16 @@ class BatchProcessorWidget(QWidget):
         output_group = QGroupBox("4. Output Settings")
         output_layout = QVBoxLayout()
         
+        # Color palette setting
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(QLabel("Color Palette:"))
+        self.color_palette_combo = QComboBox()
+        self.color_palette_combo.addItems(["256", "128", "64", "32", "16"])
+        self.color_palette_combo.setCurrentText("256")
+        color_layout.addWidget(self.color_palette_combo)
+        color_layout.addStretch()
+        output_layout.addLayout(color_layout)
+        
         self.same_dir_checkbox = QCheckBox("Save GIFs in same directory as source images")
         self.same_dir_checkbox.setChecked(True)
         self.same_dir_checkbox.toggled.connect(self.on_output_mode_changed)
@@ -579,6 +589,9 @@ class BatchProcessorWidget(QWidget):
             
             split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
             
+            # Get color count from UI
+            color_count = int(self.color_palette_combo.currentText())
+            
             successful, failed = processor.process_batch(
                 image_paths=self.image_paths,
                 template=self.selected_template,
@@ -588,7 +601,8 @@ class BatchProcessorWidget(QWidget):
                 tile_width=self.tile_width_spinbox.value(),
                 tile_height=self.tile_height_spinbox.value(),
                 selected_positions=self.selected_positions if self.selected_positions else None,
-                output_directory=output_directory
+                output_directory=output_directory,
+                color_count=color_count
             )
             
             # Show results

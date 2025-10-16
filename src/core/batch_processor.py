@@ -55,7 +55,8 @@ class BatchProcessor:
         tile_width: int = 32,
         tile_height: int = 32,
         selected_positions: Optional[List[Tuple[int, int]]] = None,
-        output_path: Optional[str] = None
+        output_path: Optional[str] = None,
+        color_count: int = 256
     ) -> str:
         """
         Process a single image: split tiles → apply template → export GIF
@@ -70,6 +71,7 @@ class BatchProcessor:
             tile_height: Tile height for size mode
             selected_positions: List of (row, col) positions to keep, None = all
             output_path: Output GIF path, None = auto (replace extension)
+            color_count: Number of colors in the palette (256, 128, 64, 32, 16)
         
         Returns:
             Output GIF file path
@@ -132,6 +134,7 @@ class BatchProcessor:
                 settings.get("output_height", 256)
             )
             gif_builder.set_loop(settings.get("loop_count", 0))
+            gif_builder.set_color_count(color_count)
             
             # Handle transparent background
             if settings.get("transparent_bg", False):
@@ -166,7 +169,8 @@ class BatchProcessor:
         tile_width: int = 32,
         tile_height: int = 32,
         selected_positions: Optional[List[Tuple[int, int]]] = None,
-        output_directory: Optional[str] = None
+        output_directory: Optional[str] = None,
+        color_count: int = 256
     ) -> Tuple[List[str], List[str]]:
         """
         Process multiple images in batch
@@ -181,6 +185,7 @@ class BatchProcessor:
             tile_height: Tile height for size mode
             selected_positions: List of (row, col) positions to keep, None = all
             output_directory: Output directory, None = same as source
+            color_count: Number of colors in the palette (256, 128, 64, 32, 16)
         
         Returns:
             Tuple of (successful_outputs, failed_images)
@@ -211,7 +216,8 @@ class BatchProcessor:
                     tile_width=tile_width,
                     tile_height=tile_height,
                     selected_positions=selected_positions,
-                    output_path=output_path
+                    output_path=output_path,
+                    color_count=color_count
                 )
                 
                 successful_outputs.append(result_path)

@@ -28,7 +28,8 @@ class TemplateManager:
         output_height: int,
         loop_count: int,
         transparent_bg: bool,
-        material_count: int
+        material_count: int,
+        color_count: int = 256
     ) -> Dict[str, Any]:
         """
         Export current timeline as a template
@@ -40,6 +41,7 @@ class TemplateManager:
             loop_count: GIF loop count
             transparent_bg: Whether background is transparent
             material_count: Total number of materials used
+            color_count: Number of colors in the palette (256, 128, 64, 32, 16)
         
         Returns:
             Template dictionary
@@ -51,7 +53,8 @@ class TemplateManager:
                 "output_height": output_height,
                 "loop_count": loop_count,
                 "transparent_bg": transparent_bg,
-                "material_count": material_count
+                "material_count": material_count,
+                "color_count": color_count
             },
             "frames": []
         }

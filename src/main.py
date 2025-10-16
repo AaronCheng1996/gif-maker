@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
-                              QTableWidgetItem)
+                              QTableWidgetItem, QComboBox)
 from PyQt6.QtCore import Qt, QSize, QItemSelectionModel
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 
@@ -371,6 +371,18 @@ class MainWindow(QMainWindow):
         self.transparent_bg_checkbox = QCheckBox("Transparent BG")
         self.transparent_bg_checkbox.stateChanged.connect(self.on_transparent_bg_changed)
         settings_layout.addWidget(self.transparent_bg_checkbox)
+        
+        # Color palette selection
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(QLabel("Colors:"))
+        self.color_palette_combo = QComboBox()
+        self.color_palette_combo.addItems(["256", "128", "64", "32", "16"])
+        self.color_palette_combo.setCurrentText("256")
+        self.color_palette_combo.currentTextChanged.connect(self.on_color_palette_changed)
+        color_layout.addWidget(self.color_palette_combo)
+        color_layout.addStretch()
+        settings_layout.addLayout(color_layout)
+        
         
         settings_group.setLayout(settings_layout)
         layout.addWidget(settings_group, stretch=0)
@@ -793,6 +805,10 @@ class MainWindow(QMainWindow):
                 )
                 self.gif_builder.set_loop(self.loop_spinbox.value())
                 
+                # Set color palette
+                color_count = int(self.color_palette_combo.currentText())
+                self.gif_builder.set_color_count(color_count)
+                
                 if self.transparent_bg_checkbox.isChecked():
                     self.gif_builder.set_background_color(0, 0, 0, 0)
                 else:
@@ -804,46 +820,8 @@ class MainWindow(QMainWindow):
                     file_path
                 )
                 
-                # Ask if user wants to create a resized version
-                reply = QMessageBox.question(
-                    self,
-                    "Export Complete",
-                    f"GIF saved successfully!\n{file_path}\n\n"
-                    f"Would you like to create a half-size version for testing?\n"
-                    f"This is useful for previewing large GIFs.",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No
-                )
-                
-                if reply == QMessageBox.StandardButton.Yes:
-                    self.create_resized_version(file_path, 0.5)
-                
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export GIF:\n{str(e)}")
-    
-    def create_resized_version(self, original_path: str, scale_factor: float = 0.5):
-        """Create a resized version of the exported GIF"""
-        try:
-            original_file = Path(original_path)
-            resized_name = f"{original_file.stem}_50pct{original_file.suffix}"
-            resized_path = original_file.parent / resized_name
-            
-            self.gif_builder.resize_gif(str(original_path), str(resized_path), scale_factor)
-            
-            QMessageBox.information(
-                self,
-                "Resize Complete",
-                f"Half-size version created!\n{resized_path}\n\n"
-                f"Original: {original_file.name}\n"
-                f"Resized: {resized_name}"
-            )
-            
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "Resize Failed",
-                f"Failed to create resized version:\n{str(e)}"
-            )
     
     def on_timeline_selection_changed(self):
         """Handle timeline selection change - auto-edit the selected frame"""
@@ -1389,6 +1367,14 @@ class MainWindow(QMainWindow):
         # Update preview with new transparency setting
         self.update_preview()
     
+    def on_color_palette_changed(self):
+        """Handle color palette selection change"""
+        color_count = int(self.color_palette_combo.currentText())
+        self.gif_builder.set_color_count(color_count)
+        # Update preview with new color palette setting
+        self.update_preview()
+    
+    
     def on_preview_mode_changed(self):
         """Handle preview mode change"""
         if self.preview_all_checkbox.isChecked():
@@ -1414,6 +1400,10 @@ class MainWindow(QMainWindow):
                 self.width_spinbox.value(),
                 self.height_spinbox.value()
             )
+            
+            # Set color palette for preview
+            color_count = int(self.color_palette_combo.currentText())
+            self.gif_builder.set_color_count(color_count)
             
             if self.transparent_bg_checkbox.isChecked():
                 self.gif_builder.set_background_color(0, 0, 0, 0)
@@ -1454,6 +1444,10 @@ class MainWindow(QMainWindow):
                 self.height_spinbox.value()
             )
             self.gif_builder.set_loop(self.loop_spinbox.value())
+            
+            # Set color palette for preview
+            color_count = int(self.color_palette_combo.currentText())
+            self.gif_builder.set_color_count(color_count)
             
             if self.transparent_bg_checkbox.isChecked():
                 self.gif_builder.set_background_color(0, 0, 0, 0)
@@ -1497,13 +1491,15 @@ class MainWindow(QMainWindow):
                 self.last_template_dir = str(Path(file_path).parent)
                 
                 # Export template
+                color_count = int(self.color_palette_combo.currentText())
                 template = TemplateManager.export_template(
                     self.layered_sequence_editor,
                     self.width_spinbox.value(),
                     self.height_spinbox.value(),
                     self.loop_spinbox.value(),
                     self.transparent_bg_checkbox.isChecked(),
-                    len(self.material_manager)
+                    len(self.material_manager),
+                    color_count
                 )
                 
                 # Save to file
@@ -1633,6 +1629,11 @@ class MainWindow(QMainWindow):
                 self.height_spinbox.setValue(settings.get('output_height', 400))
                 self.loop_spinbox.setValue(settings.get('loop_count', 0))
                 self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', False))
+                
+                # Apply color palette setting
+                color_count = settings.get('color_count', 256)
+                self.color_palette_combo.setCurrentText(str(color_count))
+                self.gif_builder.set_color_count(color_count)
             
             # Refresh UI
             self.refresh_timeline()
@@ -1669,13 +1670,15 @@ class MainWindow(QMainWindow):
         if ok and name:
             try:
                 # Create template
+                color_count = int(self.color_palette_combo.currentText())
                 template = TemplateManager.export_template(
                     self.layered_sequence_editor,
                     self.width_spinbox.value(),
                     self.height_spinbox.value(),
                     self.loop_spinbox.value(),
                     self.transparent_bg_checkbox.isChecked(),
-                    len(self.material_manager)
+                    len(self.material_manager),
+                    color_count
                 )
                 
                 # Store template
@@ -1746,6 +1749,11 @@ class MainWindow(QMainWindow):
                 self.height_spinbox.setValue(settings.get('output_height', 400))
                 self.loop_spinbox.setValue(settings.get('loop_count', 0))
                 self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', False))
+                
+                # Apply color palette setting
+                color_count = settings.get('color_count', 256)
+                self.color_palette_combo.setCurrentText(str(color_count))
+                self.gif_builder.set_color_count(color_count)
             
             # Refresh UI
             self.refresh_timeline()

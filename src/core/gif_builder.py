@@ -15,6 +15,7 @@ class GifBuilder:
         self.loop: int = 0
         self.optimize: bool = True
         self.disposal: int = 2
+        self.color_count: int = 256  # Default color palette size
     
     def set_output_size(self, width: int, height: int):
         self.output_size = (width, height)
@@ -24,6 +25,10 @@ class GifBuilder:
     
     def set_loop(self, loop: int):
         self.loop = loop
+    
+    def set_color_count(self, color_count: int):
+        """Set the number of colors in the palette (256, 128, 64, 32, 16, etc.)"""
+        self.color_count = color_count
     
     def prepare_frame(self, material_image: Image.Image) -> Image.Image:
         img = ensure_rgba(material_image)
@@ -83,7 +88,7 @@ class GifBuilder:
                     
                     # Create a mask for transparent pixels (alpha < 128)
                     # Pixels with alpha >= 128 are considered opaque
-                    frame_img = frame_img.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
+                    frame_img = frame_img.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=self.color_count-1)
                     
                     # Set transparent pixels based on alpha channel
                     # Find a color index to use for transparency
@@ -129,7 +134,7 @@ class GifBuilder:
                     
                     # Create a mask for transparent pixels (alpha < 128)
                     # Pixels with alpha >= 128 are considered opaque
-                    frame_img = frame_img.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
+                    frame_img = frame_img.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=self.color_count-1)
                     
                     # Set transparent pixels based on alpha channel
                     # Find a color index to use for transparency
@@ -352,7 +357,7 @@ class GifBuilder:
                     
                     # Create a mask for transparent pixels (alpha < 128)
                     # Pixels with alpha >= 128 are considered opaque
-                    composited = composited.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=255)
+                    composited = composited.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=self.color_count-1)
                     
                     # Set transparent pixels based on alpha channel
                     # Find a color index to use for transparency

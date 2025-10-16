@@ -61,7 +61,8 @@ A powerful GIF animation editor designed for game developers and animators, allo
    - Custom output size
    - Set loop count (0 = infinite loop)
    - Transparent background support
-   - Automatic GIF file size optimization
+   - Color palette selection (256, 128, 64, 32, 16 colors)
+   - Automatic file size optimization
 
 7. **Material Export**
    - Export selected materials as PNG files
