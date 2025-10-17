@@ -139,7 +139,7 @@ class BatchProcessorWidget(QWidget):
         self.rows_spinbox.setMinimum(1)
         self.rows_spinbox.setMaximum(100)
         self.rows_spinbox.setValue(4)
-        self.rows_spinbox.setMaximumWidth(60)
+        self.rows_spinbox.setMaximumWidth(80)
         self.rows_spinbox.valueChanged.connect(self.update_position_selector)
         grid_layout.addWidget(self.rows_spinbox)
         
@@ -149,7 +149,7 @@ class BatchProcessorWidget(QWidget):
         self.cols_spinbox.setMinimum(1)
         self.cols_spinbox.setMaximum(100)
         self.cols_spinbox.setValue(4)
-        self.cols_spinbox.setMaximumWidth(60)
+        self.cols_spinbox.setMaximumWidth(80)
         self.cols_spinbox.valueChanged.connect(self.update_position_selector)
         grid_layout.addWidget(self.cols_spinbox)
         
@@ -164,7 +164,7 @@ class BatchProcessorWidget(QWidget):
         self.tile_width_spinbox.setMinimum(1)
         self.tile_width_spinbox.setMaximum(10000)
         self.tile_width_spinbox.setValue(32)
-        self.tile_width_spinbox.setMaximumWidth(60)
+        self.tile_width_spinbox.setMaximumWidth(80)
         size_layout.addWidget(self.tile_width_spinbox)
         
         size_layout.addWidget(QLabel("×"))
@@ -173,7 +173,7 @@ class BatchProcessorWidget(QWidget):
         self.tile_height_spinbox.setMinimum(1)
         self.tile_height_spinbox.setMaximum(10000)
         self.tile_height_spinbox.setValue(32)
-        self.tile_height_spinbox.setMaximumWidth(60)
+        self.tile_height_spinbox.setMaximumWidth(80)
         size_layout.addWidget(self.tile_height_spinbox)
         
         size_layout.addStretch()
@@ -401,8 +401,8 @@ class BatchProcessorWidget(QWidget):
                 button = QPushButton(f"{row},{col}")
                 button.setCheckable(True)
                 button.setChecked(True)
-                button.setMinimumSize(35, 35)
-                button.setMaximumSize(50, 50)
+                button.setMinimumSize(40, 40)
+                button.setMaximumSize(55, 55)
                 button.clicked.connect(lambda checked, r=row, c=col: self.toggle_position(r, c))
                 
                 self.position_grid_layout.addWidget(button, row, col)

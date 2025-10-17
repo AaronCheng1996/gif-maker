@@ -46,11 +46,11 @@ class PreviewWidget(QWidget):
         
         layout.addLayout(control_layout)
         
-        # Preview area
+        # Preview area - Fixed 400x400 size
         self.preview_label = QLabel("No Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumHeight(180)  # Slightly smaller to leave room for controls
-        self.preview_label.setScaledContents(False)  # Don't stretch, maintain aspect ratio
+        self.preview_label.setFixedSize(400, 400)  # Fixed size to prevent UI layout issues
+        self.preview_label.setScaledContents(False)  # Don't auto-scale, we'll handle it manually
         # Light gray background to make transparent areas visible, but not distracting
         self.preview_label.setStyleSheet("QLabel { background-color: #e8e8e8; border: 2px solid #ccc; }")
         layout.addWidget(self.preview_label)
@@ -75,23 +75,29 @@ class PreviewWidget(QWidget):
         
         pixmap = self.pil_to_pixmap(pil_image)
         
-        # Get label width and calculate appropriate height to maintain aspect ratio
-        label_width = self.preview_label.width()
-        if label_width < 10:  # Not yet sized
-            label_width = 400
+        # Calculate scaling to fit within 400x400 while maintaining aspect ratio
+        max_size = 400
+        original_width = pixmap.width()
+        original_height = pixmap.height()
         
-        # Scale to fit width while maintaining aspect ratio
+        # Calculate scale factor to fit within the square
+        scale_x = max_size / original_width
+        scale_y = max_size / original_height
+        scale = min(scale_x, scale_y)  # Use the smaller scale to ensure it fits
+        
+        # Calculate new dimensions
+        new_width = int(original_width * scale)
+        new_height = int(original_height * scale)
+        
+        # Scale the pixmap while maintaining aspect ratio
         scaled_pixmap = pixmap.scaled(
-            label_width,
-            self.preview_label.maximumHeight() if self.preview_label.maximumHeight() > 0 else 10000,
-            Qt.AspectRatioMode.KeepAspectRatio,
+            new_width, 
+            new_height, 
+            Qt.AspectRatioMode.KeepAspectRatio, 
             Qt.TransformationMode.SmoothTransformation
         )
         
-        # Adjust label height to match scaled pixmap, but ensure minimum
-        new_height = max(scaled_pixmap.height(), self.preview_label.minimumHeight())
-        self.preview_label.setFixedHeight(new_height)
-        
+        # Set the scaled pixmap - Qt will center it due to AlignCenter alignment
         self.preview_label.setPixmap(scaled_pixmap)
         self.update_info()
     
@@ -174,9 +180,4 @@ class PreviewWidget(QWidget):
         else:
             self.frame_info_changed.emit(0, 0, 0)
     
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Update preview when widget is resized to adjust height dynamically
-        if self.frames:
-            self.show_current_frame()
 

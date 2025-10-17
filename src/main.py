@@ -53,7 +53,8 @@ class MainWindow(QMainWindow):
         splitter.addWidget(middle_panel)
         splitter.addWidget(right_panel)
         # Give more space to middle panel (timeline & layers)
-        splitter.setSizes([300, 700, 400])
+        # Adjusted sizes: left panel wider for batch processor, right panel for preview
+        splitter.setSizes([400, 700, 400])
         
         main_layout.addWidget(splitter)
         
@@ -283,11 +284,15 @@ class MainWindow(QMainWindow):
         
         layout.addLayout(preview_controls)
         
-        # Preview (dynamic height based on content)
+        # Preview (centered horizontally)
+        preview_container = QHBoxLayout()
+        preview_container.addStretch()  # Add stretch before preview
         self.preview = PreviewWidget()
         self.preview.frame_info_changed.connect(self.on_preview_frame_info_changed)
         self.preview.setMaximumHeight(400)  # Limit max height (accounts for control buttons)
-        layout.addWidget(self.preview, stretch=0)  # No stretch, use natural size
+        preview_container.addWidget(self.preview)  # Add preview widget
+        preview_container.addStretch()  # Add stretch after preview
+        layout.addLayout(preview_container)
         
         # Template management section (more space)
         template_group = QGroupBox("Template Manager")
@@ -996,8 +1001,8 @@ class MainWindow(QMainWindow):
                 frame = self.layered_sequence_editor.get_frame(frame_index)
                 if frame:
                     for layer in frame.layers:
-                        layer.x += offset_x
-                        layer.y += offset_y
+                        layer.x = offset_x
+                        layer.y = offset_y
                         total_layers += 1
         
         # Reset offset values to prevent accidental re-application
