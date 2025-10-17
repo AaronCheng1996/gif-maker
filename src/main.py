@@ -1018,10 +1018,6 @@ class MainWindow(QMainWindow):
         offset_x = self.batch_offset_x.value()
         offset_y = self.batch_offset_y.value()
         
-        if offset_x == 0 and offset_y == 0:
-            QMessageBox.information(self, "Info", "Offset is 0, no changes needed.")
-            return
-        
         total_layers = 0
         for frame_index in frame_indices:
             if frame_index < len(self.layered_sequence_editor):
