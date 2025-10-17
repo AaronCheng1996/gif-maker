@@ -4,14 +4,14 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
-                              QTableWidgetItem, QComboBox)
+                              QTableWidgetItem, QComboBox, QStackedWidget)
 from PyQt6.QtCore import Qt, QSize, QItemSelectionModel
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 
 from PIL import Image
 
 from .core import MaterialManager, SequenceEditor, GifBuilder, LayeredSequenceEditor, Layer, LayeredFrame, TemplateManager
-from .widgets import PreviewWidget, TimelineWidget, TileEditorWidget, LayerEditorWidget, BatchProcessorWidget
+from .widgets import PreviewWidget, PreviewPageWidget, TimelineWidget, TileEditorWidget, LayerEditorWidget, BatchProcessorWidget
 
 
 class MainWindow(QMainWindow):
@@ -36,9 +36,27 @@ class MainWindow(QMainWindow):
         self.resize(1600, 950)
     
     def init_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # 創建堆疊 widget 來管理不同的頁面
+        self.stacked_widget = QStackedWidget()
+        self.setCentralWidget(self.stacked_widget)
         
+        # 創建主頁面
+        self.main_page = self.create_main_page()
+        self.stacked_widget.addWidget(self.main_page)
+        
+        # 創建預覽頁面
+        self.preview_page = PreviewPageWidget()
+        self.preview_page.back_requested.connect(self.show_main_page)
+        self.stacked_widget.addWidget(self.preview_page)
+        
+        # 預設顯示主頁面
+        self.stacked_widget.setCurrentWidget(self.main_page)
+        
+        self.create_menu_bar()
+    
+    def create_main_page(self) -> QWidget:
+        """創建主頁面"""
+        central_widget = QWidget()
         main_layout = QHBoxLayout()
         central_widget.setLayout(main_layout)
         
@@ -58,7 +76,15 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(splitter)
         
-        self.create_menu_bar()
+        return central_widget
+    
+    def show_main_page(self):
+        """顯示主頁面"""
+        self.stacked_widget.setCurrentWidget(self.main_page)
+    
+    def show_preview_page(self):
+        """顯示預覽頁面"""
+        self.stacked_widget.setCurrentWidget(self.preview_page)
     
     def create_left_panel(self) -> QWidget:
         panel = QWidget()
@@ -289,6 +315,7 @@ class MainWindow(QMainWindow):
         preview_container.addStretch()  # Add stretch before preview
         self.preview = PreviewWidget()
         self.preview.frame_info_changed.connect(self.on_preview_frame_info_changed)
+        self.preview.preview_clicked.connect(self.on_preview_clicked)
         self.preview.setMaximumHeight(400)  # Limit max height (accounts for control buttons)
         preview_container.addWidget(self.preview)  # Add preview widget
         preview_container.addStretch()  # Add stretch after preview
@@ -1366,6 +1393,13 @@ class MainWindow(QMainWindow):
             self.info_label.setText(f"Frame: {current}/{total} | Duration: {duration}ms")
         else:
             self.info_label.setText("Frame: 0/0")
+    
+    def on_preview_clicked(self):
+        """Handle preview image click - switch to preview page"""
+        # 將當前的幀資料傳遞給預覽頁面
+        if hasattr(self.preview, 'frames') and self.preview.frames:
+            self.preview_page.set_frames(self.preview.frames)
+            self.show_preview_page()
     
     def on_transparent_bg_changed(self):
         """Handle transparent background checkbox change"""
