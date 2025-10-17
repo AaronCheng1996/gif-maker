@@ -1,11 +1,15 @@
 import sys
+import os
+import json
+import shutil
+from datetime import datetime
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
                               QTableWidgetItem, QComboBox, QStackedWidget)
-from PyQt6.QtCore import Qt, QSize, QItemSelectionModel
+from PyQt6.QtCore import Qt, QSize, QItemSelectionModel, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 
 from PIL import Image
@@ -30,6 +34,23 @@ class MainWindow(QMainWindow):
         
         # Template storage: {name: template_dict}
         self.templates = {}
+        
+        # Auto-save configuration
+        self.auto_save_enabled = True
+        self.auto_save_interval = 5 * 60 * 1000  # 5 minutes in milliseconds
+        self.auto_save_timer = QTimer()
+        self.auto_save_timer.timeout.connect(self.auto_save_template)
+        self.auto_save_timer.start(self.auto_save_interval)
+        
+        # Auto-save directory
+        self.auto_save_dir = Path.home() / ".gif_maker" / "auto_save"
+        self.auto_save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Fixed auto-save filename (always overwrite the same file)
+        self.auto_save_file = self.auto_save_dir / "auto_save_latest.json"
+        
+        # Track last auto-save time to avoid duplicate saves
+        self.last_auto_save_content_hash = None
         
         self.init_ui()
         self.setWindowTitle("GIF Maker - Layered Animation Editor")
@@ -446,6 +467,13 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("Export Template", self.export_template)
         file_menu.addAction("Import Template", self.import_template)
+        file_menu.addSeparator()
+        
+        # Auto-save menu items
+        auto_save_menu = file_menu.addMenu("Auto-Save")
+        auto_save_menu.addAction("Restore Auto-Save", self.restore_auto_save)
+        auto_save_menu.addAction("Toggle Auto-Save", self.toggle_auto_save)
+        
         file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
         
@@ -1954,9 +1982,162 @@ class MainWindow(QMainWindow):
             "<li>Real-time preview</li>"
             "<li>Customizable frame duration and sequence</li>"
             "<li>Export and import timeline templates</li>"
+            "<li>Auto-save protection</li>"
             "</ul>"
             "<p>Version 1.0</p>"
         )
+    
+    def auto_save_template(self):
+        """Automatically save current work as template"""
+        if not self.auto_save_enabled:
+            return
+        
+        # Only save if there's actual content
+        if len(self.layered_sequence_editor) == 0:
+            return
+        
+        try:
+            # Create content hash to avoid duplicate saves
+            content_hash = self._get_content_hash()
+            if content_hash == self.last_auto_save_content_hash:
+                return  # No changes since last save
+            
+            # Use fixed filename (always overwrite the same file)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            frame_count = len(self.layered_sequence_editor)
+            material_count = len(self.material_manager)
+            
+            file_path = self.auto_save_file
+            
+            # Create template
+            color_count = int(self.color_palette_combo.currentText())
+            template = TemplateManager.export_template(
+                self.layered_sequence_editor,
+                self.width_spinbox.value(),
+                self.height_spinbox.value(),
+                self.loop_spinbox.value(),
+                self.transparent_bg_checkbox.isChecked(),
+                len(self.material_manager),
+                color_count
+            )
+            
+            # Add auto-save metadata
+            template["auto_save_metadata"] = {
+                "timestamp": timestamp,
+                "frame_count": frame_count,
+                "material_count": material_count,
+                "content_hash": content_hash
+            }
+            
+            # Save to file
+            TemplateManager.save_template_to_file(template, str(file_path))
+            
+            # Update tracking
+            self.last_auto_save_content_hash = content_hash
+            
+            print(f"Auto-saved: {file_path.name}")  # Silent logging
+            
+        except Exception as e:
+            print(f"Auto-save failed: {e}")  # Silent error logging
+    
+    def _get_content_hash(self):
+        """Generate hash of current content for change detection"""
+        import hashlib
+        
+        # Create content string from current state
+        content_parts = []
+        
+        # Add frame information
+        for frame in self.layered_sequence_editor.get_frames():
+            content_parts.append(f"frame:{frame.name}:{frame.duration}")
+            for layer in frame.layers:
+                content_parts.append(f"layer:{layer.name}:{layer.material_index}:{layer.x}:{layer.y}:{layer.scale}:{layer.opacity}")
+        
+        # Add settings
+        content_parts.append(f"settings:{self.width_spinbox.value()}:{self.height_spinbox.value()}:{self.loop_spinbox.value()}:{self.transparent_bg_checkbox.isChecked()}")
+        
+        content_string = "|".join(content_parts)
+        return hashlib.md5(content_string.encode()).hexdigest()
+    
+    
+    def closeEvent(self, event):
+        """Handle application closing - perform emergency auto-save"""
+        if self.auto_save_enabled and len(self.layered_sequence_editor) > 0:
+            try:
+                # Force emergency save
+                self.auto_save_template()
+                print("Emergency auto-save completed before closing")
+            except Exception as e:
+                print(f"Emergency auto-save failed: {e}")
+        
+        # Stop auto-save timer
+        if hasattr(self, 'auto_save_timer'):
+            self.auto_save_timer.stop()
+        
+        # Call parent closeEvent
+        super().closeEvent(event)
+    
+    def restore_auto_save(self):
+        """Restore from the latest auto-save"""
+        try:
+            # Check if auto-save file exists
+            if not self.auto_save_file.exists():
+                QMessageBox.information(self, "No Auto-Save", "No auto-save file found.")
+                return
+            
+            # Load template
+            template = TemplateManager.load_template_from_file(str(self.auto_save_file))
+            
+            # Apply template
+            new_editor, settings = TemplateManager.apply_template(template)
+            
+            # Update current editor
+            self.layered_sequence_editor = new_editor
+            
+            # Update settings
+            if settings:
+                self.width_spinbox.setValue(settings.get("output_width", 100))
+                self.height_spinbox.setValue(settings.get("output_height", 100))
+                self.loop_spinbox.setValue(settings.get("loop_count", 0))
+                self.transparent_bg_checkbox.setChecked(settings.get("transparent_bg", False))
+                
+                color_count = settings.get("color_count", 256)
+                color_text = str(color_count)
+                if color_text in [self.color_palette_combo.itemText(i) for i in range(self.color_palette_combo.count())]:
+                    self.color_palette_combo.setCurrentText(color_text)
+            
+            # Refresh UI
+            self.refresh_timeline()
+            # Refresh layer editor if it exists
+            if hasattr(self, 'layer_editor'):
+                self.layer_editor.refresh_layer_list()
+            
+            # Get metadata
+            metadata = template.get("auto_save_metadata", {})
+            timestamp = metadata.get("timestamp", "unknown")
+            
+            QMessageBox.information(
+                self,
+                "Auto-Save Restored",
+                f"Restored from auto-save:\n{self.auto_save_file.name}\n\n"
+                f"Saved: {timestamp}\n"
+                f"Frames: {metadata.get('frame_count', 0)}\n"
+                f"Materials: {metadata.get('material_count', 0)}"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Restore Failed", f"Failed to restore auto-save:\n{str(e)}")
+    
+    def toggle_auto_save(self):
+        """Toggle auto-save on/off"""
+        self.auto_save_enabled = not self.auto_save_enabled
+        
+        if self.auto_save_enabled:
+            self.auto_save_timer.start(self.auto_save_interval)
+            QMessageBox.information(self, "Auto-Save", "Auto-save enabled")
+        else:
+            self.auto_save_timer.stop()
+            QMessageBox.information(self, "Auto-Save", "Auto-save disabled")
 
 
 def main():
