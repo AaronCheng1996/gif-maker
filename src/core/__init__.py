@@ -4,6 +4,7 @@ from .sequence_editor import SequenceEditor, Frame
 from .gif_builder import GifBuilder
 from .layer_system import Layer, LayeredFrame, LayerCompositor
 from .layered_sequence_editor import LayeredSequenceEditor
+from .multi_timeline import MultiTimelineEditor, Timeline, TimelineFrame
 from .template_manager import TemplateManager
 from .batch_processor import BatchProcessor, BatchProcessingError
 
@@ -17,6 +18,9 @@ __all__ = [
     'LayeredFrame',
     'LayerCompositor',
     'LayeredSequenceEditor',
+    'MultiTimelineEditor',
+    'Timeline',
+    'TimelineFrame',
     'TemplateManager',
     'BatchProcessor',
     'BatchProcessingError',

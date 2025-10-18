@@ -2,7 +2,6 @@ from .preview_widget import PreviewWidget
 from .preview_page_widget import PreviewPageWidget
 from .timeline_widget import TimelineWidget
 from .tile_editor import TileEditorWidget
-from .layer_editor_widget import LayerEditorWidget
 from .batch_processor_widget import BatchProcessorWidget
 
 __all__ = [
@@ -10,7 +9,6 @@ __all__ = [
     'PreviewPageWidget',
     'TimelineWidget',
     'TileEditorWidget',
-    'LayerEditorWidget',
     'BatchProcessorWidget',
 ]
 

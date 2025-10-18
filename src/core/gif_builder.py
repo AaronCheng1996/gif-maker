@@ -5,6 +5,7 @@ from .utils import create_background, paste_center, ensure_rgba
 from .sequence_editor import SequenceEditor, Frame
 from .image_loader import MaterialManager
 from .layer_system import LayeredFrame, LayerCompositor
+from .multi_timeline import MultiTimelineEditor
 
 
 class GifBuilder:
@@ -400,3 +401,90 @@ class GifBuilder:
             frames.append((composited, layered_frame.duration))
         
         return frames
+
+    # ----- Multi-timeline composition -----
+    def _compose_from_multi_timeline_frame(
+        self,
+        editor: MultiTimelineEditor,
+        material_manager: MaterialManager,
+        frame_index: int
+    ) -> Image.Image:
+        """Composite one output frame from all timelines at the given frame index."""
+        # Determine output size lazily from the first available material
+        if not self.output_size:
+            for material_idx, _, _ in editor.iter_frame_layers(frame_index):
+                material = material_manager.get_material(material_idx)
+                if material is not None:
+                    img, _ = material
+                    self.output_size = img.size
+                    break
+        if not self.output_size:
+            # Fallback
+            self.output_size = (400, 400)
+
+        bg_color = self.background_color if self.background_color[3] > 0 else (0, 0, 0, 0)
+        canvas = Image.new('RGBA', self.output_size, bg_color)
+
+        # Bottom to top
+        for material_idx, x, y in editor.iter_frame_layers(frame_index):
+            material = material_manager.get_material(material_idx)
+            if material is None:
+                continue
+            material_img, _ = material
+            img_rgba = ensure_rgba(material_img)
+            try:
+                canvas.paste(img_rgba, (x, y), img_rgba)
+            except Exception:
+                # Skip paste failures (out of bounds etc.)
+                pass
+
+        return canvas
+
+    def get_multitimeline_preview_frames(
+        self,
+        editor: MultiTimelineEditor,
+        material_manager: MaterialManager
+    ) -> List[Tuple[Image.Image, int]]:
+        """Return preview frames (image, duration) for the whole multi-timeline."""
+        frame_count = editor.get_frame_count()
+        frames: List[Tuple[Image.Image, int]] = []
+        for i in range(frame_count):
+            composed = self._compose_from_multi_timeline_frame(editor, material_manager, i)
+            frames.append((composed, editor.durations_ms[i]))
+        return frames
+
+    def build_from_multitimeline(
+        self,
+        editor: MultiTimelineEditor,
+        material_manager: MaterialManager,
+        output_path: str
+    ):
+        """Export a GIF from the multi-timeline model."""
+        frame_count = editor.get_frame_count()
+        if frame_count == 0:
+            raise ValueError("Timeline is empty, cannot generate GIF")
+        if len(material_manager) == 0:
+            raise ValueError("Material list is empty, cannot generate GIF")
+
+        frames: List[Image.Image] = []
+        durations: List[int] = []
+        for i in range(frame_count):
+            composed = self._compose_from_multi_timeline_frame(editor, material_manager, i)
+
+            # Convert RGBA similar to layered flow
+            if composed.mode == 'RGBA':
+                if self.background_color[3] == 0:
+                    alpha = composed.split()[3]
+                    composed = composed.convert('RGB').convert('P', palette=Image.Palette.ADAPTIVE, colors=self.color_count-1)
+                    mask = Image.eval(alpha, lambda a: 255 if a < 128 else 0)
+                    composed.paste(255, mask)
+                    composed.info['transparency'] = 255
+                else:
+                    rgb_bg = Image.new('RGB', composed.size, self.background_color[:3])
+                    rgb_bg.paste(composed, mask=composed.split()[3])
+                    composed = rgb_bg
+
+            frames.append(composed)
+            durations.append(editor.durations_ms[i])
+
+        self.save_gif(frames, durations, output_path)

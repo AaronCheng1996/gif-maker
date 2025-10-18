@@ -16,6 +16,7 @@ class TimelineWidget(QWidget):
         super().__init__(parent)
         
         self.material_manager = None
+        self.is_main_timebase = True
         
         self.init_ui()
     
@@ -81,6 +82,14 @@ class TimelineWidget(QWidget):
     def set_material_manager(self, material_manager):
         self.material_manager = material_manager
     
+    def set_is_main_timebase(self, is_main: bool):
+        """Enable/disable duration editing controls depending on whether this is the main timeline."""
+        self.is_main_timebase = is_main
+        enabled = bool(is_main)
+        self.duration_spinbox.setEnabled(enabled)
+        self.apply_duration_button.setEnabled(enabled)
+        self.apply_all_duration_button.setEnabled(enabled)
+    
     def create_thumbnail(self, pil_image, width, height):
         img_copy = pil_image.copy()
         img_copy.thumbnail((width, height), Image.Resampling.LANCZOS)
@@ -94,11 +103,15 @@ class TimelineWidget(QWidget):
     
     def apply_duration_to_selected(self):
         """Request applying duration to selected frames"""
+        if not self.is_main_timebase:
+            return
         duration = self.duration_spinbox.value()
         self.apply_duration_requested.emit(duration, False)
     
     def apply_duration_to_all(self):
         """Request applying duration to all frames"""
+        if not self.is_main_timebase:
+            return
         duration = self.duration_spinbox.value()
         self.apply_duration_requested.emit(duration, True)
     
