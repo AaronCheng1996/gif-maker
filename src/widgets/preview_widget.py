@@ -111,6 +111,15 @@ class PreviewWidget(QWidget):
         scale_y = max_size / original_height
         scale = min(scale_x, scale_y)  # Use the smaller scale to ensure it fits
         
+        # For small images, find the largest integer scale that fits within 400x400
+        if scale > 1.0:
+            # Find the largest integer scale that keeps the image within bounds
+            max_integer_scale = int(scale)
+            if max_integer_scale * original_width <= max_size and max_integer_scale * original_height <= max_size:
+                scale = max_integer_scale
+            else:
+                scale = 1.0
+        
         # Calculate new dimensions
         new_width = int(original_width * scale)
         new_height = int(original_height * scale)

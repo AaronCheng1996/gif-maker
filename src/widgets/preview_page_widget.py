@@ -140,6 +140,15 @@ class PreviewPageWidget(QWidget):
         scale_y = available_height / original_height
         scale = min(scale_x, scale_y)  # 使用較小的縮放比例以確保完全顯示
         
+        # 對於小圖片，找到在可用空間內的最大整數倍縮放
+        if scale > 1.0:
+            # 找到最大的整數倍縮放，確保圖片仍在邊界內
+            max_integer_scale = int(scale)
+            if max_integer_scale * original_width <= available_width and max_integer_scale * original_height <= available_height:
+                scale = max_integer_scale
+            else:
+                scale = 1.0
+        
         # 計算新尺寸
         new_width = int(original_width * scale)
         new_height = int(original_height * scale)

@@ -24,6 +24,8 @@ class Timeline:
     """A named timeline with its own sequence of frames (materials + offsets)."""
     name: str
     frames: List[TimelineFrame] = field(default_factory=list)
+    offset_x: int = 0
+    offset_y: int = 0
 
     def add_frame(self, frame: TimelineFrame):
         self.frames.append(frame)
@@ -175,7 +177,12 @@ class MultiTimelineEditor:
             if frame_index < len(timeline.frames):
                 f = timeline.frames[frame_index]
                 if f.material_index is not None:
-                    result.append((f.material_index, f.x, f.y))
+                    # Add per-timeline global offset to per-frame offset
+                    result.append((
+                        f.material_index,
+                        f.x + (timeline.offset_x or 0),
+                        f.y + (timeline.offset_y or 0),
+                    ))
         return result
 
 

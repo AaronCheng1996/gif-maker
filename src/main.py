@@ -218,7 +218,7 @@ class MainWindow(QMainWindow):
         # Multi timeline tabs
         tabs_row = QHBoxLayout()
         self.timeline_tabs = QTabWidget()
-        self.timeline_tabs.currentChanged.connect(lambda _i: self.refresh_timeline())
+        self.timeline_tabs.currentChanged.connect(self.on_timeline_tab_changed)
         layout.addWidget(self.timeline_tabs, stretch=2)
 
         # Controls to add/remove/reorder timelines
@@ -313,6 +313,29 @@ class MainWindow(QMainWindow):
         self.assign_selected_material_btn.setMaximumHeight(25)
         self.assign_selected_material_btn.clicked.connect(self.on_assign_selected_material)
         assign_row.addWidget(self.assign_selected_material_btn)
+        self.assign_matched_materials_btn = QPushButton("Assign Selected (1:1)")
+        self.assign_matched_materials_btn.setMaximumHeight(25)
+        self.assign_matched_materials_btn.setToolTip("Assign selected materials to selected frames one-by-one in order")
+        self.assign_matched_materials_btn.clicked.connect(self.on_assign_selected_materials_matched)
+        assign_row.addWidget(self.assign_matched_materials_btn)
+        # Per-timeline global offset controls
+        assign_row.addWidget(QLabel("Timeline Offset:"))
+        self.timeline_offset_x = QSpinBox()
+        self.timeline_offset_x.setMinimum(-10000)
+        self.timeline_offset_x.setMaximum(10000)
+        self.timeline_offset_x.setValue(0)
+        self.timeline_offset_x.setMaximumWidth(60)
+        assign_row.addWidget(self.timeline_offset_x)
+        self.timeline_offset_y = QSpinBox()
+        self.timeline_offset_y.setMinimum(-10000)
+        self.timeline_offset_y.setMaximum(10000)
+        self.timeline_offset_y.setValue(0)
+        self.timeline_offset_y.setMaximumWidth(60)
+        assign_row.addWidget(self.timeline_offset_y)
+        self.apply_timeline_offset_btn = QPushButton("Apply")
+        self.apply_timeline_offset_btn.setMaximumHeight(25)
+        self.apply_timeline_offset_btn.clicked.connect(self.on_apply_timeline_offset)
+        assign_row.addWidget(self.apply_timeline_offset_btn)
         layout.addLayout(assign_row)
         
         panel.setLayout(layout)
@@ -924,35 +947,51 @@ class MainWindow(QMainWindow):
         frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) for item in selected_items if item.data(Qt.ItemDataRole.UserRole) is not None})
         if not frame_indices:
             return
-        if current_index != self.multi_editor.main_timeline_index:
-            QMessageBox.information(self, "Info", "Duplicate is only available on the main timeline (timebase).")
-            return
-        # Insert duplicates as a contiguous block after the last selected row
-        insert_pos = frame_indices[-1]
-        # Duplicate durations
-        original_durs = list(self.multi_editor.durations_ms)
-        dup_durs = [original_durs[i] for i in frame_indices]
-        self.multi_editor.durations_ms = (
-            original_durs[: insert_pos + 1] + dup_durs + original_durs[insert_pos + 1 :]
-        )
-        # Duplicate frames for each timeline
-        for t in self.multi_editor.timelines:
-            orig_frames = list(t.frames)
-            # Copy frames (create new TimelineFrame instances)
+        if current_index == self.multi_editor.main_timeline_index:
+            # Insert duplicates as a contiguous block after the last selected row (affects timebase and all timelines)
+            insert_pos = frame_indices[-1]
+            original_durs = list(self.multi_editor.durations_ms)
+            dup_durs = [original_durs[i] for i in frame_indices]
+            self.multi_editor.durations_ms = (
+                original_durs[: insert_pos + 1] + dup_durs + original_durs[insert_pos + 1 :]
+            )
+            for t in self.multi_editor.timelines:
+                orig_frames = list(t.frames)
+                from .core import TimelineFrame as _TLF
+                dup_frames = [
+                    _TLF(
+                        material_index=orig_frames[i].material_index if i < len(orig_frames) else None,
+                        x=orig_frames[i].x if i < len(orig_frames) else 0,
+                        y=orig_frames[i].y if i < len(orig_frames) else 0,
+                    )
+                    for i in frame_indices
+                ]
+                t.frames = orig_frames[: insert_pos + 1] + dup_frames + orig_frames[insert_pos + 1 :]
+            new_rows = list(range(insert_pos + 1, insert_pos + 1 + len(frame_indices)))
+        else:
+            # Duplicate only within the current timeline, keep timebase length unchanged
+            tl = self.multi_editor.get_timeline(current_index)
+            if not tl:
+                return
+            n = self.multi_editor.get_frame_count()
+            insert_pos = frame_indices[-1]
             from .core import TimelineFrame as _TLF
             dup_frames = [
                 _TLF(
-                    material_index=orig_frames[i].material_index if i < len(orig_frames) else None,
-                    x=orig_frames[i].x if i < len(orig_frames) else 0,
-                    y=orig_frames[i].y if i < len(orig_frames) else 0,
+                    material_index=tl.frames[i].material_index if i < len(tl.frames) else None,
+                    x=tl.frames[i].x if i < len(tl.frames) else 0,
+                    y=tl.frames[i].y if i < len(tl.frames) else 0,
                 )
                 for i in frame_indices
             ]
-            t.frames = orig_frames[: insert_pos + 1] + dup_frames + orig_frames[insert_pos + 1 :]
+            tl.frames = tl.frames[: insert_pos + 1] + dup_frames + tl.frames[insert_pos + 1 :]
+            # Truncate to match timebase length
+            if len(tl.frames) > n:
+                tl.frames = tl.frames[:n]
+            new_rows = list(range(insert_pos + 1, min(insert_pos + 1 + len(frame_indices), n)))
 
         # Refresh and select new duplicated block
         self.refresh_timeline()
-        new_rows = list(range(insert_pos + 1, insert_pos + 1 + len(frame_indices)))
         tab = self.timeline_tabs.widget(current_index)
         if hasattr(tab, 'timeline_widget'):
             tw2 = tab.timeline_widget
@@ -978,10 +1017,19 @@ class MainWindow(QMainWindow):
         frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) for item in selected_items if item.data(Qt.ItemDataRole.UserRole) is not None}, reverse=True)
         if not frame_indices:
             return
-        if current_index != self.multi_editor.main_timeline_index:
-            QMessageBox.information(self, "Info", "Delete is only available on the main timeline (timebase).")
-            return
-        self.multi_editor.remove_timebase_frames(frame_indices)
+        if current_index == self.multi_editor.main_timeline_index:
+            self.multi_editor.remove_timebase_frames(frame_indices)
+        else:
+            # Remove within current timeline and append empty frames to keep length
+            tl = self.multi_editor.get_timeline(current_index)
+            if not tl:
+                return
+            count = len(frame_indices)
+            for idx in frame_indices:
+                if 0 <= idx < len(tl.frames):
+                    tl.frames.pop(idx)
+            from .core import TimelineFrame as _TLF
+            tl.frames.extend([_TLF() for _ in range(count)])
         self.refresh_timeline()
         self.update_preview()
     
@@ -998,24 +1046,33 @@ class MainWindow(QMainWindow):
             return
         if selected_rows[0] == 0:
             return
-        if current_index != self.multi_editor.main_timeline_index:
-            QMessageBox.information(self, "Info", "Reordering with buttons is only available on the main timeline. Use drag on non-main timelines.")
-            return
-        # Apply block move up by relative order without breaking selection
-        n = self.multi_editor.get_frame_count()
-        selected_set = set(selected_rows)
-        # Work on a list of indices; swap each selected with its previous if previous not selected
-        order = list(range(n))
-        for i in range(1, n):
-            if order[i] in selected_set and order[i - 1] not in selected_set:
-                order[i - 1], order[i] = order[i], order[i - 1]
-        # Apply permutation
-        self.multi_editor.durations_ms = [self.multi_editor.durations_ms[i] for i in order]
-        for t in self.multi_editor.timelines:
-            t.frames = [t.frames[i] for i in order]
-        # Map original selected to new positions using inverse map
-        inv = {order[i]: i for i in range(n)}
-        new_positions = [inv[i] for i in selected_rows]
+        if current_index == self.multi_editor.main_timeline_index:
+            # Move timebase and all timelines
+            n = self.multi_editor.get_frame_count()
+            selected_set = set(selected_rows)
+            order = list(range(n))
+            for i in range(1, n):
+                if order[i] in selected_set and order[i - 1] not in selected_set:
+                    order[i - 1], order[i] = order[i], order[i - 1]
+            self.multi_editor.durations_ms = [self.multi_editor.durations_ms[i] for i in order]
+            for t in self.multi_editor.timelines:
+                t.frames = [t.frames[i] for i in order]
+            inv = {order[i]: i for i in range(n)}
+            new_positions = [inv[i] for i in selected_rows]
+        else:
+            # Move only current timeline rows
+            tl = self.multi_editor.get_timeline(current_index)
+            if not tl:
+                return
+            n = self.multi_editor.get_frame_count()
+            selected_set = set(selected_rows)
+            order = list(range(n))
+            for i in range(1, n):
+                if order[i] in selected_set and order[i - 1] not in selected_set:
+                    order[i - 1], order[i] = order[i], order[i - 1]
+            tl.frames = [tl.frames[i] for i in order]
+            inv = {order[i]: i for i in range(n)}
+            new_positions = [inv[i] for i in selected_rows]
         self.refresh_timeline()
         # Reselect moved rows
         tab = self.timeline_tabs.widget(current_index)
@@ -1041,23 +1098,31 @@ class MainWindow(QMainWindow):
             return
         if selected_rows[-1] >= self.multi_editor.get_frame_count() - 1:
             return
-        if current_index != self.multi_editor.main_timeline_index:
-            QMessageBox.information(self, "Info", "Reordering with buttons is only available on the main timeline. Use drag on non-main timelines.")
-            return
-        # Apply block move down by relative order without breaking selection
-        n = self.multi_editor.get_frame_count()
-        selected_set = set(selected_rows)
-        order = list(range(n))
-        for i in range(n - 2, -1, -1):
-            if order[i] in selected_set and order[i + 1] not in selected_set:
-                order[i], order[i + 1] = order[i + 1], order[i]
-        # Apply permutation
-        self.multi_editor.durations_ms = [self.multi_editor.durations_ms[i] for i in order]
-        for t in self.multi_editor.timelines:
-            t.frames = [t.frames[i] for i in order]
-        # Map original selected to new positions using inverse map
-        inv = {order[i]: i for i in range(n)}
-        new_positions = [inv[i] for i in selected_rows]
+        if current_index == self.multi_editor.main_timeline_index:
+            n = self.multi_editor.get_frame_count()
+            selected_set = set(selected_rows)
+            order = list(range(n))
+            for i in range(n - 2, -1, -1):
+                if order[i] in selected_set and order[i + 1] not in selected_set:
+                    order[i], order[i + 1] = order[i + 1], order[i]
+            self.multi_editor.durations_ms = [self.multi_editor.durations_ms[i] for i in order]
+            for t in self.multi_editor.timelines:
+                t.frames = [t.frames[i] for i in order]
+            inv = {order[i]: i for i in range(n)}
+            new_positions = [inv[i] for i in selected_rows]
+        else:
+            tl = self.multi_editor.get_timeline(current_index)
+            if not tl:
+                return
+            n = self.multi_editor.get_frame_count()
+            selected_set = set(selected_rows)
+            order = list(range(n))
+            for i in range(n - 2, -1, -1):
+                if order[i] in selected_set and order[i + 1] not in selected_set:
+                    order[i], order[i + 1] = order[i + 1], order[i]
+            tl.frames = [tl.frames[i] for i in order]
+            inv = {order[i]: i for i in range(n)}
+            new_positions = [inv[i] for i in selected_rows]
         self.refresh_timeline()
         # Reselect moved rows
         tab = self.timeline_tabs.widget(current_index)
@@ -1213,6 +1278,30 @@ class MainWindow(QMainWindow):
                 tw.duration_spinbox.setValue(self.multi_editor.durations_ms[0])
 
         tw.timeline_table.blockSignals(False)
+
+        # Sync timeline-offset spinboxes with current tab timeline
+        tl = self.multi_editor.get_timeline(current_index)
+        if tl is not None:
+            self.timeline_offset_x.blockSignals(True)
+            self.timeline_offset_y.blockSignals(True)
+            self.timeline_offset_x.setValue(tl.offset_x)
+            self.timeline_offset_y.setValue(tl.offset_y)
+            self.timeline_offset_x.blockSignals(False)
+            self.timeline_offset_y.blockSignals(False)
+
+    def on_timeline_tab_changed(self, index: int):
+        self.refresh_timeline()
+        self.update_preview()
+
+    def on_apply_timeline_offset(self):
+        idx = self.timeline_tabs.currentIndex()
+        tl = self.multi_editor.get_timeline(idx)
+        if tl is None:
+            return
+        tl.offset_x = self.timeline_offset_x.value()
+        tl.offset_y = self.timeline_offset_y.value()
+        # Live preview to help fine-tune
+        self.update_preview()
     
     def on_layers_changed(self):
         """Handle layer changes - only update preview, don't refresh timeline to avoid losing focus"""
@@ -1259,7 +1348,7 @@ class MainWindow(QMainWindow):
         self.refresh_timeline()
         self.update_preview()
 
-    def on_move_timeline_up(self):
+    def on_move_timeline_down(self):
         idx = self.timeline_tabs.currentIndex()
         if idx <= 0:
             return
@@ -1267,7 +1356,7 @@ class MainWindow(QMainWindow):
         self.refresh_timeline()
         self.timeline_tabs.setCurrentIndex(idx - 1)
 
-    def on_move_timeline_down(self):
+    def on_move_timeline_up(self):
         idx = self.timeline_tabs.currentIndex()
         if idx < 0 or idx >= self.timeline_tabs.count() - 1:
             return
@@ -1300,7 +1389,59 @@ class MainWindow(QMainWindow):
         self.multi_editor.ensure_timeline_length(current_index, max(frame_indices) + 1)
         for fi in frame_indices:
             tl.frames[fi].material_index = mat_idx
+        # Reselect frames after assignment
         self.refresh_timeline()
+        tab = self.timeline_tabs.widget(current_index)
+        if hasattr(tab, 'timeline_widget'):
+            tw2 = tab.timeline_widget
+            sel_model = tw2.timeline_table.selectionModel()
+            tw2.timeline_table.clearSelection()
+            for r in frame_indices:
+                if 0 <= r < tw2.timeline_table.rowCount():
+                    index = tw2.timeline_table.model().index(r, 0)
+                    sel_model.select(index, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+        self.update_preview()
+
+    def on_assign_selected_materials_matched(self):
+        # Get selected materials (ordered)
+        selected_material_rows = sorted([item.row() for item in self.materials_list.selectedIndexes()])
+        if not selected_material_rows:
+            QMessageBox.warning(self, "Warning", "Please select materials from the Materials list.")
+            return
+        # Get selected frames in current timeline (ordered)
+        current_index = self.timeline_tabs.currentIndex()
+        tab = self.timeline_tabs.widget(current_index)
+        if not hasattr(tab, 'timeline_widget'):
+            return
+        tw = tab.timeline_widget
+        selected_items = tw.timeline_table.selectedIndexes()
+        if not selected_items:
+            QMessageBox.warning(self, "Warning", "Please select one or more frames in the current timeline.")
+            return
+        frame_indices = sorted({item.data(Qt.ItemDataRole.UserRole) for item in selected_items if item.data(Qt.ItemDataRole.UserRole) is not None})
+        if not frame_indices:
+            return
+        if len(frame_indices) != len(selected_material_rows):
+            QMessageBox.warning(self, "Warning", f"Selected frames ({len(frame_indices)}) must match selected materials ({len(selected_material_rows)}).")
+            return
+        tl = self.multi_editor.get_timeline(current_index)
+        if not tl:
+            return
+        # Ensure length and assign one-to-one
+        self.multi_editor.ensure_timeline_length(current_index, max(frame_indices) + 1)
+        for fi, mat_idx in zip(frame_indices, selected_material_rows):
+            tl.frames[fi].material_index = mat_idx
+        # Refresh and restore selection
+        self.refresh_timeline()
+        tab = self.timeline_tabs.widget(current_index)
+        if hasattr(tab, 'timeline_widget'):
+            tw2 = tab.timeline_widget
+            sel_model = tw2.timeline_table.selectionModel()
+            tw2.timeline_table.clearSelection()
+            for r in frame_indices:
+                if 0 <= r < tw2.timeline_table.rowCount():
+                    index = tw2.timeline_table.model().index(r, 0)
+                    sel_model.select(index, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
         self.update_preview()
     
     def on_transparent_bg_changed(self):
