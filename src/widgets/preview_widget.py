@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QMouseEvent
+from PyQt6.QtGui import QPixmap, QImage, QMouseEvent, QColor
 from PIL import Image
 from typing import List, Tuple
 
@@ -67,7 +67,7 @@ class PreviewWidget(QWidget):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setFixedSize(400, 400)  # Fixed size to prevent UI layout issues
         self.preview_label.setScaledContents(False)  # Don't auto-scale, we'll handle it manually
-        # Light gray background to make transparent areas visible, but not distracting
+        # Light background default; can be customized via set_background_color
         self.preview_label.setStyleSheet("""
             QLabel { 
                 background-color: #e8e8e8; 
@@ -82,6 +82,31 @@ class PreviewWidget(QWidget):
         layout.addWidget(self.preview_label)
         
         self.setLayout(layout)
+    
+    def set_background_color(self, color):
+        """Set the preview area's background color (preview-only).
+
+        Accepts QColor, (r, g, b) tuple, or hex string like "#rrggbb".
+        """
+        if isinstance(color, QColor):
+            qcolor = color
+        elif isinstance(color, tuple) and len(color) >= 3:
+            qcolor = QColor(color[0], color[1], color[2])
+        elif isinstance(color, str):
+            qcolor = QColor(color)
+        else:
+            return
+        hex_color = qcolor.name()
+        self.preview_label.setStyleSheet(f"""
+            QLabel {{ 
+                background-color: {hex_color}; 
+                border: 2px solid #ccc; 
+            }}
+            QLabel:hover {{
+                border: 2px solid #4CAF50;
+                background-color: #f0f0f0;
+            }}
+        """)
     
     def set_frames(self, frames: List[Tuple[Image.Image, int]]):
         self.frames = frames

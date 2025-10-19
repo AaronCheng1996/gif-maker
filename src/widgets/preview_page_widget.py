@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout)
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QColor
 from PIL import Image
 from typing import List, Tuple
 
@@ -113,6 +113,27 @@ class PreviewPageWidget(QWidget):
         else:
             self.preview_label.setText("No Frames")
             self.info_label.setText("Frame: 0/0")
+
+    def set_background_color(self, color):
+        """設定預覽頁面的背景顏色（只影響預覽）。
+
+        參數可為 QColor、(r, g, b) 或十六進位字串 "#rrggbb"。
+        """
+        if isinstance(color, QColor):
+            qcolor = color
+        elif isinstance(color, tuple) and len(color) >= 3:
+            qcolor = QColor(color[0], color[1], color[2])
+        elif isinstance(color, str):
+            qcolor = QColor(color)
+        else:
+            return
+        hex_color = qcolor.name()
+        self.preview_label.setStyleSheet(f"""
+            QLabel {{ 
+                background-color: {hex_color}; 
+                border: 2px solid #ccc; 
+            }}
+        """)
     
     def show_current_frame(self):
         """顯示當前幀"""

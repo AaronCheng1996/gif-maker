@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from .layer_system import Layer, LayeredFrame
 from .layered_sequence_editor import LayeredSequenceEditor
+from .multi_timeline import MultiTimelineEditor, Timeline, TimelineFrame
 
 
 class TemplateManager:
@@ -19,7 +20,7 @@ class TemplateManager:
     to different sets of materials.
     """
     
-    VERSION = "1.0"
+    VERSION = "2.0"
     
     @staticmethod
     def export_template(
@@ -183,6 +184,197 @@ class TemplateManager:
         settings = template.get("settings", {})
         
         return editor, settings
+
+    # ----- Multi-timeline templates -----
+    @staticmethod
+    def export_multi_template(
+        multi_editor: MultiTimelineEditor,
+        output_width: int,
+        output_height: int,
+        loop_count: int,
+        transparent_bg: bool,
+        color_count: int = 256
+    ) -> Dict[str, Any]:
+        """
+        Export the multi-timeline editor state as a template.
+
+        The template schema:
+        {
+          "version": "2.0",
+          "format": "multi_timeline",
+          "settings": { ... },
+          "timebase": { "durations_ms": [int, ...] },
+          "main_timeline_index": int,
+          "timelines": [
+             { "name": str, "offset_x": int, "offset_y": int,
+               "frames": [ null | {"material_index": int, "x": int, "y": int}, ... ]
+             }, ...
+          ]
+        }
+        """
+        template: Dict[str, Any] = {
+            "version": TemplateManager.VERSION,
+            "format": "multi_timeline",
+            "settings": {
+                "output_width": output_width,
+                "output_height": output_height,
+                "loop_count": loop_count,
+                "transparent_bg": transparent_bg,
+                "color_count": color_count,
+            },
+            "timebase": {
+                "durations_ms": list(multi_editor.durations_ms),
+            },
+            "main_timeline_index": int(multi_editor.main_timeline_index),
+            "timelines": []
+        }
+
+        frame_count = len(multi_editor.durations_ms)
+        for tl in multi_editor.timelines:
+            tl_entry: Dict[str, Any] = {
+                "name": tl.name,
+                "offset_x": tl.offset_x,
+                "offset_y": tl.offset_y,
+                "frames": []
+            }
+            for i in range(frame_count):
+                if i < len(tl.frames):
+                    fr = tl.frames[i]
+                    if fr.material_index is None:
+                        tl_entry["frames"].append(None)
+                    else:
+                        tl_entry["frames"].append({
+                            "material_index": fr.material_index,
+                            "x": fr.x,
+                            "y": fr.y,
+                        })
+                else:
+                    tl_entry["frames"].append(None)
+            template["timelines"].append(tl_entry)
+
+        return template
+
+    @staticmethod
+    def apply_multi_template(
+        template: Dict[str, Any],
+        material_index_mapping: Optional[Dict[int, int]] = None
+    ) -> Tuple[MultiTimelineEditor, Dict[str, Any]]:
+        """
+        Apply a multi-timeline template to create a new MultiTimelineEditor
+
+        Args:
+            template: Multi-timeline template dictionary
+            material_index_mapping: Optional mapping from template material indices to
+                                    current material indices. Defaults to identity.
+        Returns:
+            (MultiTimelineEditor, settings)
+        """
+        editor = MultiTimelineEditor()
+
+        # Default to identity mapping
+        if material_index_mapping is None:
+            material_index_mapping = {}
+
+        # Load timebase
+        timebase = template.get("timebase", {})
+        durations = list(timebase.get("durations_ms", []))
+        editor.durations_ms = durations
+
+        # Load timelines
+        timelines_data: List[Dict[str, Any]] = template.get("timelines", [])
+        frame_count = len(durations)
+        for tl_data in timelines_data:
+            name = tl_data.get("name", f"Timeline {len(editor.timelines) + 1}")
+            tl_index = editor.add_timeline(name)
+            tl = editor.get_timeline(tl_index)
+            if tl is None:
+                continue
+            tl.offset_x = int(tl_data.get("offset_x", 0))
+            tl.offset_y = int(tl_data.get("offset_y", 0))
+
+            frames_data = tl_data.get("frames", [])
+            # Ensure length
+            while len(tl.frames) < frame_count:
+                tl.frames.append(TimelineFrame())
+            for i in range(min(frame_count, len(frames_data))):
+                fr = frames_data[i]
+                if fr is None:
+                    tl.frames[i] = TimelineFrame()
+                else:
+                    # Map material index if given
+                    old_idx = fr.get("material_index")
+                    new_idx = material_index_mapping.get(old_idx, old_idx) if old_idx is not None else None
+                    tl.frames[i] = TimelineFrame(
+                        material_index=new_idx,
+                        x=int(fr.get("x", 0)),
+                        y=int(fr.get("y", 0)),
+                    )
+
+        # Main timeline index
+        main_idx = int(template.get("main_timeline_index", 0))
+        editor.set_main_timeline(min(max(0, main_idx), len(editor.timelines) - 1))
+
+        settings = template.get("settings", {})
+        return editor, settings
+
+    @staticmethod
+    def get_template_info(template: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get summary information about a template. Supports both legacy layered and
+        new multi-timeline formats.
+        """
+        # Multi-timeline format detection
+        if template.get("format") == "multi_timeline" or ("timelines" in template and "timebase" in template):
+            settings = template.get("settings", {})
+            durations = template.get("timebase", {}).get("durations_ms", [])
+            timelines = template.get("timelines", [])
+            frame_count = len(durations)
+            unique_materials = set()
+            placements = 0
+            for tl in timelines:
+                for fr in tl.get("frames", []):
+                    if isinstance(fr, dict):
+                        mi = fr.get("material_index")
+                        if mi is not None:
+                            unique_materials.add(mi)
+                            placements += 1
+            total_duration = sum(int(d) for d in durations)
+            return {
+                "version": template.get("version", "unknown"),
+                "format": "multi_timeline",
+                "frame_count": frame_count,
+                "timeline_count": len(timelines),
+                "unique_materials_used": len(unique_materials),
+                "placements": placements,
+                "timebase_total_duration_ms": total_duration,
+                "output_size": (settings.get("output_width", 0), settings.get("output_height", 0)),
+                "loop_count": settings.get("loop_count", 0),
+                "transparent_bg": settings.get("transparent_bg", False),
+                "color_count": settings.get("color_count", 256),
+            }
+
+        # Fallback to legacy layered format
+        settings = template.get("settings", {})
+        frames = template.get("frames", [])
+        material_indices = set()
+        total_layers = 0
+        for frame in frames:
+            for layer in frame.get("layers", []):
+                material_indices.add(layer["material_index"])
+                total_layers += 1
+        total_duration = sum(frame.get("duration", 100) for frame in frames)
+        return {
+            "version": template.get("version", "unknown"),
+            "format": "layered",
+            "frame_count": len(frames),
+            "material_count": settings.get("material_count", len(material_indices)),
+            "unique_materials_used": len(material_indices),
+            "total_layers": total_layers,
+            "total_duration_ms": total_duration,
+            "output_size": (settings.get("output_width", 0), settings.get("output_height", 0)),
+            "loop_count": settings.get("loop_count", 0),
+            "transparent_bg": settings.get("transparent_bg", False)
+        }
     
     @staticmethod
     def get_template_info(template: Dict[str, Any]) -> Dict[str, Any]:

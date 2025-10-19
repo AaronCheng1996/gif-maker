@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
-                              QTableWidgetItem, QComboBox, QStackedWidget)
+                              QTableWidgetItem, QComboBox, QStackedWidget, QColorDialog)
 from PyQt6.QtCore import Qt, QSize, QItemSelectionModel, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 
@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         self.auto_save_enabled = False
         self.auto_save_interval = 5 * 60 * 1000  # 5 minutes in milliseconds
         self.auto_save_timer = QTimer()
-        # self.auto_save_timer.timeout.connect(self.auto_save_template)
+        self.auto_save_timer.timeout.connect(self.auto_save_template)
         
         # Auto-save directory
         self.auto_save_dir = Path.home() / ".gif_maker" / "auto_save"
@@ -54,6 +54,8 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.setWindowTitle("GIF Maker - Multi-Timeline GIF Editor")
         self.resize(1600, 950)
+        # Default preview background color
+        self.preview_bg_color = "#e8e8e8"
     
     def init_ui(self):
         # 創建堆疊 widget 來管理不同的頁面
@@ -73,6 +75,16 @@ class MainWindow(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.main_page)
         
         self.create_menu_bar()
+        # Apply default preview background to both preview areas
+        if hasattr(self, 'preview'):
+            try:
+                self.preview.set_background_color(self.preview_bg_color)
+            except Exception:
+                pass
+        try:
+            self.preview_page.set_background_color(self.preview_bg_color)
+        except Exception:
+            pass
     
     def create_main_page(self) -> QWidget:
         """創建主頁面"""
@@ -365,6 +377,12 @@ class MainWindow(QMainWindow):
         self.preview_all_checkbox.stateChanged.connect(self.on_preview_mode_changed)
         preview_controls.addWidget(self.preview_all_checkbox)
         preview_controls.addStretch()
+
+        # Preview background color (preview-only)
+        self.preview_bg_btn = QPushButton("Preview BG")
+        self.preview_bg_btn.setToolTip("Set preview background color (does not affect export)")
+        self.preview_bg_btn.clicked.connect(self.on_choose_preview_bg)
+        preview_controls.addWidget(self.preview_bg_btn)
 
         self.info_label = QLabel("Frame: 0/0")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1319,7 +1337,25 @@ class MainWindow(QMainWindow):
         # 將當前的幀資料傳遞給預覽頁面
         if hasattr(self.preview, 'frames') and self.preview.frames:
             self.preview_page.set_frames(self.preview.frames)
+            # Keep preview page background consistent
+            try:
+                self.preview_page.set_background_color(self.preview_bg_color)
+            except Exception:
+                pass
             self.show_preview_page()
+
+    def on_choose_preview_bg(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.preview_bg_color = color.name()
+            try:
+                self.preview.set_background_color(color)
+            except Exception:
+                pass
+            try:
+                self.preview_page.set_background_color(color)
+            except Exception:
+                pass
 
     def on_set_main_timeline(self):
         idx = self.timeline_tabs.currentIndex()
@@ -1729,16 +1765,120 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to import template:\n{str(e)}")
     
     def quick_save_template(self):
-        QMessageBox.information(self, "Templates Disabled", "Template save is temporarily disabled in the new multi-timeline mode.")
+        """Save current multi-timeline state into in-memory template list."""
+        if self.multi_editor.get_frame_count() == 0:
+            QMessageBox.warning(self, "Warning", "No frames to save as template!")
+            return
+        try:
+            color_count = int(self.color_palette_combo.currentText())
+            template = TemplateManager.export_multi_template(
+                self.multi_editor,
+                self.width_spinbox.value(),
+                self.height_spinbox.value(),
+                self.loop_spinbox.value(),
+                self.transparent_bg_checkbox.isChecked(),
+                color_count
+            )
+            # Generate a simple name
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            name = f"Template {len(self.templates) + 1} ({timestamp})"
+            self.templates[name] = template
+            self.refresh_template_list()
+            info = TemplateManager.get_template_info(template)
+            QMessageBox.information(
+                self,
+                "Saved",
+                f"Saved template in memory.\nTimelines: {info.get('timeline_count', 0)}\nFrames: {info.get('frame_count', 0)}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save template: {str(e)}")
     
     def quick_apply_template(self):
-        QMessageBox.information(self, "Templates Disabled", "Template apply is temporarily disabled in the new multi-timeline mode.")
+        """Apply selected in-memory template to current editor."""
+        current_item = self.template_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Warning", "Please select a template to apply!")
+            return
+        template_name = current_item.text().split(" - ")[0]
+        template = self.templates.get(template_name)
+        if not template:
+            QMessageBox.warning(self, "Warning", "Selected template not found!")
+            return
+        try:
+            # Apply depending on format
+            if template.get("format") == "multi_timeline" or ("timelines" in template and "timebase" in template):
+                new_editor, settings = TemplateManager.apply_multi_template(template)
+                self.multi_editor = new_editor
+                # Apply settings
+                if settings:
+                    self.width_spinbox.setValue(settings.get('output_width', self.width_spinbox.value()))
+                    self.height_spinbox.setValue(settings.get('output_height', self.height_spinbox.value()))
+                    self.loop_spinbox.setValue(settings.get('loop_count', self.loop_spinbox.value()))
+                    self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', self.transparent_bg_checkbox.isChecked()))
+                    color_count = settings.get('color_count', int(self.color_palette_combo.currentText()))
+                    self.color_palette_combo.setCurrentText(str(color_count))
+                self.refresh_timeline()
+                self.update_preview()
+            else:
+                QMessageBox.warning(self, "Unsupported", "Selected template format is not multi-timeline.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to apply template: {str(e)}")
     
     def quick_import_template(self):
-        QMessageBox.information(self, "Templates Disabled", "Template import is temporarily disabled in the new multi-timeline mode.")
+        """Import a template JSON from disk into in-memory templates."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Template",
+            self.last_template_dir,
+            "JSON Files (*.json)"
+        )
+        if not file_path:
+            return
+        try:
+            self.last_template_dir = str(Path(file_path).parent)
+            template = TemplateManager.load_template_from_file(file_path)
+            info = TemplateManager.get_template_info(template)
+            if info.get('format') != 'multi_timeline':
+                QMessageBox.warning(self, "Warning", "Only multi-timeline templates are supported.")
+                return
+            name = Path(file_path).stem
+            suffix = 1
+            unique_name = name
+            while unique_name in self.templates:
+                suffix += 1
+                unique_name = f"{name} ({suffix})"
+            self.templates[unique_name] = template
+            self.refresh_template_list()
+            QMessageBox.information(self, "Imported", f"Imported template '{unique_name}'.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to import template: {str(e)}")
     
     def quick_export_template(self):
-        QMessageBox.information(self, "Templates Disabled", "Template export is temporarily disabled in the new multi-timeline mode.")
+        """Export selected in-memory template to a JSON file."""
+        current_item = self.template_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Warning", "Please select a template to export!")
+            return
+        template_name = current_item.text().split(" - ")[0]
+        template = self.templates.get(template_name)
+        if not template:
+            QMessageBox.warning(self, "Warning", "Selected template not found!")
+            return
+        default_path = str(Path(self.last_template_dir or ".") / f"{template_name}.json")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Template",
+            default_path,
+            "JSON Files (*.json)"
+        )
+        if not file_path:
+            return
+        try:
+            self.last_template_dir = str(Path(file_path).parent)
+            TemplateManager.save_template_to_file(template, file_path)
+            QMessageBox.information(self, "Success", f"Exported template to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export template: {str(e)}")
     
     def remove_template(self):
         """Remove selected template from list"""
@@ -1763,8 +1903,20 @@ class MainWindow(QMainWindow):
             self.refresh_template_list()
     
     def refresh_template_list(self):
-        """Refresh template list widget (disabled)."""
+        """Refresh template list widget with current in-memory templates."""
         self.template_list.clear()
+        # Populate list with name and brief info
+        for name, tpl in self.templates.items():
+            try:
+                info = TemplateManager.get_template_info(tpl)
+                if info.get('format') == 'multi_timeline':
+                    subtitle = f"{info.get('timeline_count', 0)} TL, {info.get('frame_count', 0)} F"
+                else:
+                    subtitle = f"{info.get('frame_count', 0)} F"
+            except Exception:
+                subtitle = "invalid"
+            item = QListWidgetItem(f"{name} - {subtitle}")
+            self.template_list.addItem(item)
         if hasattr(self, 'batch_processor'):
             self.batch_processor.set_templates(self.templates)
     
@@ -1788,81 +1940,62 @@ class MainWindow(QMainWindow):
         )
     
     def auto_save_template(self):
-        """Automatically save current work as template"""
+        """Automatically save current work as a multi-timeline template."""
         if not self.auto_save_enabled:
             return
-        
         # Only save if there's actual content
-        if len(self.layered_sequence_editor) == 0:
+        if self.multi_editor.get_frame_count() == 0:
             return
-        
         try:
             # Create content hash to avoid duplicate saves
             content_hash = self._get_content_hash()
             if content_hash == self.last_auto_save_content_hash:
                 return  # No changes since last save
-            
-            # Use fixed filename (always overwrite the same file)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            frame_count = len(self.layered_sequence_editor)
+            frame_count = self.multi_editor.get_frame_count()
             material_count = len(self.material_manager)
-            
             file_path = self.auto_save_file
-            
-            # Create template
             color_count = int(self.color_palette_combo.currentText())
-            template = TemplateManager.export_template(
-                self.layered_sequence_editor,
+            template = TemplateManager.export_multi_template(
+                self.multi_editor,
                 self.width_spinbox.value(),
                 self.height_spinbox.value(),
                 self.loop_spinbox.value(),
                 self.transparent_bg_checkbox.isChecked(),
-                len(self.material_manager),
                 color_count
             )
-            
-            # Add auto-save metadata
             template["auto_save_metadata"] = {
                 "timestamp": timestamp,
                 "frame_count": frame_count,
                 "material_count": material_count,
                 "content_hash": content_hash
             }
-            
-            # Save to file
             TemplateManager.save_template_to_file(template, str(file_path))
-            
-            # Update tracking
             self.last_auto_save_content_hash = content_hash
-            
-            print(f"Auto-saved: {file_path.name}")  # Silent logging
-            
+            print(f"Auto-saved: {file_path.name}")
         except Exception as e:
-            print(f"Auto-save failed: {e}")  # Silent error logging
+            print(f"Auto-save failed: {e}")
     
     def _get_content_hash(self):
-        """Generate hash of current content for change detection"""
+        """Generate hash of current multi-timeline content for change detection"""
         import hashlib
-        
-        # Create content string from current state
-        content_parts = []
-        
-        # Add frame information
-        for frame in self.layered_sequence_editor.get_frames():
-            content_parts.append(f"frame:{frame.name}:{frame.duration}")
-            for layer in frame.layers:
-                content_parts.append(f"layer:{layer.name}:{layer.material_index}:{layer.x}:{layer.y}:{layer.scale}:{layer.opacity}")
-        
-        # Add settings
-        content_parts.append(f"settings:{self.width_spinbox.value()}:{self.height_spinbox.value()}:{self.loop_spinbox.value()}:{self.transparent_bg_checkbox.isChecked()}")
-        
-        content_string = "|".join(content_parts)
-        return hashlib.md5(content_string.encode()).hexdigest()
+        parts = []
+        # Timebase
+        parts.append("durations:" + ",".join(str(d) for d in self.multi_editor.durations_ms))
+        # Timelines
+        for t in self.multi_editor.timelines:
+            parts.append(f"tl:{t.name}:{t.offset_x}:{t.offset_y}")
+            for fr in t.frames:
+                mi = "n" if fr.material_index is None else str(fr.material_index)
+                parts.append(f"f:{mi}:{fr.x}:{fr.y}")
+        # Settings
+        parts.append(f"settings:{self.width_spinbox.value()}:{self.height_spinbox.value()}:{self.loop_spinbox.value()}:{self.transparent_bg_checkbox.isChecked()}:{self.color_palette_combo.currentText()}")
+        return hashlib.md5("|".join(parts).encode()).hexdigest()
     
     
     def closeEvent(self, event):
         """Handle application closing - perform emergency auto-save"""
-        if self.auto_save_enabled and len(self.layered_sequence_editor) > 0:
+        if self.auto_save_enabled and self.multi_editor.get_frame_count() > 0:
             try:
                 # Force emergency save
                 self.auto_save_template()
@@ -1887,30 +2020,21 @@ class MainWindow(QMainWindow):
             
             # Load template
             template = TemplateManager.load_template_from_file(str(self.auto_save_file))
-            
-            # Apply template
-            new_editor, settings = TemplateManager.apply_template(template)
-            
-            # Update current editor
-            self.layered_sequence_editor = new_editor
-            
-            # Update settings
-            if settings:
-                self.width_spinbox.setValue(settings.get("output_width", 100))
-                self.height_spinbox.setValue(settings.get("output_height", 100))
-                self.loop_spinbox.setValue(settings.get("loop_count", 0))
-                self.transparent_bg_checkbox.setChecked(settings.get("transparent_bg", False))
-                
-                color_count = settings.get("color_count", 256)
-                color_text = str(color_count)
-                if color_text in [self.color_palette_combo.itemText(i) for i in range(self.color_palette_combo.count())]:
-                    self.color_palette_combo.setCurrentText(color_text)
-            
-            # Refresh UI
-            self.refresh_timeline()
-            # Refresh layer editor if it exists
-            if hasattr(self, 'layer_editor'):
-                self.layer_editor.refresh_layer_list()
+            info = TemplateManager.get_template_info(template)
+            if info.get('format') == 'multi_timeline':
+                new_editor, settings = TemplateManager.apply_multi_template(template)
+                self.multi_editor = new_editor
+                if settings:
+                    self.width_spinbox.setValue(settings.get("output_width", self.width_spinbox.value()))
+                    self.height_spinbox.setValue(settings.get("output_height", self.height_spinbox.value()))
+                    self.loop_spinbox.setValue(settings.get("loop_count", self.loop_spinbox.value()))
+                    self.transparent_bg_checkbox.setChecked(settings.get("transparent_bg", self.transparent_bg_checkbox.isChecked()))
+                    color_count = settings.get("color_count", int(self.color_palette_combo.currentText()))
+                    color_text = str(color_count)
+                    if color_text in [self.color_palette_combo.itemText(i) for i in range(self.color_palette_combo.count())]:
+                        self.color_palette_combo.setCurrentText(color_text)
+                # Refresh UI
+                self.refresh_timeline()
             
             # Get metadata
             metadata = template.get("auto_save_metadata", {})
@@ -1921,7 +2045,7 @@ class MainWindow(QMainWindow):
                 "Auto-Save Restored",
                 f"Restored from auto-save:\n{self.auto_save_file.name}\n\n"
                 f"Saved: {timestamp}\n"
-                f"Frames: {metadata.get('frame_count', 0)}\n"
+                f"Frames: {metadata.get('frame_count', info.get('frame_count', 0))}\n"
                 f"Materials: {metadata.get('material_count', 0)}"
             )
             
