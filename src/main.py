@@ -226,12 +226,6 @@ class MainWindow(QMainWindow):
     def create_middle_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout()
-        
-        # Multi timeline tabs
-        tabs_row = QHBoxLayout()
-        self.timeline_tabs = QTabWidget()
-        self.timeline_tabs.currentChanged.connect(self.on_timeline_tab_changed)
-        layout.addWidget(self.timeline_tabs, stretch=2)
 
         # Controls to add/remove/reorder timelines
         timeline_controls = QHBoxLayout()
@@ -263,6 +257,12 @@ class MainWindow(QMainWindow):
 
         timeline_controls.addStretch()
         layout.addLayout(timeline_controls)
+        
+        # Multi timeline tabs
+        tabs_row = QHBoxLayout()
+        self.timeline_tabs = QTabWidget()
+        self.timeline_tabs.currentChanged.connect(self.on_timeline_tab_changed)
+        layout.addWidget(self.timeline_tabs, stretch=2)
         
         # Row 1: Basic operations (more compact buttons)
         btn_row1 = QHBoxLayout()
@@ -1216,13 +1216,30 @@ class MainWindow(QMainWindow):
             tab.timeline_widget = timeline_widget
             v.addWidget(timeline_widget)
             tab.setLayout(v)
-            self.timeline_tabs.addTab(tab, self.multi_editor.timelines[idx].name)
+            # Set initial tab name with asterisk if it's the main timeline
+            timeline_name = self.multi_editor.timelines[idx].name
+            if idx == self.multi_editor.main_timeline_index and not timeline_name.startswith('*'):
+                timeline_name = f"★ {timeline_name}"
+            self.timeline_tabs.addTab(tab, timeline_name)
 
-        # Update which tab is main
+        # Update which tab is main and update tab names with asterisk
         for i in range(self.timeline_tabs.count()):
             tab = self.timeline_tabs.widget(i)
             if hasattr(tab, 'timeline_widget'):
                 tab.timeline_widget.set_is_main_timebase(i == self.multi_editor.main_timeline_index)
+            
+            # Update tab name with asterisk for main timeline
+            timeline_name = self.multi_editor.timelines[i].name
+            if i == self.multi_editor.main_timeline_index:
+                # Add asterisk to main timeline name
+                if not timeline_name.startswith('★ '):
+                    timeline_name = f"★ {timeline_name}"
+            else:
+                # Remove asterisk from non-main timeline names
+                if timeline_name.startswith('★ '):
+                    timeline_name = timeline_name[2:]
+            
+            self.timeline_tabs.setTabText(i, timeline_name)
 
         # Populate current tab table
         current_index = self.timeline_tabs.currentIndex()
