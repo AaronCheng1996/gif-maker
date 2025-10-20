@@ -376,40 +376,5 @@ class TemplateManager:
             "transparent_bg": settings.get("transparent_bg", False)
         }
     
-    @staticmethod
-    def get_template_info(template: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get summary information about a template
-        
-        Args:
-            template: Template dictionary
-        
-        Returns:
-            Info dictionary
-        """
-        settings = template.get("settings", {})
-        frames = template.get("frames", [])
-        
-        # Collect material indices used
-        material_indices = set()
-        total_layers = 0
-        
-        for frame in frames:
-            for layer in frame.get("layers", []):
-                material_indices.add(layer["material_index"])
-                total_layers += 1
-        
-        total_duration = sum(frame.get("duration", 100) for frame in frames)
-        
-        return {
-            "version": template.get("version", "unknown"),
-            "frame_count": len(frames),
-            "material_count": settings.get("material_count", len(material_indices)),
-            "unique_materials_used": len(material_indices),
-            "total_layers": total_layers,
-            "total_duration_ms": total_duration,
-            "output_size": (settings.get("output_width", 0), settings.get("output_height", 0)),
-            "loop_count": settings.get("loop_count", 0),
-            "transparent_bg": settings.get("transparent_bg", False)
-        }
+    
 

@@ -114,19 +114,42 @@ class BatchProcessor:
                 tile_name = f"{source_filename}_tile_{i}"
                 temp_material_manager.add_material(tile, tile_name)
             
-            # Validate template material count
-            template_settings = template.get("settings", {})
-            required_materials = template_settings.get("material_count", 0)
-            
-            if len(temp_material_manager) < required_materials:
-                raise BatchProcessingError(
-                    f"Template requires {required_materials} materials, "
-                    f"but only {len(temp_material_manager)} tiles were generated"
+            # Validate template compatibility and apply based on format
+            is_multi_template = (
+                template.get("format") == "multi_timeline" or (
+                    "timelines" in template and "timebase" in template
                 )
-            
-            # Apply template
-            layered_sequence_editor, settings = TemplateManager.apply_template(template)
-            
+            )
+
+            if is_multi_template:
+                # For multi-timeline templates, ensure we have enough tiles to satisfy
+                # the highest referenced material index (0-based contiguous requirement).
+                max_index = -1
+                timelines = template.get("timelines", [])
+                for tl in timelines:
+                    for fr in tl.get("frames", []):
+                        if isinstance(fr, dict):
+                            mi = fr.get("material_index")
+                            if isinstance(mi, int) and mi > max_index:
+                                max_index = mi
+                required_count = max_index + 1 if max_index >= 0 else 0
+                if len(temp_material_manager) <= max_index:
+                    raise BatchProcessingError(
+                        f"Template references material index up to {max_index}, "
+                        f"but only {len(temp_material_manager)} tiles were generated"
+                    )
+                multi_editor, settings = TemplateManager.apply_multi_template(template)
+            else:
+                # Legacy layered template: validate by material_count setting
+                template_settings = template.get("settings", {})
+                required_materials = template_settings.get("material_count", 0)
+                if len(temp_material_manager) < required_materials:
+                    raise BatchProcessingError(
+                        f"Template requires {required_materials} materials, "
+                        f"but only {len(temp_material_manager)} tiles were generated"
+                    )
+                layered_sequence_editor, settings = TemplateManager.apply_template(template)
+
             # Create GIF builder with template settings
             gif_builder = GifBuilder()
             gif_builder.set_output_size(
@@ -148,11 +171,18 @@ class BatchProcessor:
                 output_path = str(source_path.with_suffix('.gif'))
             
             # Build and save GIF
-            gif_builder.build_from_layered_sequence(
-                layered_sequence_editor.get_frames(),
-                temp_material_manager,
-                output_path
-            )
+            if is_multi_template:
+                gif_builder.build_from_multitimeline(
+                    multi_editor,
+                    temp_material_manager,
+                    output_path
+                )
+            else:
+                gif_builder.build_from_layered_sequence(
+                    layered_sequence_editor.get_frames(),
+                    temp_material_manager,
+                    output_path
+                )
             
             return output_path
             

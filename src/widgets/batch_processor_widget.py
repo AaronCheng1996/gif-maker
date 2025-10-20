@@ -365,12 +365,27 @@ class BatchProcessorWidget(QWidget):
             if self.selected_template:
                 from ..core.template_manager import TemplateManager
                 info = TemplateManager.get_template_info(self.selected_template)
+                # Determine materials needed depending on format
+                fmt = info.get('format')
+                materials_needed = None
+                if fmt == 'multi_timeline' or ("timelines" in self.selected_template and "timebase" in self.selected_template):
+                    # For multi-timeline, require at least max material index + 1 (0-based)
+                    max_index = -1
+                    for tl in self.selected_template.get('timelines', []):
+                        for fr in tl.get('frames', []):
+                            if isinstance(fr, dict):
+                                mi = fr.get('material_index')
+                                if isinstance(mi, int) and mi > max_index:
+                                    max_index = mi
+                    materials_needed = max_index + 1 if max_index >= 0 else 0
+                else:
+                    materials_needed = info.get('material_count', 0)
                 
                 self.template_info_label.setText(
-                    f"Frames: {info['frame_count']} | "
-                    f"Materials needed: {info['material_count']} | "
-                    f"Size: {info['output_size'][0]}×{info['output_size'][1]} | "
-                    f"Loop: {info['loop_count']}"
+                    f"Frames: {info.get('frame_count', 0)} | "
+                    f"Materials needed: {materials_needed} | "
+                    f"Size: {info.get('output_size', (0, 0))[0]}×{info.get('output_size', (0, 0))[1]} | "
+                    f"Loop: {info.get('loop_count', 0)}"
                 )
         
         self.update_button_states()
