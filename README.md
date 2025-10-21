@@ -15,21 +15,6 @@ A powerful GIF animation editor designed for game developers and animators, allo
 - Multi-selection support (Ctrl+click, Shift+click, drag selection)
 - Export materials as PNG files (selected or all)
 
-**NEW** - Multi-Layer Editing System
-   - Switch between Simple Mode and Layered Mode
-   - Create frames with multiple layers
-   - Layer management: add, remove, reorder layers
-   - Per-layer transformations: position, crop, scale, opacity
-   - Layer visibility control
-   - Automatic layer composition for preview and export
-
-**NEW** - Advanced Image Manipulation
-   - Crop layers to specific regions
-   - Adjust layer position (X, Y coordinates)
-   - Scale layers independently
-   - Control layer opacity
-   - Handle materials of different sizes with flexible positioning
-
 2. **Image Splitting Tool (Tile Splitter)**
    - Split by grid count (e.g., 4x4 grid)
    - Split by tile size (e.g., 32x32 pixels)

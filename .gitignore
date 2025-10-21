@@ -43,3 +43,26 @@ Thumbs.db
 # Project specific
 output.gif
 *.gif
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Linters / tooling caches
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Env / secrets
+.env
+.env.*
+
+# Editor tooling
+.cursor/
+.agent-tools/
+
+# Optional project-specific
+src/assets/samples/
