@@ -17,6 +17,8 @@ class GifBuilder:
         self.optimize: bool = True
         self.disposal: int = 2
         self.color_count: int = 256  # Default color palette size
+        self.chroma_key_color: Optional[Tuple[int, int, int]] = None  # RGB color to make transparent
+        self.chroma_key_threshold: int = 30  # Color similarity threshold (0-255)
     
     def set_output_size(self, width: int, height: int):
         self.output_size = (width, height)
@@ -30,6 +32,56 @@ class GifBuilder:
     def set_color_count(self, color_count: int):
         """Set the number of colors in the palette (256, 128, 64, 32, 16, etc.)"""
         self.color_count = color_count
+    
+    def set_chroma_key(self, r: int, g: int, b: int, threshold: int = 30):
+        """Set a color to be made transparent (chroma key/green screen effect)
+        
+        Args:
+            r, g, b: RGB values of the color to make transparent
+            threshold: Color similarity threshold (0-255). Higher values will make more similar colors transparent.
+        """
+        self.chroma_key_color = (r, g, b)
+        self.chroma_key_threshold = threshold
+    
+    def clear_chroma_key(self):
+        """Remove chroma key effect"""
+        self.chroma_key_color = None
+    
+    def apply_chroma_key(self, image: Image.Image) -> Image.Image:
+        """Apply chroma key effect to an image, making specified color transparent
+        
+        Args:
+            image: Input image
+            
+        Returns:
+            Image with chroma key applied (RGBA format)
+        """
+        if self.chroma_key_color is None:
+            return ensure_rgba(image)
+        
+        img = ensure_rgba(image)
+        width, height = img.size
+        
+        target_r, target_g, target_b = self.chroma_key_color
+        threshold = self.chroma_key_threshold
+        
+        # Create a copy to modify
+        result = img.copy()
+        result_pixels = result.load()
+        
+        # Make similar colors transparent
+        for y in range(height):
+            for x in range(width):
+                r, g, b, _ = result_pixels[x, y]
+                
+                # Calculate color distance (Euclidean distance in RGB space)
+                color_dist = ((r - target_r) ** 2 + (g - target_g) ** 2 + (b - target_b) ** 2) ** 0.5
+                
+                # If color is within threshold, make it transparent
+                if color_dist <= threshold:
+                    result_pixels[x, y] = (r, g, b, 0)
+        
+        return result
     
     def prepare_frame(self, material_image: Image.Image) -> Image.Image:
         img = ensure_rgba(material_image)
@@ -432,6 +484,11 @@ class GifBuilder:
                 continue
             material_img, _ = material
             img_rgba = ensure_rgba(material_img)
+            
+            # Apply chroma key if set
+            if self.chroma_key_color is not None:
+                img_rgba = self.apply_chroma_key(img_rgba)
+            
             try:
                 canvas.paste(img_rgba, (x, y), img_rgba)
             except Exception:

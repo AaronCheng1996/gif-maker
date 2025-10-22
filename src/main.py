@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, QSize, QItemSelectionModel, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 
 from PIL import Image
+from collections import Counter
 
 from .core import MaterialManager, GifBuilder, TemplateManager, MultiTimelineEditor, Timeline, TimelineFrame
 from .widgets import PreviewWidget, PreviewPageWidget, TimelineWidget, TileEditorWidget, BatchProcessorWidget
@@ -56,6 +57,11 @@ class MainWindow(QMainWindow):
         self.resize(1600, 950)
         # Default preview background color
         self.preview_bg_color = "#e8e8e8"
+        
+        # Chroma key state
+        self.chroma_key_colors = []  # List of (color_rgb, percentage, display_name) tuples
+        self.chroma_key_colors_all = []  # All analyzed colors
+        self.chroma_key_display_count = 10  # Number of colors to display at once
     
     def init_ui(self):
         # 創建堆疊 widget 來管理不同的頁面
@@ -494,6 +500,32 @@ class MainWindow(QMainWindow):
         color_layout.addWidget(self.color_palette_combo)
         color_layout.addStretch()
         settings_layout.addLayout(color_layout)
+        
+        # Chroma key (green screen) selection
+        chroma_layout = QHBoxLayout()
+        chroma_layout.addWidget(QLabel("Chroma Key:"))
+        self.chroma_key_combo = QComboBox()
+        self.chroma_key_combo.addItem("None (Disabled)")
+        self.chroma_key_combo.setToolTip("Select a color to make transparent (green screen effect)")
+        self.chroma_key_combo.currentIndexChanged.connect(self.on_chroma_key_changed)
+        self.chroma_key_combo.setMinimumWidth(150)
+        chroma_layout.addWidget(self.chroma_key_combo)
+        
+        self.analyze_colors_btn = QPushButton("🔍")
+        self.analyze_colors_btn.setMaximumWidth(30)
+        self.analyze_colors_btn.setToolTip("Analyze colors from first frame")
+        self.analyze_colors_btn.clicked.connect(self.analyze_first_frame_colors)
+        chroma_layout.addWidget(self.analyze_colors_btn)
+        
+        self.show_more_colors_btn = QPushButton("+10")
+        self.show_more_colors_btn.setMaximumWidth(40)
+        self.show_more_colors_btn.setToolTip("Show 10 more color options")
+        self.show_more_colors_btn.clicked.connect(self.show_more_colors)
+        self.show_more_colors_btn.setEnabled(False)
+        chroma_layout.addWidget(self.show_more_colors_btn)
+        
+        chroma_layout.addStretch()
+        settings_layout.addLayout(chroma_layout)
         
         
         settings_group.setLayout(settings_layout)
@@ -2079,6 +2111,152 @@ class MainWindow(QMainWindow):
         else:
             self.auto_save_timer.stop()
             QMessageBox.information(self, "Auto-Save", "Auto-save disabled")
+    
+    def create_color_icon(self, r: int, g: int, b: int, size: int = 16) -> QIcon:
+        """Create a color preview icon"""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        from PyQt6.QtGui import QPainter, QColor
+        painter = QPainter(pixmap)
+        painter.fillRect(0, 0, size, size, QColor(r, g, b))
+        painter.end()
+        
+        return QIcon(pixmap)
+    
+    def analyze_first_frame_colors(self):
+        """Analyze colors in the first frame of the main timeline and populate chroma key dropdown"""
+        try:
+            # Get main timeline
+            main_idx = self.multi_editor.main_timeline_index
+            main_timeline = self.multi_editor.get_timeline(main_idx)
+            
+            if not main_timeline or len(main_timeline.frames) == 0:
+                QMessageBox.warning(self, "Warning", "No frames in main timeline to analyze!")
+                return
+            
+            # Get first frame's material
+            first_frame = main_timeline.frames[0]
+            if first_frame.material_index is None:
+                QMessageBox.warning(self, "Warning", "First frame has no material assigned!")
+                return
+            
+            material = self.material_manager.get_material(first_frame.material_index)
+            if not material:
+                QMessageBox.warning(self, "Warning", "First frame material not found!")
+                return
+            
+            img, _ = material
+            
+            # Convert to RGB for color analysis
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Sample colors (downsample for performance on large images)
+            max_size = 200
+            if img.width > max_size or img.height > max_size:
+                # Create a thumbnail for analysis
+                img_small = img.copy()
+                img_small.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                img = img_small
+            
+            # Get all pixels
+            pixels = list(img.getdata())
+            total_pixels = len(pixels)
+            
+            # Count colors
+            color_counts = Counter(pixels)
+            
+            # Get top colors (store all for "show more" functionality)
+            top_colors = color_counts.most_common(100)  # Store up to 100
+            
+            # Store all colors with their percentages
+            self.chroma_key_colors_all = []
+            for color, count in top_colors:
+                percentage = (count / total_pixels) * 100
+                r, g, b = color
+                # Create display name with color and percentage
+                display_name = f"RGB({r},{g},{b}) - {percentage:.1f}%"
+                self.chroma_key_colors_all.append((color, percentage, display_name))
+            
+            # Reset display count and update combo box
+            self.chroma_key_display_count = 10
+            self.update_chroma_key_combo()
+            
+            # Enable/disable show more button
+            self.show_more_colors_btn.setEnabled(len(self.chroma_key_colors_all) > self.chroma_key_display_count)
+            
+            QMessageBox.information(
+                self, 
+                "Analysis Complete", 
+                f"Analyzed {len(top_colors)} most common colors from first frame.\n"
+                f"Showing top {min(10, len(top_colors))} colors.\n"
+                f"Click '+10' to see more options."
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to analyze colors:\n{str(e)}")
+    
+    def update_chroma_key_combo(self):
+        """Update chroma key combo box with current display count"""
+        # Store current selection
+        current_index = self.chroma_key_combo.currentIndex()
+        
+        self.chroma_key_combo.blockSignals(True)
+        self.chroma_key_combo.clear()
+        self.chroma_key_combo.addItem("None (Disabled)")
+        
+        # Add colors up to display count
+        display_colors = self.chroma_key_colors_all[:self.chroma_key_display_count]
+        for color_rgb, _, display_name in display_colors:
+            r, g, b = color_rgb
+            icon = self.create_color_icon(r, g, b)
+            self.chroma_key_combo.addItem(icon, display_name)
+        
+        # Restore selection if valid
+        if current_index < self.chroma_key_combo.count():
+            self.chroma_key_combo.setCurrentIndex(current_index)
+        else:
+            self.chroma_key_combo.setCurrentIndex(0)
+        
+        self.chroma_key_combo.blockSignals(False)
+    
+    def show_more_colors(self):
+        """Show 10 more color options"""
+        if self.chroma_key_display_count < len(self.chroma_key_colors_all):
+            self.chroma_key_display_count += 10
+            self.update_chroma_key_combo()
+            
+            # Disable button if we've shown all colors
+            if self.chroma_key_display_count >= len(self.chroma_key_colors_all):
+                self.show_more_colors_btn.setEnabled(False)
+    
+    def on_chroma_key_changed(self):
+        """Handle chroma key color selection change"""
+        try:
+            index = self.chroma_key_combo.currentIndex()
+            
+            if index == 0:
+                # "None" selected - disable chroma key
+                self.gif_builder.clear_chroma_key()
+            else:
+                # Color selected - apply chroma key
+                color_index = index - 1  # Account for "None" option
+                display_colors = self.chroma_key_colors_all[:self.chroma_key_display_count]
+                if 0 <= color_index < len(display_colors):
+                    color_rgb, _, _ = display_colors[color_index]
+                    r, g, b = color_rgb
+                    self.gif_builder.set_chroma_key(r, g, b, threshold=30)
+            
+            # Update preview to show effect
+            self.update_preview()
+            
+        except Exception as e:
+            print(f"Error applying chroma key: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():
