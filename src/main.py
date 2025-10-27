@@ -16,7 +16,7 @@ from PIL import Image
 from collections import Counter
 
 from .core import MaterialManager, GifBuilder, TemplateManager, MultiTimelineEditor, Timeline, TimelineFrame
-from .widgets import PreviewWidget, PreviewPageWidget, TimelineWidget, TileEditorWidget, BatchProcessorWidget
+from .widgets import PreviewWidget, PreviewPageWidget, TimelineWidget, TileEditorWidget, BatchProcessorWidget, GifOptimizerWidget
 
 
 class MainWindow(QMainWindow):
@@ -153,6 +153,13 @@ class MainWindow(QMainWindow):
         batch_scroll_area.setWidget(self.batch_processor)
         batch_scroll_area.setWidgetResizable(True)
         tabs.addTab(batch_scroll_area, "Batch Process")
+
+        # GIF Optimizer tab (Lossy)
+        self.gif_optimizer = GifOptimizerWidget()
+        optimizer_scroll_area = QScrollArea()
+        optimizer_scroll_area.setWidget(self.gif_optimizer)
+        optimizer_scroll_area.setWidgetResizable(True)
+        tabs.addTab(optimizer_scroll_area, "GIF Optimizer")
         
         # Update batch processor templates when templates change
         self.batch_processor.set_templates(self.templates)
