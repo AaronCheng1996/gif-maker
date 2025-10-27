@@ -42,6 +42,13 @@ def _optimize_with_gifsicle(input_path: str, output_path: str, lossy: int, color
         raise GifOptimizationError(
             f"gifsicle failed (code {e.returncode}): {e.stderr.decode(errors='ignore').strip()}"
         )
+    except Exception as e:
+        # Wrap any unexpected invocation errors
+        raise GifOptimizationError(f"gifsicle invocation failed: {e}")
+
+    # Ensure output file was actually produced
+    if not Path(output_path).exists():
+        raise GifOptimizationError("gifsicle did not produce the expected output file")
 
 
 def _optimize_with_pillow(input_path: str, output_path: str, colors: Optional[int]) -> None:
