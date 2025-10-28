@@ -195,6 +195,22 @@ class MainWindow(QMainWindow):
         list_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(list_label)
         
+        # Sorting controls for materials
+        sort_row = QHBoxLayout()
+        sort_row.addWidget(QLabel("Sort:"))
+        self.material_sort_combo = QComboBox()
+        self.material_sort_combo.addItems([
+            "Default",
+            "Name (A→Z)",
+            "Name (Z→A)",
+            "Width (Large→Small)",
+            "Height (Large→Small)",
+        ])
+        self.material_sort_combo.currentIndexChanged.connect(self.refresh_materials_list)
+        sort_row.addWidget(self.material_sort_combo)
+        sort_row.addStretch()
+        layout.addLayout(sort_row)
+        
         self.materials_list = QListWidget()
         self.materials_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.materials_list.setIconSize(QSize(64, 64))
@@ -207,6 +223,11 @@ class MainWindow(QMainWindow):
         self.add_to_timebase_btn.setToolTip("Append frames to main timeline using selected materials")
         self.add_to_timebase_btn.clicked.connect(self.add_selected_to_timebase)
         material_actions.addWidget(self.add_to_timebase_btn)
+        
+        self.add_to_current_timeline_btn = QPushButton("Add to Current Timeline")
+        self.add_to_current_timeline_btn.setToolTip("Assign selected materials into current timeline (appends; extends timebase if needed)")
+        self.add_to_current_timeline_btn.clicked.connect(self.add_selected_to_current_timeline)
+        material_actions.addWidget(self.add_to_current_timeline_btn)
         
         self.remove_material_btn = QPushButton("Remove")
         self.remove_material_btn.clicked.connect(self.remove_selected_material)
@@ -277,18 +298,30 @@ class MainWindow(QMainWindow):
         self.timeline_tabs.currentChanged.connect(self.on_timeline_tab_changed)
         layout.addWidget(self.timeline_tabs, stretch=2)
         
-        # Row 1: Basic operations (more compact buttons)
+        # Row 1: Offset (left) and controls (right)
         btn_row1 = QHBoxLayout()
-        self.duplicate_frame_btn = QPushButton("Copy")
-        self.duplicate_frame_btn.clicked.connect(self.duplicate_frame)
-        self.duplicate_frame_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.duplicate_frame_btn)
+        # Offset group on left
+        btn_row1.addWidget(QLabel("Offset:"))
+        self.batch_offset_x = QSpinBox()
+        self.batch_offset_x.setMinimum(-10000)
+        self.batch_offset_x.setMaximum(10000)
+        self.batch_offset_x.setValue(0)
+        self.batch_offset_x.setMaximumWidth(60)
+        btn_row1.addWidget(self.batch_offset_x)
+        self.batch_offset_y = QSpinBox()
+        self.batch_offset_y.setMinimum(-10000)
+        self.batch_offset_y.setMaximum(10000)
+        self.batch_offset_y.setValue(0)
+        self.batch_offset_y.setMaximumWidth(60)
+        btn_row1.addWidget(self.batch_offset_y)
+        self.apply_batch_offset_btn = QPushButton("Apply")
+        self.apply_batch_offset_btn.clicked.connect(self.apply_batch_offset)
+        self.apply_batch_offset_btn.setMaximumHeight(25)
+        btn_row1.addWidget(self.apply_batch_offset_btn)
         
-        self.remove_frame_btn = QPushButton("Del")
-        self.remove_frame_btn.clicked.connect(self.remove_frame)
-        self.remove_frame_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.remove_frame_btn)
+        btn_row1.addStretch()
         
+        # Controls on the right
         self.move_frame_up_btn = QPushButton("▲")
         self.move_frame_up_btn.clicked.connect(self.move_frame_up)
         self.move_frame_up_btn.setMaximumWidth(30)
@@ -300,6 +333,29 @@ class MainWindow(QMainWindow):
         self.move_frame_down_btn.setMaximumWidth(30)
         self.move_frame_down_btn.setMaximumHeight(25)
         btn_row1.addWidget(self.move_frame_down_btn)
+
+        # Reverse selected frames
+        self.reverse_frames_btn = QPushButton("⇄")
+        self.reverse_frames_btn.setToolTip("Reverse order of selected frames")
+        self.reverse_frames_btn.setMaximumWidth(30)
+        self.reverse_frames_btn.setMaximumHeight(25)
+        self.reverse_frames_btn.clicked.connect(self.reverse_selected_frames)
+        btn_row1.addWidget(self.reverse_frames_btn)
+        
+        # Copy/Delete as icons on the far right
+        self.duplicate_frame_btn = QPushButton("📄")
+        self.duplicate_frame_btn.setToolTip("Copy (duplicate) selected frames")
+        self.duplicate_frame_btn.clicked.connect(self.duplicate_frame)
+        self.duplicate_frame_btn.setMaximumWidth(30)
+        self.duplicate_frame_btn.setMaximumHeight(25)
+        btn_row1.addWidget(self.duplicate_frame_btn)
+        
+        self.remove_frame_btn = QPushButton("🗑")
+        self.remove_frame_btn.setToolTip("Delete selected frames")
+        self.remove_frame_btn.clicked.connect(self.remove_frame)
+        self.remove_frame_btn.setMaximumWidth(30)
+        self.remove_frame_btn.setMaximumHeight(25)
+        btn_row1.addWidget(self.remove_frame_btn)
         
         self.refresh_timeline_btn = QPushButton("🔄")
         self.refresh_timeline_btn.clicked.connect(self.refresh_timeline)
@@ -309,28 +365,6 @@ class MainWindow(QMainWindow):
         btn_row1.addWidget(self.refresh_timeline_btn)
         
         layout.addLayout(btn_row1)
-        
-        # Batch offset (single row)
-        offset_layout = QHBoxLayout()
-        offset_layout.addWidget(QLabel("Offset:"))
-        self.batch_offset_x = QSpinBox()
-        self.batch_offset_x.setMinimum(-10000)
-        self.batch_offset_x.setMaximum(10000)
-        self.batch_offset_x.setValue(0)
-        self.batch_offset_x.setMaximumWidth(60)
-        offset_layout.addWidget(self.batch_offset_x)
-        self.batch_offset_y = QSpinBox()
-        self.batch_offset_y.setMinimum(-10000)
-        self.batch_offset_y.setMaximum(10000)
-        self.batch_offset_y.setValue(0)
-        self.batch_offset_y.setMaximumWidth(60)
-        offset_layout.addWidget(self.batch_offset_y)
-        self.apply_batch_offset_btn = QPushButton("Apply")
-        self.apply_batch_offset_btn.clicked.connect(self.apply_batch_offset)
-        self.apply_batch_offset_btn.setMaximumHeight(25)
-        offset_layout.addWidget(self.apply_batch_offset_btn)
-        offset_layout.addStretch()
-        layout.addLayout(offset_layout)
         
         # Controls for assigning material to current timeline frame
         assign_row = QHBoxLayout()
@@ -674,12 +708,41 @@ class MainWindow(QMainWindow):
     
     def refresh_materials_list(self):
         self.materials_list.clear()
-        
-        for i, (img, name) in enumerate(self.material_manager.get_all_materials()):
+
+        # Determine sort order
+        indices = list(range(len(self.material_manager)))
+        sort_mode = getattr(self, 'material_sort_combo', None).currentText() if hasattr(self, 'material_sort_combo') else "Default"
+
+        def get_name(idx):
+            m = self.material_manager.get_material(idx)
+            return m[1] if m else ""
+
+        def get_size(idx):
+            m = self.material_manager.get_material(idx)
+            if not m:
+                return (0, 0)
+            img = m[0]
+            return (img.width, img.height)
+
+        if sort_mode == "Name (A→Z)":
+            indices.sort(key=lambda i: get_name(i).lower())
+        elif sort_mode == "Name (Z→A)":
+            indices.sort(key=lambda i: get_name(i).lower(), reverse=True)
+        elif sort_mode == "Width (Large→Small)":
+            indices.sort(key=lambda i: get_size(i)[0], reverse=True)
+        elif sort_mode == "Height (Large→Small)":
+            indices.sort(key=lambda i: get_size(i)[1], reverse=True)
+        # else Default keeps original order
+
+        for i in indices:
+            mat = self.material_manager.get_material(i)
+            if not mat:
+                continue
+            img, name = mat
             thumbnail = self.create_thumbnail(img, 64, 64)
             icon = QIcon(thumbnail)
-            
             item = QListWidgetItem(icon, f"[{i}] {name} ({img.width}x{img.height})")
+            item.setData(Qt.ItemDataRole.UserRole, i)
             item.setSizeHint(QSize(200, 70))
             self.materials_list.addItem(item)
     
@@ -696,7 +759,11 @@ class MainWindow(QMainWindow):
     
     def add_selected_to_timebase(self):
         """Append selected materials as new frames to the main timebase and all timelines."""
-        selected_rows = [item.row() for item in self.materials_list.selectedIndexes()]
+        selected_rows = []
+        for index in self.materials_list.selectedIndexes():
+            item = self.materials_list.item(index.row())
+            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            selected_rows.append(mat_idx if mat_idx is not None else index.row())
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
             return
@@ -747,9 +814,80 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to add materials to timebase:\n{str(e)}")
+
+    def add_selected_to_current_timeline(self):
+        """Assign selected materials into the current timeline sequentially.
+
+        If the current tab is the main timebase, reuse Add to Timebase.
+        If more slots are needed, extends the timebase for all timelines.
+        """
+        mat_indices = []
+        for index in self.materials_list.selectedIndexes():
+            item = self.materials_list.item(index.row())
+            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            mat_indices.append(mat_idx if mat_idx is not None else index.row())
+        if not mat_indices:
+            QMessageBox.warning(self, "Warning", "Please select at least one material!")
+            return
+
+        # Ensure at least one timeline exists
+        if not self.multi_editor.timelines:
+            self.multi_editor.add_timeline("Main")
+            self.multi_editor.set_main_timeline(0)
+
+        current_index = self.timeline_tabs.currentIndex()
+        if current_index < 0:
+            current_index = 0
+
+        if current_index == self.multi_editor.main_timeline_index:
+            # Append to timebase directly
+            self.add_selected_to_timebase()
+            return
+
+        tl = self.multi_editor.get_timeline(current_index)
+        if tl is None:
+            return
+
+        frame_count = self.multi_editor.get_frame_count()
+        # Find first empty slot to place materials
+        start = None
+        for i in range(frame_count):
+            if i >= len(tl.frames) or tl.frames[i].material_index is None:
+                start = i
+                break
+        if start is None:
+            start = frame_count
+
+        needed = (start + len(mat_indices)) - frame_count
+        if needed > 0:
+            duration = 100
+            # Use main timebase default duration if available
+            main_idx = self.multi_editor.main_timeline_index
+            main_tab = self.timeline_tabs.widget(main_idx) if 0 <= main_idx < self.timeline_tabs.count() else None
+            if hasattr(main_tab, 'timeline_widget') and main_tab.timeline_widget.is_main_timebase:
+                duration = main_tab.timeline_widget.duration_spinbox.value()
+            self.multi_editor.add_timebase_frames(needed, duration)
+            frame_count = self.multi_editor.get_frame_count()
+
+        self.multi_editor.ensure_timeline_length(current_index, frame_count)
+        for offset, mat_idx in enumerate(mat_indices):
+            pos = start + offset
+            if 0 <= pos < len(tl.frames):
+                tl.frames[pos].material_index = mat_idx
+                tl.frames[pos].x = 0
+                tl.frames[pos].y = 0
+
+        self.refresh_timeline()
+        self.update_preview()
     
     def remove_selected_material(self):
-        selected_rows = sorted([item.row() for item in self.materials_list.selectedIndexes()], reverse=True)
+        # Map selected view rows to underlying material indices
+        selected_rows = []
+        for index in self.materials_list.selectedIndexes():
+            item = self.materials_list.item(index.row())
+            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            selected_rows.append(mat_idx if mat_idx is not None else index.row())
+        selected_rows = sorted(selected_rows, reverse=True)
         if selected_rows:
             for row in selected_rows:
                 self.material_manager.remove_material(row)
@@ -770,7 +908,11 @@ class MainWindow(QMainWindow):
             self.refresh_materials_list()
     
     def export_selected_materials(self):
-        selected_rows = [item.row() for item in self.materials_list.selectedIndexes()]
+        selected_rows = []
+        for index in self.materials_list.selectedIndexes():
+            item = self.materials_list.item(index.row())
+            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            selected_rows.append(mat_idx if mat_idx is not None else index.row())
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select at least one material to export!")
             return
@@ -983,8 +1125,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to export GIF:\n{str(e)}")
     
     def on_timeline_selection_changed(self):
-        # No per-frame layer editor anymore; selection affects assign actions
-        pass
+        # Update preview in single-frame mode to follow selection (use first selected)
+        if not self.preview_all_checkbox.isChecked():
+            current_index = self.timeline_tabs.currentIndex()
+            tab = self.timeline_tabs.widget(current_index)
+            if hasattr(tab, 'timeline_widget'):
+                tw = tab.timeline_widget
+                selected_rows = sorted({idx.row() for idx in tw.timeline_table.selectedIndexes()})
+                if selected_rows:
+                    # Sync spinbox for visibility (1-based)
+                    self.preview_frame_spinbox.blockSignals(True)
+                    self.preview_frame_spinbox.setValue(selected_rows[0] + 1)
+                    self.preview_frame_spinbox.blockSignals(False)
+                self.update_single_frame_preview()
     
     def duplicate_frame(self):
         """Duplicate selected frames. Only available on the main timeline.
@@ -1321,13 +1474,16 @@ class MainWindow(QMainWindow):
             preview_item.setData(Qt.ItemDataRole.UserRole, i)
             tw.timeline_table.setItem(i, 1, preview_item)
 
-            # Column 2 info (material + offset)
+            # Column 2 info (material name + offset)
             text = "Empty"
             if tl and i < len(tl.frames):
                 fr = tl.frames[i]
-                if fr.material_index is not None:
-                    text = f"Mat#{fr.material_index} | Pos({fr.x}, {fr.y})"
-            else:
+                if fr.material_index is not None and fr.material_index < len(self.material_manager):
+                    mat = self.material_manager.get_material(fr.material_index)
+                    if mat:
+                        _, mat_name = mat
+                        text = f"[{fr.material_index}] {mat_name} | Pos({fr.x}, {fr.y})"
+                else:
                     text = f"Empty | Pos({fr.x}, {fr.y})"
             frame_item = QTableWidgetItem(text)
             frame_item.setFlags(frame_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1457,7 +1613,11 @@ class MainWindow(QMainWindow):
         self.timeline_tabs.setCurrentIndex(idx + 1)
 
     def on_assign_selected_material(self):
-        selected_rows = [item.row() for item in self.materials_list.selectedIndexes()]
+        selected_rows = []
+        for index in self.materials_list.selectedIndexes():
+            item = self.materials_list.item(index.row())
+            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            selected_rows.append(mat_idx if mat_idx is not None else index.row())
         if not selected_rows:
             QMessageBox.warning(self, "Warning", "Please select a material from the Materials list.")
             return
@@ -1496,7 +1656,12 @@ class MainWindow(QMainWindow):
 
     def on_assign_selected_materials_matched(self):
         # Get selected materials (ordered)
-        selected_material_rows = sorted([item.row() for item in self.materials_list.selectedIndexes()])
+        selected_material_rows = []
+        for index in self.materials_list.selectedIndexes():
+            item = self.materials_list.item(index.row())
+            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            selected_material_rows.append(mat_idx if mat_idx is not None else index.row())
+        selected_material_rows = sorted(selected_material_rows)
         if not selected_material_rows:
             QMessageBox.warning(self, "Warning", "Please select materials from the Materials list.")
             return
@@ -1558,13 +1723,34 @@ class MainWindow(QMainWindow):
         else:
             # Preview single frame
             self.preview_frame_spinbox.setEnabled(True)
+            self.preview_frame_spinbox.setMaximum(max(1, self.multi_editor.get_frame_count()))
+            # If there's a selection, sync to it
+            current_index = self.timeline_tabs.currentIndex()
+            tab = self.timeline_tabs.widget(current_index)
+            if hasattr(tab, 'timeline_widget'):
+                tw = tab.timeline_widget
+                selected_rows = sorted({idx.row() for idx in tw.timeline_table.selectedIndexes()})
+                if selected_rows:
+                    self.preview_frame_spinbox.blockSignals(True)
+                    self.preview_frame_spinbox.setValue(selected_rows[0] + 1)
+                    self.preview_frame_spinbox.blockSignals(False)
             self.update_single_frame_preview()
     
     def update_single_frame_preview(self):
         """Update preview for a single selected frame"""
         if self.multi_editor.get_frame_count() == 0:
             return
-        frame_idx = self.preview_frame_spinbox.value() - 1
+        # Prefer current timeline selection if any; otherwise use spinbox
+        frame_idx = None
+        current_index = self.timeline_tabs.currentIndex()
+        tab = self.timeline_tabs.widget(current_index)
+        if hasattr(tab, 'timeline_widget'):
+            tw = tab.timeline_widget
+            selected_rows = sorted({idx.row() for idx in tw.timeline_table.selectedIndexes()})
+            if selected_rows:
+                frame_idx = selected_rows[0]
+        if frame_idx is None:
+            frame_idx = self.preview_frame_spinbox.value() - 1
         if frame_idx >= self.multi_editor.get_frame_count():
             return
         
@@ -1770,7 +1956,12 @@ class MainWindow(QMainWindow):
                     
             else:  # No = Use Selected
                 # Get selected materials
-                selected_rows = sorted([item.row() for item in self.materials_list.selectedIndexes()])
+                selected_rows = []
+                for index in self.materials_list.selectedIndexes():
+                    item = self.materials_list.item(index.row())
+                    mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+                    selected_rows.append(mat_idx if mat_idx is not None else index.row())
+                selected_rows = sorted(selected_rows)
                 
                 if len(selected_rows) != materials_needed:
                     QMessageBox.warning(
@@ -1908,6 +2099,66 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Imported", f"Imported template '{unique_name}'.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to import template: {str(e)}")
+
+    def reverse_selected_frames(self):
+        """Reverse the order of selected frames in the current timeline.
+        
+        If current tab is the main timebase, reverse the selected positions across
+        durations and all timelines to preserve alignment.
+        Otherwise, reverse only the current timeline's frames at those positions.
+        """
+        current_index = self.timeline_tabs.currentIndex()
+        tab = self.timeline_tabs.widget(current_index)
+        if not hasattr(tab, 'timeline_widget'):
+            return
+        tw = tab.timeline_widget
+        selected_rows = sorted({idx.row() for idx in tw.timeline_table.selectedIndexes()})
+        if len(selected_rows) < 2:
+            QMessageBox.warning(self, "Warning", "Select at least two frames to reverse.")
+            return
+
+        # Build reversed mapping within the same positions
+        target_rows = list(reversed(selected_rows))
+
+        if current_index == self.multi_editor.main_timeline_index:
+            # Reverse durations at selected positions
+            original_durs = list(self.multi_editor.durations_ms)
+            new_durs = list(original_durs)
+            for dst, src in zip(selected_rows, target_rows):
+                if 0 <= dst < len(new_durs) and 0 <= src < len(original_durs):
+                    new_durs[dst] = original_durs[src]
+            self.multi_editor.durations_ms = new_durs
+            # Reverse each timeline's frames at those positions
+            for t in self.multi_editor.timelines:
+                orig_frames = list(t.frames)
+                new_frames = list(orig_frames)
+                for dst, src in zip(selected_rows, target_rows):
+                    if 0 <= dst < len(new_frames) and 0 <= src < len(orig_frames):
+                        new_frames[dst] = orig_frames[src]
+                t.frames = new_frames
+        else:
+            tl = self.multi_editor.get_timeline(current_index)
+            if not tl:
+                return
+            orig_frames = list(tl.frames)
+            new_frames = list(orig_frames)
+            for dst, src in zip(selected_rows, target_rows):
+                if 0 <= dst < len(new_frames) and 0 <= src < len(orig_frames):
+                    new_frames[dst] = orig_frames[src]
+            tl.frames = new_frames
+
+        # Refresh and keep the same positions selected
+        self.refresh_timeline()
+        tab2 = self.timeline_tabs.widget(current_index)
+        if hasattr(tab2, 'timeline_widget'):
+            tw2 = tab2.timeline_widget
+            sel_model = tw2.timeline_table.selectionModel()
+            tw2.timeline_table.clearSelection()
+            for r in selected_rows:
+                if 0 <= r < tw2.timeline_table.rowCount():
+                    index = tw2.timeline_table.model().index(r, 0)
+                    sel_model.select(index, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+        self.update_preview()
     
     def quick_export_template(self):
         """Export selected in-memory template to a JSON file."""
