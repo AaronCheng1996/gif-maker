@@ -7,7 +7,7 @@ PyInstaller.__main__.run([
     '--name=GIF-Maker',
     '--windowed',
     '--onefile',
-    '--icon=NONE',
+    '--icon=src/assets/icon.png',
     '--add-data=src;src',
     '--hidden-import=PIL._tkinter_finder',
     '--collect-all=PIL',

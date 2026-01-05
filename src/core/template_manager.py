@@ -8,7 +8,9 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from .layer_system import Layer, LayeredFrame
 from .layered_sequence_editor import LayeredSequenceEditor
-from .multi_timeline import MultiTimelineEditor, Timeline, TimelineFrame
+from .layer_timeline import LayerTimelineEditor, LayerTrack, LayerFrame
+from .material_group import MaterialGroup
+from .group_manager import GroupManager
 
 
 class TemplateManager:
@@ -20,7 +22,7 @@ class TemplateManager:
     to different sets of materials.
     """
     
-    VERSION = "2.0"
+    VERSION = "3.0"  # Updated to 3.0 for Group support
     
     @staticmethod
     def export_template(
@@ -185,166 +187,216 @@ class TemplateManager:
         
         return editor, settings
 
-    # ----- Multi-timeline templates -----
+    # ----- Layer timeline templates -----
     @staticmethod
-    def export_multi_template(
-        multi_editor: MultiTimelineEditor,
-        output_width: int,
-        output_height: int,
-        loop_count: int,
+    def export_layer_timeline_template(
+        layer_editor: LayerTimelineEditor,
+        group_manager: Optional[GroupManager],
         transparent_bg: bool,
         color_count: int = 256
     ) -> Dict[str, Any]:
         """
-        Export the multi-timeline editor state as a template.
+        Export the layer timeline editor state as a template with group support.
 
         The template schema:
         {
-          "version": "2.0",
-          "format": "multi_timeline",
+          "version": "3.0",
+          "format": "layer_timeline",
           "settings": { ... },
+          "groups": [ {...}, ... ],  # MaterialGroup definitions
           "timebase": { "durations_ms": [int, ...] },
-          "main_timeline_index": int,
-          "timelines": [
+          "main_track_index": int,
+          "layer_tracks": [
              { "name": str, "offset_x": int, "offset_y": int,
-               "frames": [ null | {"material_index": int, "x": int, "y": int}, ... ]
+               "frames": [ null | {"material_index": int, "group_index": int, "x": int, "y": int}, ... ]
              }, ...
           ]
         }
+        
+        Note: output_width, output_height, and loop_count are NOT stored in templates.
+        They should be determined from materials or set by the user.
         """
         template: Dict[str, Any] = {
             "version": TemplateManager.VERSION,
-            "format": "multi_timeline",
+            "format": "layer_timeline",
             "settings": {
-                "output_width": output_width,
-                "output_height": output_height,
-                "loop_count": loop_count,
                 "transparent_bg": transparent_bg,
                 "color_count": color_count,
             },
+            "groups": [],
             "timebase": {
-                "durations_ms": list(multi_editor.durations_ms),
+                "durations_ms": list(layer_editor.durations_ms),
             },
-            "main_timeline_index": int(multi_editor.main_timeline_index),
-            "timelines": []
+            "main_track_index": int(layer_editor.main_track_index),
+            "layer_tracks": []
         }
 
-        frame_count = len(multi_editor.durations_ms)
-        for tl in multi_editor.timelines:
-            tl_entry: Dict[str, Any] = {
-                "name": tl.name,
-                "offset_x": tl.offset_x,
-                "offset_y": tl.offset_y,
+        # Export groups if present
+        if group_manager is not None:
+            for group in group_manager.get_all_groups():
+                template["groups"].append(group.to_dict())
+
+        frame_count = len(layer_editor.durations_ms)
+        for track in layer_editor.layer_tracks:
+            track_entry: Dict[str, Any] = {
+                "name": track.name,
+                "offset_x": track.offset_x,
+                "offset_y": track.offset_y,
                 "frames": []
             }
             for i in range(frame_count):
-                if i < len(tl.frames):
-                    fr = tl.frames[i]
-                    if fr.material_index is None:
-                        tl_entry["frames"].append(None)
+                if i < len(track.frames):
+                    fr = track.frames[i]
+                    if fr.material_index is None and fr.group_index is None:
+                        track_entry["frames"].append(None)
                     else:
-                        tl_entry["frames"].append({
+                        track_entry["frames"].append({
                             "material_index": fr.material_index,
+                            "group_index": fr.group_index,
                             "x": fr.x,
                             "y": fr.y,
                         })
                 else:
-                    tl_entry["frames"].append(None)
-            template["timelines"].append(tl_entry)
+                    track_entry["frames"].append(None)
+            template["layer_tracks"].append(track_entry)
 
         return template
 
     @staticmethod
-    def apply_multi_template(
+    def apply_layer_timeline_template(
         template: Dict[str, Any],
-        material_index_mapping: Optional[Dict[int, int]] = None
-    ) -> Tuple[MultiTimelineEditor, Dict[str, Any]]:
+        material_index_mapping: Optional[Dict[int, int]] = None,
+        max_material_index: Optional[int] = None
+    ) -> Tuple[LayerTimelineEditor, GroupManager, Dict[str, Any]]:
         """
-        Apply a multi-timeline template to create a new MultiTimelineEditor
+        Apply a layer timeline template to create a new LayerTimelineEditor and GroupManager
 
         Args:
-            template: Multi-timeline template dictionary
+            template: Layer timeline template dictionary
             material_index_mapping: Optional mapping from template material indices to
                                     current material indices. Defaults to identity.
+            max_material_index: Maximum valid material index (exclusive). If provided,
+                               material indices >= this value will be filtered out.
         Returns:
-            (MultiTimelineEditor, settings)
+            (LayerTimelineEditor, GroupManager, settings)
         """
-        editor = MultiTimelineEditor()
+        editor = LayerTimelineEditor()
+        group_manager = GroupManager()
 
         # Default to identity mapping
         if material_index_mapping is None:
             material_index_mapping = {}
+
+        # Load groups
+        groups_data = template.get("groups", [])
+        for group_data in groups_data:
+            group = MaterialGroup.from_dict(group_data)
+            # Map material indices in group
+            if material_index_mapping:
+                group.material_indices = [
+                    material_index_mapping.get(idx, idx) for idx in group.material_indices
+                ]
+            
+            # Filter out material indices that are out of range
+            if max_material_index is not None:
+                original_count = len(group.material_indices)
+                group.material_indices = [
+                    idx for idx in group.material_indices if idx < max_material_index
+                ]
+                filtered_count = original_count - len(group.material_indices)
+                if filtered_count > 0:
+                    print(f"INFO: Group '{group.name}' - filtered out {filtered_count} material(s) that exceed material library size")
+            
+            group_manager.add_group(group)
 
         # Load timebase
         timebase = template.get("timebase", {})
         durations = list(timebase.get("durations_ms", []))
         editor.durations_ms = durations
 
-        # Load timelines
-        timelines_data: List[Dict[str, Any]] = template.get("timelines", [])
+        # Load layer tracks
+        tracks_data: List[Dict[str, Any]] = template.get("layer_tracks", [])
+        if not tracks_data:
+            # Backward compatibility: try "timelines" key
+            tracks_data = template.get("timelines", [])
+        
         frame_count = len(durations)
-        for tl_data in timelines_data:
-            name = tl_data.get("name", f"Timeline {len(editor.timelines) + 1}")
-            tl_index = editor.add_timeline(name)
-            tl = editor.get_timeline(tl_index)
-            if tl is None:
+        for track_data in tracks_data:
+            name = track_data.get("name", f"Layer {len(editor.layer_tracks) + 1}")
+            track_index = editor.add_layer_track(name)
+            track = editor.get_layer_track(track_index)
+            if track is None:
                 continue
-            tl.offset_x = int(tl_data.get("offset_x", 0))
-            tl.offset_y = int(tl_data.get("offset_y", 0))
+            track.offset_x = int(track_data.get("offset_x", 0))
+            track.offset_y = int(track_data.get("offset_y", 0))
 
-            frames_data = tl_data.get("frames", [])
+            frames_data = track_data.get("frames", [])
             # Ensure length
-            while len(tl.frames) < frame_count:
-                tl.frames.append(TimelineFrame())
+            while len(track.frames) < frame_count:
+                track.frames.append(LayerFrame())
             for i in range(min(frame_count, len(frames_data))):
                 fr = frames_data[i]
                 if fr is None:
-                    tl.frames[i] = TimelineFrame()
+                    track.frames[i] = LayerFrame()
                 else:
                     # Map material index if given
-                    old_idx = fr.get("material_index")
-                    new_idx = material_index_mapping.get(old_idx, old_idx) if old_idx is not None else None
-                    tl.frames[i] = TimelineFrame(
-                        material_index=new_idx,
+                    old_mat_idx = fr.get("material_index")
+                    new_mat_idx = material_index_mapping.get(old_mat_idx, old_mat_idx) if old_mat_idx is not None else None
+                    
+                    # Group index (no mapping needed - groups were already mapped above)
+                    group_idx = fr.get("group_index")
+                    
+                    track.frames[i] = LayerFrame(
+                        material_index=new_mat_idx,
+                        group_index=group_idx,
                         x=int(fr.get("x", 0)),
                         y=int(fr.get("y", 0)),
                     )
 
-        # Main timeline index
-        main_idx = int(template.get("main_timeline_index", 0))
-        editor.set_main_timeline(min(max(0, main_idx), len(editor.timelines) - 1))
+        # Main track index
+        main_idx = int(template.get("main_track_index", template.get("main_timeline_index", 0)))
+        editor.set_main_track(min(max(0, main_idx), len(editor.layer_tracks) - 1))
 
         settings = template.get("settings", {})
-        return editor, settings
+        return editor, group_manager, settings
 
     @staticmethod
     def get_template_info(template: Dict[str, Any]) -> Dict[str, Any]:
         """
         Get summary information about a template. Supports both legacy layered and
-        new multi-timeline formats.
+        new layer timeline formats.
         """
-        # Multi-timeline format detection
-        if template.get("format") == "multi_timeline" or ("timelines" in template and "timebase" in template):
+        # Layer timeline format detection (including backward compatibility with "multi_timeline")
+        if template.get("format") in ("layer_timeline", "multi_timeline") or ("layer_tracks" in template or "timelines" in template) and "timebase" in template:
             settings = template.get("settings", {})
             durations = template.get("timebase", {}).get("durations_ms", [])
-            timelines = template.get("timelines", [])
+            
+            # Support both new "layer_tracks" and old "timelines" keys
+            tracks = template.get("layer_tracks", template.get("timelines", []))
+            
             frame_count = len(durations)
             unique_materials = set()
+            unique_groups = set()
             placements = 0
-            for tl in timelines:
-                for fr in tl.get("frames", []):
+            for track in tracks:
+                for fr in track.get("frames", []):
                     if isinstance(fr, dict):
                         mi = fr.get("material_index")
+                        gi = fr.get("group_index")
                         if mi is not None:
                             unique_materials.add(mi)
+                            placements += 1
+                        if gi is not None:
+                            unique_groups.add(gi)
                             placements += 1
             total_duration = sum(int(d) for d in durations)
             return {
                 "version": template.get("version", "unknown"),
-                "format": "multi_timeline",
+                "format": "layer_timeline",
                 "frame_count": frame_count,
-                "timeline_count": len(timelines),
+                "track_count": len(tracks),
                 "unique_materials_used": len(unique_materials),
+                "unique_groups_used": len(unique_groups),
                 "placements": placements,
                 "timebase_total_duration_ms": total_duration,
                 "output_size": (settings.get("output_width", 0), settings.get("output_height", 0)),
@@ -376,5 +428,7 @@ class TemplateManager:
             "transparent_bg": settings.get("transparent_bg", False)
         }
     
-    
 
+# Backward compatibility aliases (deprecated)
+export_multi_template = TemplateManager.export_layer_timeline_template
+apply_multi_template = TemplateManager.apply_layer_timeline_template

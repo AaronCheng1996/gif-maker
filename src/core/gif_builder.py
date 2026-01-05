@@ -5,7 +5,7 @@ from .utils import create_background, paste_center, ensure_rgba
 from .sequence_editor import SequenceEditor, Frame
 from .image_loader import MaterialManager
 from .layer_system import LayeredFrame, LayerCompositor
-from .multi_timeline import MultiTimelineEditor
+from .layer_timeline import LayerTimelineEditor
 
 
 class GifBuilder:
@@ -454,23 +454,213 @@ class GifBuilder:
         
         return frames
 
-    # ----- Multi-timeline composition -----
-    def _compose_from_multi_timeline_frame(
+    # ----- Layer timeline composition -----
+    def _expand_timeline_with_groups(
         self,
-        editor: MultiTimelineEditor,
+        editor: LayerTimelineEditor,
+        group_manager
+    ) -> Tuple[List[List[Tuple[Optional[int], int, int]]], List[int]]:
+        """
+        Expand timeline with groups into a flat frame list.
+        
+        Each timebase frame that contains groups will be expanded into multiple sub-frames.
+        All layers are synchronized so each timebase frame expands to the same number of sub-frames.
+        
+        Args:
+            editor: LayerTimelineEditor instance
+            group_manager: GroupManager instance
+        
+        Returns:
+            (expanded_frames, expanded_durations)
+            - expanded_frames: List of frames, each frame is a list of (material_idx, x, y) tuples (one per layer)
+            - expanded_durations: List of durations for each expanded frame (in ms)
+        """
+        if group_manager is None:
+            # No groups, return as-is
+            timebase_count = editor.get_frame_count()
+            expanded_frames = []
+            expanded_durations = []
+            
+            for i in range(timebase_count):
+                frame_layers = []
+                for mat_idx, grp_idx, x, y in editor.iter_frame_layers(i):
+                    if mat_idx is not None:
+                        frame_layers.append((mat_idx, x, y))
+                expanded_frames.append(frame_layers)
+                expanded_durations.append(editor.durations_ms[i] if i < len(editor.durations_ms) else 100)
+            
+            return expanded_frames, expanded_durations
+        
+        timebase_count = editor.get_frame_count()
+        expanded_frames = []
+        expanded_durations = []
+        
+        # Process each timebase frame
+        for timebase_idx in range(timebase_count):
+            # For each timebase frame, determine the maximum expansion factor across all layers
+            max_expansion = 1
+            layer_expansions = []  # List of (track_index, expansion_info)
+            
+            for track_idx, track in enumerate(editor.layer_tracks):
+                if timebase_idx >= len(track.frames):
+                    layer_expansions.append((track_idx, None, 1))
+                    continue
+                
+                frame = track.frames[timebase_idx]
+                
+                if frame.group_index is not None:
+                    group = group_manager.get_group(frame.group_index)
+                    if group is not None:
+                        expansion_count = group.get_total_frames()
+                        max_expansion = max(max_expansion, expansion_count)
+                        layer_expansions.append((track_idx, group, expansion_count))
+                    else:
+                        layer_expansions.append((track_idx, None, 1))
+                elif frame.material_index is not None:
+                    layer_expansions.append((track_idx, None, 1))
+                else:
+                    # Empty frame
+                    layer_expansions.append((track_idx, None, 1))
+            
+            # Calculate duration for each sub-frame
+            timebase_duration = editor.durations_ms[timebase_idx] if timebase_idx < len(editor.durations_ms) else 100
+            
+            # Expand this timebase frame into sub-frames
+            for sub_frame_idx in range(max_expansion):
+                sub_frame_layers = []
+                
+                for track_idx, group, expansion_count in layer_expansions:
+                    track = editor.layer_tracks[track_idx]
+                    if timebase_idx >= len(track.frames):
+                        continue
+                    
+                    frame = track.frames[timebase_idx]
+                    
+                    if group is not None:
+                        # Expand the group - cycle through materials if max_expansion > expansion_count
+                        material_idx_in_group = sub_frame_idx % len(group.material_indices)
+                        material_idx = group.material_indices[material_idx_in_group]
+                        x = frame.x + track.offset_x
+                        y = frame.y + track.offset_y
+                        sub_frame_layers.append((material_idx, x, y))
+                        
+                        # Use group's frame duration
+                        if sub_frame_idx == 0:
+                            # First sub-frame of this expansion
+                            sub_frame_duration = group.frame_duration
+                    elif frame.material_index is not None:
+                        # Single material - repeat it for all sub-frames
+                        material_idx = frame.material_index
+                        x = frame.x + track.offset_x
+                        y = frame.y + track.offset_y
+                        sub_frame_layers.append((material_idx, x, y))
+                
+                expanded_frames.append(sub_frame_layers)
+                
+                # For duration, prioritize group's frame_duration over timebase duration
+                # Check if any layer in this timebase frame has a group
+                group_duration = None
+                for _, group, _ in layer_expansions:
+                    if group is not None:
+                        group_duration = group.frame_duration
+                        break
+                
+                if group_duration is not None:
+                    # Use group's frame_duration (even if there's only 1 material)
+                    expanded_durations.append(group_duration)
+                elif max_expansion > 1:
+                    # Multiple expansions but no group - divide timebase duration
+                    expanded_durations.append(timebase_duration // max_expansion)
+                else:
+                    # Single frame, no group - use timebase duration
+                    expanded_durations.append(timebase_duration)
+        
+        return expanded_frames, expanded_durations
+    
+    def _compose_from_expanded_frame(
+        self,
+        frame_layers: List[Tuple[Optional[int], int, int]],
+        material_manager: MaterialManager
+    ) -> Image.Image:
+        """
+        Composite one output frame from expanded frame layers.
+        
+        Args:
+            frame_layers: List of (material_idx, x, y) tuples for this frame
+            material_manager: MaterialManager instance
+        
+        Returns:
+            Composited image
+        """
+        # Use pre-set output_size or auto-detect
+        if self.output_size is None:
+            # Auto-detect from first material
+            for material_idx, _, _ in frame_layers:
+                if material_idx is not None:
+                    material = material_manager.get_material(material_idx)
+                    if material is not None:
+                        img, _ = material
+                        self.output_size = img.size
+                        break
+            
+            if self.output_size is None:
+                # Fallback
+                self.output_size = (400, 400)
+        
+        bg_color = self.background_color if self.background_color[3] > 0 else (0, 0, 0, 0)
+        canvas = Image.new('RGBA', self.output_size, bg_color)
+        
+        # Bottom to top
+        for material_idx, x, y in frame_layers:
+            if material_idx is None:
+                continue
+            
+            material = material_manager.get_material(material_idx)
+            if material is None:
+                continue
+            
+            material_img, _ = material
+            img_rgba = ensure_rgba(material_img)
+            
+            # Apply chroma key if set
+            if self.chroma_key_color is not None:
+                img_rgba = self.apply_chroma_key(img_rgba)
+            
+            try:
+                canvas.paste(img_rgba, (x, y), img_rgba)
+            except Exception:
+                # Skip paste failures (out of bounds etc.)
+                pass
+        
+        return canvas
+    
+    def _compose_from_layer_timeline_frame(
+        self,
+        editor: LayerTimelineEditor,
         material_manager: MaterialManager,
+        group_manager,  # GroupManager instance
         frame_index: int
     ) -> Image.Image:
-        """Composite one output frame from all timelines at the given frame index."""
-        # Determine output size lazily from the first available material
-        if not self.output_size:
-            for material_idx, _, _ in editor.iter_frame_layers(frame_index):
-                material = material_manager.get_material(material_idx)
-                if material is not None:
-                    img, _ = material
-                    self.output_size = img.size
-                    break
-        if not self.output_size:
+        """Composite one output frame from all layer tracks at the given frame index."""
+        # Only auto-detect output size if it's None (not set at all)
+        if self.output_size is None:
+            for material_idx, group_idx, _, _ in editor.iter_frame_layers(frame_index):
+                if material_idx is not None:
+                    material = material_manager.get_material(material_idx)
+                    if material is not None:
+                        img, _ = material
+                        self.output_size = img.size
+                        break
+                elif group_idx is not None and group_manager is not None:
+                    group = group_manager.get_group(group_idx)
+                    if group is not None and len(group.material_indices) > 0:
+                        material = material_manager.get_material(group.material_indices[0])
+                        if material is not None:
+                            img, _ = material
+                            self.output_size = img.size
+                            break
+        
+        if self.output_size is None:
             # Fallback
             self.output_size = (400, 400)
 
@@ -478,7 +668,23 @@ class GifBuilder:
         canvas = Image.new('RGBA', self.output_size, bg_color)
 
         # Bottom to top
-        for material_idx, x, y in editor.iter_frame_layers(frame_index):
+        for material_idx, group_idx, x, y in editor.iter_frame_layers(frame_index):
+            # Handle group reference
+            if group_idx is not None and group_manager is not None:
+                group = group_manager.get_group(group_idx)
+                if group is None:
+                    continue
+                # For groups, we render the first frame of the expanded sequence at this timeline position
+                # This is a simplified approach - full group expansion happens in the render loop
+                if len(group.material_indices) > 0:
+                    material_idx = group.material_indices[0]
+                else:
+                    continue
+            
+            # Handle material reference
+            if material_idx is None:
+                continue
+                
             material = material_manager.get_material(material_idx)
             if material is None:
                 continue
@@ -497,36 +703,53 @@ class GifBuilder:
 
         return canvas
 
-    def get_multitimeline_preview_frames(
+    def get_layer_timeline_preview_frames(
         self,
-        editor: MultiTimelineEditor,
-        material_manager: MaterialManager
+        editor: LayerTimelineEditor,
+        material_manager: MaterialManager,
+        group_manager=None
     ) -> List[Tuple[Image.Image, int]]:
-        """Return preview frames (image, duration) for the whole multi-timeline."""
-        frame_count = editor.get_frame_count()
+        """Return preview frames (image, duration) for the whole layer timeline with groups expanded."""
+        # Expand groups first
+        expanded_frames, expanded_durations = self._expand_timeline_with_groups(editor, group_manager)
+        
         frames: List[Tuple[Image.Image, int]] = []
-        for i in range(frame_count):
-            composed = self._compose_from_multi_timeline_frame(editor, material_manager, i)
-            frames.append((composed, editor.durations_ms[i]))
+        for frame_layers, duration in zip(expanded_frames, expanded_durations):
+            composed = self._compose_from_expanded_frame(frame_layers, material_manager)
+            frames.append((composed, duration))
+        
         return frames
 
-    def build_from_multitimeline(
+    def build_from_layer_timeline(
         self,
-        editor: MultiTimelineEditor,
+        editor: LayerTimelineEditor,
         material_manager: MaterialManager,
-        output_path: str
+        group_manager=None,
+        output_path: str = None
     ):
-        """Export a GIF from the multi-timeline model."""
-        frame_count = editor.get_frame_count()
-        if frame_count == 0:
+        """Export a GIF from the layer timeline model with groups expanded."""
+        if output_path is None:
+            # Handle old calling signature for backward compatibility
+            if isinstance(group_manager, str):
+                output_path = group_manager
+                group_manager = None
+        
+        if editor.get_frame_count() == 0:
             raise ValueError("Timeline is empty, cannot generate GIF")
         if len(material_manager) == 0:
             raise ValueError("Material list is empty, cannot generate GIF")
 
+        # Expand groups first
+        expanded_frames, expanded_durations = self._expand_timeline_with_groups(editor, group_manager)
+        
+        if not expanded_frames:
+            raise ValueError("No frames to export after expanding groups")
+
         frames: List[Image.Image] = []
         durations: List[int] = []
-        for i in range(frame_count):
-            composed = self._compose_from_multi_timeline_frame(editor, material_manager, i)
+        
+        for frame_layers, duration in zip(expanded_frames, expanded_durations):
+            composed = self._compose_from_expanded_frame(frame_layers, material_manager)
 
             # Convert RGBA similar to layered flow
             if composed.mode == 'RGBA':
@@ -542,6 +765,6 @@ class GifBuilder:
                     composed = rgb_bg
 
             frames.append(composed)
-            durations.append(editor.durations_ms[i])
+            durations.append(duration)
 
         self.save_gif(frames, durations, output_path)
