@@ -28,6 +28,11 @@ Material Groups are reusable animation clips that combine multiple materials wit
 
 **Example**: A walk cycle with frames [1,2,3,4] played at 100ms per frame, looped 3 times, produces 12 total frames.
 
+**Three Ways to Add Materials:**
+1. **Add to Existing Group**: Select materials and add them to an existing group
+2. **Add as New Group (Merge)**: Create a single new group from selected materials
+3. **Add Each as Group**: Create separate groups for each selected material
+
 ### Layer Timeline
 
 The Layer Timeline system enables multi-layer composition:
@@ -52,6 +57,18 @@ The Layer Timeline system enables multi-layer composition:
    - Configure frame duration and loop count
    - Preview total frame count and duration
    - Use groups in layer timeline like regular materials
+   - **Three Ways to Add Materials:**
+     - Add to existing group
+     - Add as new group (merge selected materials)
+     - Add each material as separate group
+   - **Batch Operations:**
+     - Remove multiple materials from a group at once
+     - Multi-selection support (Ctrl+click, Shift+click)
+   - **Group Management in Timeline:**
+     - Expand/collapse groups to view materials
+     - Right-click menu for edit, duplicate, remove
+     - Double-click to toggle expansion
+     - Visual indicators for missing materials
 
 3. **Image Splitting Tool (Tile Splitter)**
    - Split by grid count (e.g., 4x4 grid)
@@ -101,6 +118,14 @@ The Layer Timeline system enables multi-layer composition:
    - Perfect for creating similar animations with different tile sets
    - Choose between "Use First N" or "Use Selected" materials when importing
    - Version 3.0 format with Material Group support
+   - **Smart Material Handling:**
+     - Auto-filter out-of-range materials when applying templates
+     - Display warnings for missing materials
+     - Templates adapt to available material library size
+   - **Simplified Settings:**
+     - Only stores encoding settings (transparent_bg, color_count)
+     - Output size auto-detected from materials
+     - Loop count set per-export, not stored in template
 
 10. **Graphical User Interface (GUI)**
     - Modern interface based on PyQt6
@@ -186,8 +211,23 @@ For questions or suggestions, please contact via Issues.
 
 **New Features:**
 - **Material Groups**: Create reusable animation clips from material sequences
+  - Three flexible ways to add materials to groups
+  - Batch material removal with multi-selection support
+  - Expandable/collapsible group view in timeline
+  - Right-click context menu for group operations
+  
 - **Group Editor Dialog**: Configure frame duration and loop count for groups
+  
 - **Layer Timeline Integration**: Use groups alongside materials in layer tracks
+  - Visual group expansion in timeline
+  - Double-click to expand/collapse groups
+  - Edit, duplicate, and remove groups from timeline
+
+- **Smart Template System**:
+  - Auto-filter out-of-range materials when applying templates
+  - Clear visual warnings for missing materials
+  - Templates adapt to different material library sizes
+  - Simplified template format (only encoding settings, no output size/loop)
 
 **Architecture Improvements:**
 - Renamed `MultiTimelineEditor` to `LayerTimelineEditor` (more accurate naming)
@@ -195,6 +235,16 @@ For questions or suggestions, please contact via Issues.
 - Renamed `TimelineFrame` to `LayerFrame` (consistent naming)
 - Updated template format to v3.0 with group support
 - Maintained backward compatibility with old template formats
+- Fixed group expansion and rendering (proper loop handling)
+
+**Bug Fixes:**
+- Fixed single-material group duration not being applied correctly
+- Fixed missing group display showing as empty frames
+- Fixed material removal from groups ("Group not found" error)
+- Fixed auto-sizing when applying templates
+- Fixed timeline UserRole data type issues
+- Fixed output size detection in preview (respects user settings)
+- Improved missing material display with color-coded warnings
 
 **Data Flow:**
 ```

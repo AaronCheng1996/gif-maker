@@ -3,7 +3,7 @@ import pytest
 from PIL import Image
 from src.core.gif_builder import GifBuilder
 from src.core.image_loader import MaterialManager
-from src.core.multi_timeline import MultiTimelineEditor, TimelineFrame
+from src.core.layer_timeline import LayerTimelineEditor, LayerFrame
 
 
 @pytest.fixture
@@ -190,18 +190,18 @@ class TestApplyChromaKey:
         assert a == 128  # Alpha should be preserved
 
 
-class TestChromaKeyInMultiTimeline:
-    """Test chroma key integration with multi-timeline composition"""
+class TestChromaKeyInLayerTimeline:
+    """Test chroma key integration with layer timeline composition"""
     
-    def test_multitimeline_with_chroma_key(self, tmp_path, green_screen_image):
-        """Test that chroma key is applied during multi-timeline composition"""
+    def test_layer_timeline_with_chroma_key(self, tmp_path, green_screen_image):
+        """Test that chroma key is applied during layer timeline composition"""
         mm = MaterialManager()
         mm.add_material(green_screen_image, name="green_bg")
         
-        ed = MultiTimelineEditor()
-        tl_idx = ed.add_timeline("Main")
+        ed = LayerTimelineEditor()
+        tl_idx = ed.add_layer_track("Main")
         ed.add_timebase_frames(1, duration_ms=100)
-        ed.timelines[tl_idx].frames[0] = TimelineFrame(material_index=0, x=0, y=0)
+        ed.layer_tracks[tl_idx].frames[0] = LayerFrame(material_index=0, x=0, y=0)
         
         gb = GifBuilder()
         gb.set_output_size(20, 20)
@@ -209,7 +209,7 @@ class TestChromaKeyInMultiTimeline:
         gb.set_chroma_key(0, 255, 0)  # Remove green
         
         # Compose frame
-        composed = gb._compose_from_multi_timeline_frame(ed, mm, 0)
+        composed = gb._compose_from_layer_timeline_frame(ed, mm, 0, group_manager=None)
         
         # Green areas should show white background (transparent)
         r, g, b, _ = composed.getpixel((0, 0))
@@ -220,15 +220,15 @@ class TestChromaKeyInMultiTimeline:
         r, g, b, _ = composed.getpixel((9, 9))
         assert (r, g, b) == (255, 0, 0)
     
-    def test_multitimeline_chroma_key_disabled(self, tmp_path, green_screen_image):
-        """Test multi-timeline composition without chroma key"""
+    def test_layer_timeline_chroma_key_disabled(self, tmp_path, green_screen_image):
+        """Test layer timeline composition without chroma key"""
         mm = MaterialManager()
         mm.add_material(green_screen_image, name="green_bg")
         
-        ed = MultiTimelineEditor()
-        tl_idx = ed.add_timeline("Main")
+        ed = LayerTimelineEditor()
+        tl_idx = ed.add_layer_track("Main")
         ed.add_timebase_frames(1, duration_ms=100)
-        ed.timelines[tl_idx].frames[0] = TimelineFrame(material_index=0, x=0, y=0)
+        ed.layer_tracks[tl_idx].frames[0] = LayerFrame(material_index=0, x=0, y=0)
         
         gb = GifBuilder()
         gb.set_output_size(20, 20)
@@ -236,7 +236,7 @@ class TestChromaKeyInMultiTimeline:
         # No chroma key set
         
         # Compose frame
-        composed = gb._compose_from_multi_timeline_frame(ed, mm, 0)
+        composed = gb._compose_from_layer_timeline_frame(ed, mm, 0, group_manager=None)
         
         # Green should still be visible (not transparent)
         r, g, b, _ = composed.getpixel((0, 0))
@@ -248,14 +248,14 @@ class TestChromaKeyInMultiTimeline:
         mm.add_material(green_screen_image, name="green")
         mm.add_material(blue_screen_image, name="blue")
         
-        ed = MultiTimelineEditor()
-        tl_a = ed.add_timeline("Layer1")
-        tl_b = ed.add_timeline("Layer2")
+        ed = LayerTimelineEditor()
+        tl_a = ed.add_layer_track("Layer1")
+        tl_b = ed.add_layer_track("Layer2")
         ed.add_timebase_frames(1, duration_ms=100)
         
         # Place both images on same frame
-        ed.timelines[tl_a].frames[0] = TimelineFrame(material_index=0, x=0, y=0)
-        ed.timelines[tl_b].frames[0] = TimelineFrame(material_index=1, x=5, y=5)
+        ed.layer_tracks[tl_a].frames[0] = LayerFrame(material_index=0, x=0, y=0)
+        ed.layer_tracks[tl_b].frames[0] = LayerFrame(material_index=1, x=5, y=5)
         
         gb = GifBuilder()
         gb.set_output_size(30, 30)
@@ -263,7 +263,7 @@ class TestChromaKeyInMultiTimeline:
         gb.set_chroma_key(0, 255, 0)  # Remove green
         
         # Compose frame
-        composed = gb._compose_from_multi_timeline_frame(ed, mm, 0)
+        composed = gb._compose_from_layer_timeline_frame(ed, mm, 0, group_manager=None)
         
         # Where only green image was (now transparent), should show black background
         r, g, b, _ = composed.getpixel((0, 0))
@@ -279,11 +279,11 @@ class TestChromaKeyInMultiTimeline:
         mm.add_material(green_screen_image, name="green")
         mm.add_material(blue_screen_image, name="blue")
         
-        ed = MultiTimelineEditor()
-        tl_idx = ed.add_timeline("Main")
+        ed = LayerTimelineEditor()
+        tl_idx = ed.add_layer_track("Main")
         ed.add_timebase_frames(2, duration_ms=100)
-        ed.timelines[tl_idx].frames[0] = TimelineFrame(material_index=0, x=0, y=0)
-        ed.timelines[tl_idx].frames[1] = TimelineFrame(material_index=1, x=0, y=0)  # Different frame
+        ed.layer_tracks[tl_idx].frames[0] = LayerFrame(material_index=0, x=0, y=0)
+        ed.layer_tracks[tl_idx].frames[1] = LayerFrame(material_index=1, x=0, y=0)  # Different frame
         
         gb = GifBuilder()
         gb.set_output_size(20, 20)
@@ -291,7 +291,7 @@ class TestChromaKeyInMultiTimeline:
         gb.set_chroma_key(0, 255, 0)  # Remove green
         
         output_path = tmp_path / "chroma_test.gif"
-        gb.build_from_multitimeline(ed, mm, str(output_path))
+        gb.build_from_layer_timeline(ed, mm, str(output_path), group_manager=None)
         
         # Verify GIF was created successfully
         assert output_path.exists()

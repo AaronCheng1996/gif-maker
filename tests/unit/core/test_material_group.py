@@ -137,3 +137,88 @@ def test_group_manager_remove_and_clear():
     manager.clear()
     assert len(manager) == 0
 
+
+def test_group_update_materials():
+    """Test updating materials in a group"""
+    manager = GroupManager()
+    idx = manager.create_group_from_materials([1, 2, 3], name="Test")
+    
+    group = manager.get_group(idx)
+    assert group.material_indices == [1, 2, 3]
+    
+    # Update materials
+    group.material_indices = [4, 5, 6, 7]
+    manager.groups[idx] = group
+    
+    # Verify update
+    updated = manager.get_group(idx)
+    assert updated.material_indices == [4, 5, 6, 7]
+
+
+def test_batch_material_removal_from_group():
+    """Test removing multiple materials from a group at once"""
+    manager = GroupManager()
+    idx = manager.create_group_from_materials(
+        [0, 1, 2, 3, 4, 5, 6],
+        name="Large Group"
+    )
+    
+    group = manager.get_group(idx)
+    original_count = len(group.material_indices)
+    
+    # Remove materials at indices 1, 3, 5
+    materials_to_remove = [1, 3, 5]
+    for mat_idx in materials_to_remove:
+        if mat_idx in group.material_indices:
+            group.material_indices.remove(mat_idx)
+    
+    # Update the group
+    manager.groups[idx] = group
+    
+    # Verify removal
+    updated = manager.get_group(idx)
+    assert len(updated.material_indices) == original_count - 3
+    assert 1 not in updated.material_indices
+    assert 3 not in updated.material_indices
+    assert 5 not in updated.material_indices
+    assert 0 in updated.material_indices
+    assert 2 in updated.material_indices
+
+
+def test_empty_group_allowed():
+    """Test that groups can be empty (for template workflow)"""
+    manager = GroupManager()
+    
+    # Create empty group
+    empty_group = MaterialGroup(
+        material_indices=[],
+        frame_duration=100,
+        loop_count=1,
+        name="Empty Group"
+    )
+    
+    idx = manager.add_group(empty_group)
+    
+    # Verify empty group is stored
+    retrieved = manager.get_group(idx)
+    assert retrieved is not None
+    assert len(retrieved.material_indices) == 0
+    assert retrieved.get_total_frames() == 0
+
+
+def test_group_with_single_material_duration():
+    """Test that single-material groups use their frame_duration correctly"""
+    group = MaterialGroup(
+        material_indices=[22],  # Single material
+        frame_duration=2000,    # 2 seconds
+        loop_count=1,
+        name="Idle"
+    )
+    
+    assert group.get_total_frames() == 1
+    assert group.get_total_duration() == 2000
+    
+    # Expand to frames
+    frames = group.expand_to_frames()
+    assert len(frames) == 1
+    assert frames[0] == (22, 2000)  # material_index, duration

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QApplication
 
 from src.main import MainWindow
 from PyQt6.QtCore import QItemSelectionModel
-from src.core import TimelineFrame
+from src.core import LayerFrame
 
 
 @pytest.fixture(scope="module")
@@ -16,15 +16,15 @@ def qapp():
     yield app
 
 
-def test_add_to_current_timeline_extends_timebase_and_uses_sorted_indices(qapp):
+def test_add_to_current_layer_extends_timebase_and_uses_sorted_indices(qapp):
     window = MainWindow()
 
-    # Ensure two timelines exist (Main + another)
-    if len(window.multi_editor.timelines) < 1:
-        window.multi_editor.add_timeline("Main")
-        window.multi_editor.set_main_timeline(0)
-    if len(window.multi_editor.timelines) < 2:
-        window.multi_editor.add_timeline("Layer 2")
+    # Ensure two layer tracks exist (Main + another)
+    if len(window.layer_editor.layer_tracks) < 1:
+        window.layer_editor.add_layer_track("Main")
+        window.layer_editor.set_main_layer_track(0)
+    if len(window.layer_editor.layer_tracks) < 2:
+        window.layer_editor.add_layer_track("Layer 2")
     window.refresh_timeline()
 
     # Add materials in order B, A, C (indices 0,1,2)
@@ -45,17 +45,17 @@ def test_add_to_current_timeline_extends_timebase_and_uses_sorted_indices(qapp):
         window.materials_list.item(0).setSelected(True)
         window.materials_list.item(1).setSelected(True)
 
-    # Switch to second timeline tab (non-main)
-    non_main_index = 1 if window.multi_editor.main_timeline_index == 0 else 0
+    # Switch to second layer track tab (non-main)
+    non_main_index = 1 if window.layer_editor.main_layer_track_index == 0 else 0
     window.timeline_tabs.setCurrentIndex(non_main_index)
     window.refresh_timeline()
 
-    # Execute: add to current timeline
-    window.add_selected_to_current_timeline()
+    # Execute: add to current layer
+    window.add_selected_to_current_layer()
 
     # Assert timebase extended to 2, and materials assigned using underlying indices [2, 0]
-    assert window.multi_editor.get_frame_count() >= 2
-    tl = window.multi_editor.get_timeline(non_main_index)
+    assert window.layer_editor.get_frame_count() >= 2
+    tl = window.layer_editor.get_layer_track(non_main_index)
     assert tl is not None
     assert tl.frames[0].material_index == 2
     assert tl.frames[1].material_index == 0
@@ -64,22 +64,22 @@ def test_add_to_current_timeline_extends_timebase_and_uses_sorted_indices(qapp):
 def test_reverse_selected_frames_main_vs_non_main(qapp):
     window = MainWindow()
 
-    # Setup: two timelines and 4 timebase frames
-    window.multi_editor.timelines.clear()
-    a = window.multi_editor.add_timeline("Main")
-    window.multi_editor.set_main_timeline(a)
-    b = window.multi_editor.add_timeline("Layer")
-    window.multi_editor.durations_ms = [100, 200, 300, 400]
+    # Setup: two layer tracks and 4 timebase frames
+    window.layer_editor.layer_tracks.clear()
+    a = window.layer_editor.add_layer_track("Main")
+    window.layer_editor.set_main_layer_track(a)
+    b = window.layer_editor.add_layer_track("Layer")
+    window.layer_editor.durations_ms = [100, 200, 300, 400]
     # Ensure frames exist
-    for t in window.multi_editor.timelines:
-        t.frames = [TimelineFrame(i, 0, 0) for i in [0, 1, 2, 3]]
-    # Make the non-main timeline identifiable
-    window.multi_editor.timelines[b].frames = [TimelineFrame(i + 10, 0, 0) for i in [0, 1, 2, 3]]
+    for t in window.layer_editor.layer_tracks:
+        t.frames = [LayerFrame(material_index=i, x=0, y=0) for i in [0, 1, 2, 3]]
+    # Make the non-main layer track identifiable
+    window.layer_editor.layer_tracks[b].frames = [LayerFrame(material_index=i + 10, x=0, y=0) for i in [0, 1, 2, 3]]
 
-    # MAIN timeline: select rows 1 and 3, reverse
-    window.timeline_tabs.setCurrentIndex(window.multi_editor.main_timeline_index)
+    # MAIN layer track: select rows 1 and 3, reverse
+    window.timeline_tabs.setCurrentIndex(window.layer_editor.main_layer_track_index)
     window.refresh_timeline()
-    tab = window.timeline_tabs.widget(window.multi_editor.main_timeline_index)
+    tab = window.timeline_tabs.widget(window.layer_editor.main_layer_track_index)
     tw = tab.timeline_widget
     tw.timeline_table.clearSelection()
     sel_model = tw.timeline_table.selectionModel()
@@ -90,12 +90,12 @@ def test_reverse_selected_frames_main_vs_non_main(qapp):
     window.reverse_selected_frames()
 
     # Durations swapped at positions 1 and 3
-    assert window.multi_editor.durations_ms == [100, 400, 300, 200]
-    # Frames swapped for both timelines
-    assert [f.material_index for f in window.multi_editor.timelines[a].frames] == [0, 3, 2, 1]
-    assert [f.material_index for f in window.multi_editor.timelines[b].frames] == [10, 13, 12, 11]
+    assert window.layer_editor.durations_ms == [100, 400, 300, 200]
+    # Frames swapped for both layer tracks
+    assert [f.material_index for f in window.layer_editor.layer_tracks[a].frames] == [0, 3, 2, 1]
+    assert [f.material_index for f in window.layer_editor.layer_tracks[b].frames] == [10, 13, 12, 11]
 
-    # NON-MAIN timeline: select rows 0 and 2 on non-main, reverse
+    # NON-MAIN layer track: select rows 0 and 2 on non-main, reverse
     window.timeline_tabs.setCurrentIndex(b)
     window.refresh_timeline()
     tab2 = window.timeline_tabs.widget(b)
@@ -109,30 +109,30 @@ def test_reverse_selected_frames_main_vs_non_main(qapp):
     window.reverse_selected_frames()
 
     # Durations unchanged
-    assert window.multi_editor.durations_ms == [100, 400, 300, 200]
+    assert window.layer_editor.durations_ms == [100, 400, 300, 200]
     # Only non-main frames swapped at 0 and 2
-    assert [f.material_index for f in window.multi_editor.timelines[a].frames] == [0, 3, 2, 1]
-    assert [f.material_index for f in window.multi_editor.timelines[b].frames] == [12, 13, 10, 11]
+    assert [f.material_index for f in window.layer_editor.layer_tracks[a].frames] == [0, 3, 2, 1]
+    assert [f.material_index for f in window.layer_editor.layer_tracks[b].frames] == [12, 13, 10, 11]
 
 
 def test_material_name_appears_in_timeline_text(qapp):
     window = MainWindow()
 
-    # Ensure at least one timeline and one frame
-    if not window.multi_editor.timelines:
-        window.multi_editor.add_timeline("Main")
-        window.multi_editor.set_main_timeline(0)
-    window.multi_editor.durations_ms = [100]
-    window.multi_editor.timelines[0].frames = [TimelineFrame(None, 0, 0)]
+    # Ensure at least one layer track and one frame
+    if not window.layer_editor.layer_tracks:
+        window.layer_editor.add_layer_track("Main")
+        window.layer_editor.set_main_layer_track(0)
+    window.layer_editor.durations_ms = [100]
+    window.layer_editor.layer_tracks[0].frames = [LayerFrame(material_index=None, x=0, y=0)]
 
     # Add a material and assign to frame 0
     from PIL import Image
     window.material_manager.clear()
     window.material_manager.add_material(Image.new('RGBA', (8, 8), (1, 2, 3, 255)), "FooMat")
-    window.multi_editor.timelines[0].frames[0].material_index = 0
+    window.layer_editor.layer_tracks[0].frames[0].material_index = 0
 
     window.refresh_timeline()
-    tab = window.timeline_tabs.widget(window.multi_editor.main_timeline_index)
+    tab = window.timeline_tabs.widget(window.layer_editor.main_layer_track_index)
     tw = tab.timeline_widget
     text = tw.timeline_table.item(0, 2).text()
     assert "[0] FooMat" in text
