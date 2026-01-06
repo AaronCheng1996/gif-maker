@@ -217,6 +217,29 @@ class BatchProcessorWidget(QWidget):
         output_group = QGroupBox("4. Output Settings")
         output_layout = QVBoxLayout()
         
+        # Output size setting
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("Output Size:"))
+        
+        self.output_width_spinbox = QSpinBox()
+        self.output_width_spinbox.setMinimum(1)
+        self.output_width_spinbox.setMaximum(10000)
+        self.output_width_spinbox.setValue(200)
+        self.output_width_spinbox.setMaximumWidth(80)
+        size_layout.addWidget(self.output_width_spinbox)
+        
+        size_layout.addWidget(QLabel("×"))
+        
+        self.output_height_spinbox = QSpinBox()
+        self.output_height_spinbox.setMinimum(1)
+        self.output_height_spinbox.setMaximum(10000)
+        self.output_height_spinbox.setValue(256)
+        self.output_height_spinbox.setMaximumWidth(80)
+        size_layout.addWidget(self.output_height_spinbox)
+        
+        size_layout.addStretch()
+        output_layout.addLayout(size_layout)
+        
         # Color palette setting
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("Color Palette:"))
@@ -604,8 +627,10 @@ class BatchProcessorWidget(QWidget):
             
             split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
             
-            # Get color count from UI
+            # Get settings from UI
             color_count = int(self.color_palette_combo.currentText())
+            output_width = self.output_width_spinbox.value()
+            output_height = self.output_height_spinbox.value()
             
             successful, failed = processor.process_batch(
                 image_paths=self.image_paths,
@@ -617,7 +642,9 @@ class BatchProcessorWidget(QWidget):
                 tile_height=self.tile_height_spinbox.value(),
                 selected_positions=self.selected_positions if self.selected_positions else None,
                 output_directory=output_directory,
-                color_count=color_count
+                color_count=color_count,
+                output_width=output_width,
+                output_height=output_height
             )
             
             # Show results
@@ -686,6 +713,9 @@ class BatchProcessorWidget(QWidget):
         self.tile_height_spinbox.setEnabled(enabled)
         self.select_all_btn.setEnabled(enabled)
         self.deselect_all_btn.setEnabled(enabled)
+        self.output_width_spinbox.setEnabled(enabled)
+        self.output_height_spinbox.setEnabled(enabled)
+        self.color_palette_combo.setEnabled(enabled)
         self.same_dir_checkbox.setEnabled(enabled)
         self.browse_output_btn.setEnabled(enabled and not self.same_dir_checkbox.isChecked())
         self.validate_btn.setEnabled(enabled)

@@ -4,6 +4,7 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Tuple
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
@@ -596,6 +597,66 @@ class MainWindow(QMainWindow):
         
         settings_group.setLayout(settings_layout)
         layout.addWidget(settings_group, stretch=0)
+        
+        # Auto Layout section
+        auto_layout_group = QGroupBox("Auto Layout")
+        auto_layout_layout = QVBoxLayout()
+        auto_layout_layout.setSpacing(3)
+        
+        # Auto fit size button
+        self.auto_fit_size_btn = QPushButton("🔧 Auto Fit Size")
+        self.auto_fit_size_btn.clicked.connect(self.auto_fit_output_size)
+        self.auto_fit_size_btn.setToolTip("Automatically adjust output size to fit all materials")
+        auto_layout_layout.addWidget(self.auto_fit_size_btn)
+        
+        # Horizontal alignment buttons
+        h_align_label = QLabel("Horizontal:")
+        h_align_label.setStyleSheet("font-size: 10px; color: #666;")
+        auto_layout_layout.addWidget(h_align_label)
+        
+        h_align_layout = QHBoxLayout()
+        self.align_left_btn = QPushButton("⬅ Left")
+        self.align_left_btn.clicked.connect(self.align_all_left)
+        self.align_left_btn.setToolTip("Align all materials to the left")
+        h_align_layout.addWidget(self.align_left_btn)
+        
+        self.align_center_h_btn = QPushButton("↔ Center")
+        self.align_center_h_btn.clicked.connect(self.align_all_center_horizontal)
+        self.align_center_h_btn.setToolTip("Center all materials horizontally")
+        h_align_layout.addWidget(self.align_center_h_btn)
+        
+        self.align_right_btn = QPushButton("➡ Right")
+        self.align_right_btn.clicked.connect(self.align_all_right)
+        self.align_right_btn.setToolTip("Align all materials to the right")
+        h_align_layout.addWidget(self.align_right_btn)
+        
+        auto_layout_layout.addLayout(h_align_layout)
+        
+        # Vertical alignment buttons
+        v_align_label = QLabel("Vertical:")
+        v_align_label.setStyleSheet("font-size: 10px; color: #666;")
+        auto_layout_layout.addWidget(v_align_label)
+        
+        v_align_layout = QHBoxLayout()
+        self.align_top_btn = QPushButton("⬆ Top")
+        self.align_top_btn.clicked.connect(self.align_all_top)
+        self.align_top_btn.setToolTip("Align all materials to the top")
+        v_align_layout.addWidget(self.align_top_btn)
+        
+        self.align_middle_btn = QPushButton("↕ Middle")
+        self.align_middle_btn.clicked.connect(self.align_all_middle_vertical)
+        self.align_middle_btn.setToolTip("Center all materials vertically")
+        v_align_layout.addWidget(self.align_middle_btn)
+        
+        self.align_bottom_btn = QPushButton("⬇ Bottom")
+        self.align_bottom_btn.clicked.connect(self.align_all_bottom)
+        self.align_bottom_btn.setToolTip("Align all materials to the bottom")
+        v_align_layout.addWidget(self.align_bottom_btn)
+        
+        auto_layout_layout.addLayout(v_align_layout)
+        
+        auto_layout_group.setLayout(auto_layout_layout)
+        layout.addWidget(auto_layout_group, stretch=0)
         
         # Action buttons (compact)
         self.update_preview_btn = QPushButton("🔄 Preview")
@@ -2037,6 +2098,364 @@ class MainWindow(QMainWindow):
     def batch_add_matched_layers(self):
         pass
     
+    def get_frame_material_size(self, frame) -> Optional[Tuple[int, int]]:
+        """
+        Get the size of material(s) referenced by a frame.
+        
+        Args:
+            frame: LayerFrame object
+        
+        Returns:
+            (width, height) tuple, or None if no valid material found
+        """
+        # Handle material_index
+        if frame.material_index is not None:
+            material = self.material_manager.get_material(frame.material_index)
+            if material:
+                img, _ = material
+                return img.size
+        
+        # Handle group_index
+        if frame.group_index is not None:
+            group = self.group_manager.get_group(frame.group_index)
+            if group and group.material_indices:
+                max_w, max_h = 0, 0
+                for mat_idx in group.material_indices:
+                    material = self.material_manager.get_material(mat_idx)
+                    if material:
+                        img, _ = material
+                        w, h = img.size
+                        max_w = max(max_w, w)
+                        max_h = max(max_h, h)
+                if max_w > 0 and max_h > 0:
+                    return (max_w, max_h)
+        
+        return None
+    
+    def get_all_materials_max_size(self) -> Tuple[int, int]:
+        """
+        Calculate maximum size of all materials in all layer tracks.
+        
+        Returns:
+            (max_width, max_height) tuple, or (0, 0) if no materials found
+        """
+        max_width = 0
+        max_height = 0
+        
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                size = self.get_frame_material_size(frame)
+                if size:
+                    w, h = size
+                    max_width = max(max_width, w)
+                    max_height = max(max_height, h)
+        
+        return (max_width, max_height)
+    
+    def _apply_alignment_to_independent_groups(self, alignment_func, output_width=0, output_height=0):
+        """
+        Apply alignment function to groups with independent_offsets=True.
+        Instead of expanding groups, modifies material_offsets within each group.
+        
+        Args:
+            alignment_func: Function(material_size, output_size, current_offset) -> new_offset
+            output_width: Output canvas width (for horizontal alignment)
+            output_height: Output canvas height (for vertical alignment)
+        
+        Returns:
+            Number of independent groups processed
+        """
+        processed_count = 0
+        
+        # Find all independent groups
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        # Apply alignment to each material in the group
+                        for mat_list_idx, material_idx in enumerate(group.material_indices):
+                            material = self.material_manager.get_material(material_idx)
+                            if not material:
+                                continue
+                            
+                            img, _ = material
+                            mat_width, mat_height = img.size
+                            
+                            # Calculate new offset using alignment function
+                            current_x, current_y = group.get_material_offset(mat_list_idx)
+                            new_x, new_y = alignment_func(
+                                (mat_width, mat_height),
+                                (output_width, output_height),
+                                (current_x, current_y)
+                            )
+                            
+                            # Update group's internal offset
+                            group.set_material_offset(mat_list_idx, new_x, new_y)
+                        
+                        processed_count += 1
+        
+        return processed_count
+    
+    def auto_fit_output_size(self):
+        """Automatically adjust output size to fit all materials."""
+        max_width, max_height = self.get_all_materials_max_size()
+        
+        if max_width == 0 or max_height == 0:
+            QMessageBox.warning(
+                self,
+                "Warning",
+                "No materials found in timeline!\nPlease add materials to frames first."
+            )
+            return
+        
+        # Set the spinbox values
+        self.width_spinbox.setValue(max_width)
+        self.height_spinbox.setValue(max_height)
+        
+        # Update preview
+        self.update_preview()
+        
+        QMessageBox.information(
+            self,
+            "Success",
+            f"Output size adjusted to {max_width} × {max_height}"
+        )
+    
+    def align_all_left(self):
+        """Align all materials to the left (x = 0)."""
+        # Define alignment function
+        def align_left(mat_size, output_size, current_offset):
+            return (0, current_offset[1])  # x=0, keep y unchanged
+        
+        # Apply to independent groups
+        independent_count = self._apply_alignment_to_independent_groups(align_left, 0, 0)
+        
+        # Apply to regular frames (non-independent-group)
+        changed_count = 0
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                # Skip independent groups (already handled)
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        continue  # Already processed
+                
+                # Handle regular materials and unified groups
+                if frame.material_index is not None or frame.group_index is not None:
+                    frame.x = 0
+                    changed_count += 1
+        
+        if changed_count == 0 and independent_count == 0:
+            QMessageBox.warning(self, "Warning", "No materials found in timeline!")
+            return
+        
+        self.refresh_timeline()
+        self.update_preview()
+        total = changed_count + independent_count
+        QMessageBox.information(self, "Success", f"Aligned {total} frame(s) to the left")
+    
+    def align_all_center_horizontal(self):
+        """Center all materials horizontally."""
+        output_width = self.width_spinbox.value()
+        
+        # Define alignment function
+        def center_horizontal(mat_size, output_size, current_offset):
+            mat_width, _ = mat_size
+            out_width, _ = output_size
+            new_x = (out_width - mat_width) // 2
+            return (new_x, current_offset[1])  # Keep y unchanged
+        
+        # Apply to independent groups
+        independent_count = self._apply_alignment_to_independent_groups(
+            center_horizontal, output_width, 0
+        )
+        
+        # Apply to regular frames (non-independent-group)
+        changed_count = 0
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                # Skip independent groups (already handled)
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        continue  # Already processed
+                
+                # Handle regular materials and unified groups
+                size = self.get_frame_material_size(frame)
+                if size:
+                    mat_width, _ = size
+                    frame.x = (output_width - mat_width) // 2
+                    changed_count += 1
+        
+        if changed_count == 0 and independent_count == 0:
+            QMessageBox.warning(self, "Warning", "No materials found in timeline!")
+            return
+        
+        self.refresh_timeline()
+        self.update_preview()
+        total = changed_count + independent_count
+        QMessageBox.information(self, "Success", f"Centered {total} frame(s) horizontally")
+    
+    def align_all_right(self):
+        """Align all materials to the right."""
+        output_width = self.width_spinbox.value()
+        
+        # Define alignment function
+        def align_right(mat_size, output_size, current_offset):
+            mat_width, _ = mat_size
+            out_width, _ = output_size
+            new_x = out_width - mat_width
+            return (new_x, current_offset[1])  # Keep y unchanged
+        
+        # Apply to independent groups
+        independent_count = self._apply_alignment_to_independent_groups(
+            align_right, output_width, 0
+        )
+        
+        # Apply to regular frames (non-independent-group)
+        changed_count = 0
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                # Skip independent groups (already handled)
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        continue  # Already processed
+                
+                # Handle regular materials and unified groups
+                size = self.get_frame_material_size(frame)
+                if size:
+                    mat_width, _ = size
+                    frame.x = output_width - mat_width
+                    changed_count += 1
+        
+        if changed_count == 0 and independent_count == 0:
+            QMessageBox.warning(self, "Warning", "No materials found in timeline!")
+            return
+        
+        self.refresh_timeline()
+        self.update_preview()
+        total = changed_count + independent_count
+        QMessageBox.information(self, "Success", f"Aligned {total} frame(s) to the right")
+    
+    def align_all_top(self):
+        """Align all materials to the top (y = 0)."""
+        # Define alignment function
+        def align_top(mat_size, output_size, current_offset):
+            return (current_offset[0], 0)  # Keep x, y=0
+        
+        # Apply to independent groups
+        independent_count = self._apply_alignment_to_independent_groups(align_top, 0, 0)
+        
+        # Apply to regular frames (non-independent-group)
+        changed_count = 0
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                # Skip independent groups (already handled)
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        continue  # Already processed
+                
+                # Handle regular materials and unified groups
+                if frame.material_index is not None or frame.group_index is not None:
+                    frame.y = 0
+                    changed_count += 1
+        
+        if changed_count == 0 and independent_count == 0:
+            QMessageBox.warning(self, "Warning", "No materials found in timeline!")
+            return
+        
+        self.refresh_timeline()
+        self.update_preview()
+        total = changed_count + independent_count
+        QMessageBox.information(self, "Success", f"Aligned {total} frame(s) to the top")
+    
+    def align_all_middle_vertical(self):
+        """Center all materials vertically."""
+        output_height = self.height_spinbox.value()
+        
+        # Define alignment function
+        def center_vertical(mat_size, output_size, current_offset):
+            _, mat_height = mat_size
+            _, out_height = output_size
+            new_y = (out_height - mat_height) // 2
+            return (current_offset[0], new_y)  # Keep x unchanged
+        
+        # Apply to independent groups
+        independent_count = self._apply_alignment_to_independent_groups(
+            center_vertical, 0, output_height
+        )
+        
+        # Apply to regular frames (non-independent-group)
+        changed_count = 0
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                # Skip independent groups (already handled)
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        continue  # Already processed
+                
+                # Handle regular materials and unified groups
+                size = self.get_frame_material_size(frame)
+                if size:
+                    _, mat_height = size
+                    frame.y = (output_height - mat_height) // 2
+                    changed_count += 1
+        
+        if changed_count == 0 and independent_count == 0:
+            QMessageBox.warning(self, "Warning", "No materials found in timeline!")
+            return
+        
+        self.refresh_timeline()
+        self.update_preview()
+        total = changed_count + independent_count
+        QMessageBox.information(self, "Success", f"Centered {total} frame(s) vertically")
+    
+    def align_all_bottom(self):
+        """Align all materials to the bottom."""
+        output_height = self.height_spinbox.value()
+        
+        # Define alignment function
+        def align_bottom(mat_size, output_size, current_offset):
+            _, mat_height = mat_size
+            _, out_height = output_size
+            new_y = out_height - mat_height
+            return (current_offset[0], new_y)  # Keep x unchanged
+        
+        # Apply to independent groups
+        independent_count = self._apply_alignment_to_independent_groups(
+            align_bottom, 0, output_height
+        )
+        
+        # Apply to regular frames (non-independent-group)
+        changed_count = 0
+        for track in self.layer_editor.layer_tracks:
+            for frame in track.frames:
+                # Skip independent groups (already handled)
+                if frame.group_index is not None:
+                    group = self.group_manager.get_group(frame.group_index)
+                    if group and group.independent_offsets:
+                        continue  # Already processed
+                
+                # Handle regular materials and unified groups
+                size = self.get_frame_material_size(frame)
+                if size:
+                    _, mat_height = size
+                    frame.y = output_height - mat_height
+                    changed_count += 1
+        
+        if changed_count == 0 and independent_count == 0:
+            QMessageBox.warning(self, "Warning", "No materials found in timeline!")
+            return
+        
+        self.refresh_timeline()
+        self.update_preview()
+        total = changed_count + independent_count
+        QMessageBox.information(self, "Success", f"Aligned {total} frame(s) to the bottom")
+    
     def refresh_timeline(self):
         """Refresh timeline tabs and the current tab's table content."""
         # Ensure at least one timeline exists
@@ -2229,7 +2648,8 @@ class MainWindow(QMainWindow):
         
         # Column 2: Group info
         total_frames = group.get_total_frames()
-        text = f"[G{frame.group_index}] {group.name} ({len(group.material_indices)}×{group.loop_count}={total_frames}f) | Pos({frame.x}, {frame.y})"
+        mode_icon = "🔓" if group.independent_offsets else "🔒"
+        text = f"[G{frame.group_index}] {group.name} ({len(group.material_indices)}×{group.loop_count}={total_frames}f) {mode_icon} | Pos({frame.x}, {frame.y})"
         frame_item = QTableWidgetItem(text)
         frame_item.setFlags(frame_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         font = QFont()
