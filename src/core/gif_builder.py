@@ -510,7 +510,7 @@ class GifBuilder:
                 
                 if frame.group_index is not None:
                     group = group_manager.get_group(frame.group_index)
-                    if group is not None:
+                    if group is not None and len(group.material_indices) > 0:
                         expansion_count = group.get_total_frames()
                         max_expansion = max(max_expansion, expansion_count)
                         layer_expansions.append((track_idx, group, expansion_count))
@@ -537,11 +537,22 @@ class GifBuilder:
                     frame = track.frames[timebase_idx]
                     
                     if group is not None:
+                        # Skip empty groups (all materials filtered out)
+                        if len(group.material_indices) == 0:
+                            continue
+                        
                         # Expand the group - cycle through materials if max_expansion > expansion_count
                         material_idx_in_group = sub_frame_idx % len(group.material_indices)
                         material_idx = group.material_indices[material_idx_in_group]
                         x = frame.x + track.offset_x
                         y = frame.y + track.offset_y
+                        
+                        # Apply independent offset if group has independent_offsets enabled
+                        if group.independent_offsets:
+                            offset_x, offset_y = group.get_material_offset(material_idx_in_group)
+                            x += offset_x
+                            y += offset_y
+                        
                         sub_frame_layers.append((material_idx, x, y))
                         
                         # Use group's frame duration
@@ -674,10 +685,16 @@ class GifBuilder:
                 group = group_manager.get_group(group_idx)
                 if group is None:
                     continue
-                # For groups, we render the first frame of the expanded sequence at this timeline position
-                # This is a simplified approach - full group expansion happens in the render loop
+                
+                # For preview, render first material only (simplified view)
+                # Apply independent offset if set
                 if len(group.material_indices) > 0:
                     material_idx = group.material_indices[0]
+                    # Apply independent offset for first material (index 0)
+                    if group.independent_offsets:
+                        offset_x, offset_y = group.get_material_offset(0)
+                        x += offset_x
+                        y += offset_y
                 else:
                     continue
             

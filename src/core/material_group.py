@@ -5,7 +5,7 @@ A MaterialGroup is a reusable animation sequence that can be expanded into frame
 Example: A walk cycle with frames [1,2,3,4] played at 100ms per frame, looped 3 times.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from dataclasses import dataclass, field
 
 
@@ -33,6 +33,10 @@ class MaterialGroup:
     frame_duration: int = 100
     loop_count: int = 1
     name: str = ""
+    independent_offsets: bool = False  # If True, each material can have independent offset when aligned
+    material_offsets: Dict[int, Tuple[int, int]] = field(default_factory=dict)  # Per-material offsets for independent mode
+    # Key: index in material_indices (0, 1, 2...)
+    # Value: (offset_x, offset_y) relative to group position
     
     def __post_init__(self):
         if not self.name:
@@ -89,6 +93,35 @@ class MaterialGroup:
         material_idx = self.material_indices[frame_index % len(self.material_indices)]
         return (material_idx, self.frame_duration)
     
+    def get_material_offset(self, mat_list_idx: int) -> Tuple[int, int]:
+        """
+        Get offset for a material at specific index in material_indices list
+        
+        Args:
+            mat_list_idx: Index in material_indices list (0, 1, 2...)
+        
+        Returns:
+            (offset_x, offset_y) tuple, defaults to (0, 0) if not set
+        """
+        return self.material_offsets.get(mat_list_idx, (0, 0))
+    
+    def set_material_offset(self, mat_list_idx: int, x: int, y: int):
+        """
+        Set offset for a material at specific index in material_indices list
+        Only has effect if independent_offsets is True
+        
+        Args:
+            mat_list_idx: Index in material_indices list (0, 1, 2...)
+            x: X offset
+            y: Y offset
+        """
+        if self.independent_offsets:
+            self.material_offsets[mat_list_idx] = (x, y)
+    
+    def clear_material_offsets(self):
+        """Clear all individual material offsets"""
+        self.material_offsets.clear()
+    
     def copy(self) -> 'MaterialGroup':
         """
         Create a deep copy of this group
@@ -96,12 +129,15 @@ class MaterialGroup:
         Returns:
             New MaterialGroup instance
         """
-        return MaterialGroup(
+        new_group = MaterialGroup(
             material_indices=self.material_indices.copy(),
             frame_duration=self.frame_duration,
             loop_count=self.loop_count,
-            name=self.name
+            name=self.name,
+            independent_offsets=self.independent_offsets
         )
+        new_group.material_offsets = self.material_offsets.copy()
+        return new_group
     
     def to_dict(self) -> dict:
         """
@@ -110,12 +146,18 @@ class MaterialGroup:
         Returns:
             Dictionary representation
         """
-        return {
+        result = {
             "name": self.name,
             "material_indices": list(self.material_indices),
             "frame_duration": self.frame_duration,
-            "loop_count": self.loop_count
+            "loop_count": self.loop_count,
+            "independent_offsets": self.independent_offsets
         }
+        # Only save material_offsets if independent_offsets is True and dict is not empty
+        if self.independent_offsets and self.material_offsets:
+            # Convert int keys to str for JSON compatibility
+            result["material_offsets"] = {str(k): list(v) for k, v in self.material_offsets.items()}
+        return result
     
     @staticmethod
     def from_dict(data: dict) -> 'MaterialGroup':
@@ -128,12 +170,19 @@ class MaterialGroup:
         Returns:
             MaterialGroup instance
         """
-        return MaterialGroup(
+        group = MaterialGroup(
             material_indices=list(data.get("material_indices", [])),
             frame_duration=int(data.get("frame_duration", 100)),
             loop_count=int(data.get("loop_count", 1)),
-            name=str(data.get("name", ""))
+            name=str(data.get("name", "")),
+            independent_offsets=bool(data.get("independent_offsets", False))
         )
+        # Load material_offsets if present
+        if "material_offsets" in data:
+            offsets_data = data["material_offsets"]
+            # Convert str keys back to int
+            group.material_offsets = {int(k): tuple(v) for k, v in offsets_data.items()}
+        return group
     
     def __repr__(self):
         return (f"MaterialGroup(name='{self.name}', "

@@ -4,7 +4,7 @@ Group Editor Dialog - Dialog for creating and editing MaterialGroups
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QSpinBox, QGroupBox, QFormLayout
+    QLineEdit, QSpinBox, QGroupBox, QFormLayout, QCheckBox
 )
 from PyQt6.QtCore import Qt
 from typing import List, Optional
@@ -74,6 +74,14 @@ class GroupEditorDialog(QDialog):
         self.loop_spinbox.valueChanged.connect(self.update_preview)
         form_layout.addRow("Loop Count:", self.loop_spinbox)
         
+        # Independent offsets mode
+        self.independent_mode_checkbox = QCheckBox("Independent Offsets (每個素材可獨立調整)")
+        self.independent_mode_checkbox.setToolTip(
+            "啟用後，使用對齊功能時每個素材會獨立調整位置\n"
+            "停用時（預設），整個 group 作為一個整體移動"
+        )
+        form_layout.addRow("", self.independent_mode_checkbox)
+        
         form_group.setLayout(form_layout)
         layout.addWidget(form_group)
         
@@ -112,6 +120,7 @@ class GroupEditorDialog(QDialog):
         self.name_input.setText(group.name)
         self.duration_spinbox.setValue(group.frame_duration)
         self.loop_spinbox.setValue(group.loop_count)
+        self.independent_mode_checkbox.setChecked(group.independent_offsets)
         self.material_indices = group.material_indices.copy()
         self.update_preview()
     
@@ -143,7 +152,8 @@ class GroupEditorDialog(QDialog):
             material_indices=self.material_indices.copy(),
             frame_duration=self.duration_spinbox.value(),
             loop_count=self.loop_spinbox.value(),
-            name=name
+            name=name,
+            independent_offsets=self.independent_mode_checkbox.isChecked()
         )
         
         super().accept()

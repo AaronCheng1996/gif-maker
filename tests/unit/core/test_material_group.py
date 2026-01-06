@@ -222,3 +222,198 @@ def test_group_with_single_material_duration():
     frames = group.expand_to_frames()
     assert len(frames) == 1
     assert frames[0] == (22, 2000)  # material_index, duration
+
+
+def test_material_group_independent_offsets_basic():
+    """Test material_offsets attribute initialization and basic operations"""
+    # Test default initialization
+    group = MaterialGroup(
+        material_indices=[0, 1, 2],
+        frame_duration=100,
+        loop_count=1,
+        name="Test Group",
+        independent_offsets=False
+    )
+    
+    assert not group.independent_offsets
+    assert len(group.material_offsets) == 0
+    
+    # Test with independent_offsets enabled
+    group_independent = MaterialGroup(
+        material_indices=[3, 4, 5],
+        frame_duration=150,
+        loop_count=2,
+        name="Independent Group",
+        independent_offsets=True
+    )
+    
+    assert group_independent.independent_offsets
+    assert len(group_independent.material_offsets) == 0  # Empty by default
+
+
+def test_material_group_set_get_offsets():
+    """Test setting and getting individual material offsets"""
+    group = MaterialGroup(
+        material_indices=[10, 11, 12],
+        frame_duration=100,
+        loop_count=1,
+        name="Offset Test",
+        independent_offsets=True
+    )
+    
+    # Set offsets
+    group.set_material_offset(0, 10, 20)
+    group.set_material_offset(1, 30, 40)
+    group.set_material_offset(2, 50, 60)
+    
+    # Get offsets
+    assert group.get_material_offset(0) == (10, 20)
+    assert group.get_material_offset(1) == (30, 40)
+    assert group.get_material_offset(2) == (50, 60)
+    
+    # Get offset for non-existent index (should return default)
+    assert group.get_material_offset(5) == (0, 0)
+
+
+def test_material_group_offsets_only_when_independent():
+    """Test that offsets can only be set when independent_offsets is True"""
+    group_unified = MaterialGroup(
+        material_indices=[0, 1, 2],
+        frame_duration=100,
+        loop_count=1,
+        name="Unified Group",
+        independent_offsets=False
+    )
+    
+    # Try to set offset (should not work)
+    group_unified.set_material_offset(0, 100, 200)
+    
+    # Should remain empty because independent_offsets is False
+    assert len(group_unified.material_offsets) == 0
+    assert group_unified.get_material_offset(0) == (0, 0)
+
+
+def test_material_group_clear_offsets():
+    """Test clearing all material offsets"""
+    group = MaterialGroup(
+        material_indices=[0, 1, 2],
+        frame_duration=100,
+        loop_count=1,
+        name="Clear Test",
+        independent_offsets=True
+    )
+    
+    # Set some offsets
+    group.set_material_offset(0, 10, 20)
+    group.set_material_offset(1, 30, 40)
+    
+    assert len(group.material_offsets) == 2
+    
+    # Clear all offsets
+    group.clear_material_offsets()
+    
+    assert len(group.material_offsets) == 0
+    assert group.get_material_offset(0) == (0, 0)
+    assert group.get_material_offset(1) == (0, 0)
+
+
+def test_material_group_offsets_serialization():
+    """Test that material_offsets are properly serialized and deserialized"""
+    # Create group with offsets
+    group = MaterialGroup(
+        material_indices=[0, 1, 2, 3],
+        frame_duration=100,
+        loop_count=2,
+        name="Serialization Test",
+        independent_offsets=True
+    )
+    
+    group.set_material_offset(0, 10, 20)
+    group.set_material_offset(1, 30, 40)
+    group.set_material_offset(3, 70, 80)  # Skip index 2
+    
+    # Serialize
+    data = group.to_dict()
+    
+    assert "independent_offsets" in data
+    assert data["independent_offsets"] == True
+    assert "material_offsets" in data
+    assert len(data["material_offsets"]) == 3
+    
+    # Check serialized format (keys should be strings)
+    assert "0" in data["material_offsets"]
+    assert data["material_offsets"]["0"] == [10, 20]
+    assert data["material_offsets"]["1"] == [30, 40]
+    assert data["material_offsets"]["3"] == [70, 80]
+    
+    # Deserialize
+    restored = MaterialGroup.from_dict(data)
+    
+    assert restored.independent_offsets == True
+    assert restored.get_material_offset(0) == (10, 20)
+    assert restored.get_material_offset(1) == (30, 40)
+    assert restored.get_material_offset(2) == (0, 0)  # Not set
+    assert restored.get_material_offset(3) == (70, 80)
+
+
+def test_material_group_offsets_not_serialized_when_unified():
+    """Test that material_offsets are not included in serialization for unified mode"""
+    group = MaterialGroup(
+        material_indices=[0, 1, 2],
+        frame_duration=100,
+        loop_count=1,
+        name="Unified Test",
+        independent_offsets=False
+    )
+    
+    # Serialize
+    data = group.to_dict()
+    
+    # material_offsets should not be in the dict for unified mode
+    assert "material_offsets" not in data
+
+
+def test_material_group_offsets_backward_compatibility():
+    """Test that old templates without material_offsets still load correctly"""
+    # Simulate old template data without material_offsets
+    old_data = {
+        "name": "Old Group",
+        "material_indices": [0, 1, 2],
+        "frame_duration": 100,
+        "loop_count": 2,
+        "independent_offsets": True
+    }
+    
+    # Should load without error
+    group = MaterialGroup.from_dict(old_data)
+    
+    assert group.independent_offsets == True
+    assert len(group.material_offsets) == 0
+    assert group.get_material_offset(0) == (0, 0)
+
+
+def test_material_group_copy_includes_offsets():
+    """Test that copy() includes material_offsets"""
+    original = MaterialGroup(
+        material_indices=[0, 1, 2],
+        frame_duration=100,
+        loop_count=1,
+        name="Original",
+        independent_offsets=True
+    )
+    
+    original.set_material_offset(0, 10, 20)
+    original.set_material_offset(1, 30, 40)
+    
+    # Copy
+    copied = original.copy()
+    
+    assert copied.independent_offsets == True
+    assert copied.get_material_offset(0) == (10, 20)
+    assert copied.get_material_offset(1) == (30, 40)
+    
+    # Modify copy, should not affect original
+    copied.set_material_offset(0, 99, 99)
+    
+    assert original.get_material_offset(0) == (10, 20)  # Unchanged
+    assert copied.get_material_offset(0) == (99, 99)  # Changed
