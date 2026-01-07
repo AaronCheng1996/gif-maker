@@ -124,6 +124,6 @@ def test_get_template_info_layer_timeline():
     info = TemplateManager.get_template_info(tmpl)
     assert info["format"] == "layer_timeline"
     assert info["frame_count"] == 1
-    assert info["layer_track_count"] == 1
+    assert info["track_count"] == 1
 
 

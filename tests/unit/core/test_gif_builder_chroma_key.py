@@ -209,7 +209,7 @@ class TestChromaKeyInLayerTimeline:
         gb.set_chroma_key(0, 255, 0)  # Remove green
         
         # Compose frame
-        composed = gb._compose_from_layer_timeline_frame(ed, mm, 0, group_manager=None)
+        composed = gb._compose_from_layer_timeline_frame(ed, mm, None, 0)
         
         # Green areas should show white background (transparent)
         r, g, b, _ = composed.getpixel((0, 0))
@@ -236,7 +236,7 @@ class TestChromaKeyInLayerTimeline:
         # No chroma key set
         
         # Compose frame
-        composed = gb._compose_from_layer_timeline_frame(ed, mm, 0, group_manager=None)
+        composed = gb._compose_from_layer_timeline_frame(ed, mm, None, 0)
         
         # Green should still be visible (not transparent)
         r, g, b, _ = composed.getpixel((0, 0))
@@ -263,7 +263,7 @@ class TestChromaKeyInLayerTimeline:
         gb.set_chroma_key(0, 255, 0)  # Remove green
         
         # Compose frame
-        composed = gb._compose_from_layer_timeline_frame(ed, mm, 0, group_manager=None)
+        composed = gb._compose_from_layer_timeline_frame(ed, mm, None, 0)
         
         # Where only green image was (now transparent), should show black background
         r, g, b, _ = composed.getpixel((0, 0))
@@ -291,7 +291,7 @@ class TestChromaKeyInLayerTimeline:
         gb.set_chroma_key(0, 255, 0)  # Remove green
         
         output_path = tmp_path / "chroma_test.gif"
-        gb.build_from_layer_timeline(ed, mm, str(output_path), group_manager=None)
+        gb.build_from_layer_timeline(ed, mm, None, str(output_path))
         
         # Verify GIF was created successfully
         assert output_path.exists()
