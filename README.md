@@ -133,6 +133,20 @@ The Layer Timeline system enables multi-layer composition:
     - Tabbed tool panel
     - Resizable split panels
 
+11. **Auto Layout Features**
+    - **Auto Fit Size**: Automatically calculate and set output size to fit all materials
+    - **6 Alignment Buttons**: Quickly align all frames/materials
+      - Left, Center Horizontal, Right
+      - Top, Middle Vertical, Bottom
+    - **Material Groups Support**: Works seamlessly with both unified and independent offset modes
+    - Batch alignment across all layer tracks and frames
+
+12. **Group Offset Modes**
+    - **Unified Mode** (default): Group moves as a single unit, all materials share same position
+    - **Independent Mode**: Each material in group can have individual offset positions
+    - **Visual Indicators**: 🔒 for unified mode, 🔓 for independent mode in timeline
+    - **Flexible Positioning**: Choose mode when creating/editing groups
+
 ## Quick Start
 
 ### Install Dependencies
@@ -206,6 +220,48 @@ MIT License - See LICENSE file for details
 For questions or suggestions, please contact via Issues.
 
 ## Recent Changes
+
+### Version 3.1 - Auto Layout, Group Offset Modes & Critical Fixes
+
+**New Features:**
+- **Auto Layout System** (功能自動排版系統):
+  - Auto Fit Size: Automatically calculate output size to fit all materials and groups
+  - 6 alignment buttons: Left, Center, Right, Top, Middle, Bottom
+  - Works across all layer tracks and frames
+  - Supports both Material Groups and individual materials
+  - Smart calculation handles different material sizes
+
+- **Group Offset Modes** (群組偏移模式):
+  - **Unified Mode** (統一模式): Group moves as single unit (default)
+  - **Independent Mode** (獨立模式): Each material in group has individual offset
+  - **Internal Offsets Storage**: Independent offsets stored within MaterialGroup
+  - **Visual Indicators**: 🔒 (unified) and 🔓 (independent) icons in timeline
+  - Alignment functions respect and preserve group modes
+
+**Critical Bug Fixes:**
+- **Empty Group ZeroDivisionError Fix**: Prevents crash when groups have all materials filtered out
+  - Added safety checks in gif_builder expansion and rendering logic
+  - Gracefully skips empty groups during GIF generation
+  - Common when loading templates with out-of-range material indices
+
+- **Batch Processor Fix**: Corrected method signature handling
+  - Fixed `apply_layer_timeline_template` returning 3 values (was incorrectly receiving 2)
+  - Prevents settings dict being interpreted as GroupManager object
+  - Resolves "all images showing fail" issue in batch processing
+
+**Technical Improvements:**
+- MaterialGroup now supports `material_offsets: Dict[int, Tuple[int, int]]` for independent mode
+- New serialization format for independent offsets (only when `independent_offsets=True`)
+- Backward compatible with templates created before v3.1
+- Enhanced gif_builder rendering logic to apply material-specific offsets
+- Comprehensive test coverage for all new features and fixes
+
+**Tests Added:**
+- 13 integration tests for Auto Layout features
+- 3 unit tests for batch processor and template manager fixes
+- 2 integration tests for empty group handling and independent offsets rendering
+
+---
 
 ### Version 3.0 - Group System & Architecture Refactoring
 

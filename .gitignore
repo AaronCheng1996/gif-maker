@@ -65,4 +65,8 @@ htmlcov/
 .agent-tools/
 
 # Optional project-specific
-src/assets/samples/
+src/assets
+
+# tmp
+.cursorrules
+tmp/
