@@ -26,21 +26,33 @@ class ImageLoader:
         return frames
     
     @staticmethod
-    def split_into_tiles(image: Image.Image, rows: int, cols: int) -> List[Image.Image]:
+    def split_into_tiles(image: Image.Image, rows: int, cols: int, row_base: bool = True) -> List[Image.Image]:
         img_width, img_height = image.size
         tile_width = img_width // cols
         tile_height = img_height // rows
         
-        tiles = []
-        for row in range(rows):
+        if row_base:
+            tiles = []
+            for row in range(rows):
+                for col in range(cols):
+                    left = col * tile_width
+                    upper = row * tile_height
+                    right = left + tile_width
+                    lower = upper + tile_height
+                    
+                    tile = image.crop((left, upper, right, lower))
+                    tiles.append(tile)
+        else:
+            tiles = []
             for col in range(cols):
-                left = col * tile_width
-                upper = row * tile_height
-                right = left + tile_width
-                lower = upper + tile_height
-                
-                tile = image.crop((left, upper, right, lower))
-                tiles.append(tile)
+                for row in range(rows):
+                    left = col * tile_width
+                    upper = row * tile_height
+                    right = left + tile_width
+                    lower = upper + tile_height
+                    
+                    tile = image.crop((left, upper, right, lower))
+                    tiles.append(tile)
         
         return tiles
     
@@ -97,9 +109,9 @@ class MaterialManager:
             name = f"{name_prefix}_frame_{i + 1}"
             self.add_material(frame, name, duration)
     
-    def load_from_tiles(self, filepath: str, rows: int, cols: int, name_prefix: str = ""):
+    def load_from_tiles(self, filepath: str, rows: int, cols: int, row_base: bool = True, name_prefix: str = ""):
         img = ImageLoader.load_image(filepath)
-        tiles = ImageLoader.split_into_tiles(img, rows, cols)
+        tiles = ImageLoader.split_into_tiles(img, rows, cols, row_base=row_base)
         
         if not name_prefix:
             name_prefix = Path(filepath).stem

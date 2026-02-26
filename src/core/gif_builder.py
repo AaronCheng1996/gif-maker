@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, TYPE_CHECKING
 from pathlib import Path
 from PIL import Image
 from .utils import create_background, paste_center, ensure_rgba
@@ -6,6 +6,22 @@ from .sequence_editor import SequenceEditor, Frame
 from .image_loader import MaterialManager
 from .layer_system import LayeredFrame, LayerCompositor
 from .layer_timeline import LayerTimelineEditor
+from .composition_group import (
+    CompositionGroup,
+    FrameEntry,
+    SubGroupEntry,
+    LayerBlockEntry,
+    FrameSlot,
+    GroupSlot,
+    is_frame_entry,
+    is_sub_group_entry,
+    is_layer_block_entry,
+    is_frame_slot,
+    is_group_slot,
+)
+
+if TYPE_CHECKING:
+    from .group_manager import GroupManager
 
 
 class GifBuilder:
@@ -781,6 +797,145 @@ class GifBuilder:
                     rgb_bg.paste(composed, mask=composed.split()[3])
                     composed = rgb_bg
 
+            frames.append(composed)
+            durations.append(duration)
+
+        self.save_gif(frames, durations, output_path)
+
+    # ----- Composition group (group-led) expansion and build -----
+
+    def _expand_composition_group(
+        self,
+        group_id: int,
+        group_manager: "GroupManager",
+        material_manager: MaterialManager,
+    ) -> Tuple[List[List[Tuple[Optional[int], int, int]]], List[int]]:
+        """
+        Expand a CompositionGroup into a flat list of (frame_layers, duration).
+        Each frame is a list of (material_idx, x, y) to composite.
+
+        Args:
+            group_id: Index of the group in group_manager
+            group_manager: GroupManager holding CompositionGroups
+            material_manager: For resolving materials (not used for expansion, only for composition)
+
+        Returns:
+            (expanded_frames, expanded_durations)
+        """
+        group = group_manager.get_group(group_id)
+        if group is None:
+            return [], []
+
+        expanded_frames: List[List[Tuple[Optional[int], int, int]]] = []
+        expanded_durations: List[int] = []
+        default_dur = group.default_duration_ms
+
+        for entry in group.entries:
+            if is_frame_entry(entry):
+                e = entry  # type: FrameEntry
+                expanded_frames.append([(e.material_index, e.x, e.y)])
+                expanded_durations.append(e.duration_ms if e.duration_ms is not None else default_dur)
+
+            elif is_sub_group_entry(entry):
+                e = entry  # type: SubGroupEntry
+                sub_frames, sub_durations = self._expand_composition_group(
+                    e.group_id, group_manager, material_manager
+                )
+                # Apply this entry's x/y offset to every layer in every frame
+                if e.x != 0 or e.y != 0:
+                    sub_frames = [
+                        [(m, px + e.x, py + e.y) for m, px, py in frame]
+                        for frame in sub_frames
+                    ]
+                # Apply per-reference duration override
+                if e.duration_override_ms is not None:
+                    sub_durations = [e.duration_override_ms] * len(sub_durations)
+                for _ in range(e.loop_count):
+                    expanded_frames.extend(sub_frames)
+                    expanded_durations.extend(sub_durations)
+
+            elif is_layer_block_entry(entry):
+                e = entry  # type: LayerBlockEntry
+                if not e.timelines:
+                    continue
+                length = len(e.timelines[0])
+                dur = e.default_duration_ms
+                for i in range(length):
+                    layers_i: List[Tuple[Optional[int], int, int]] = []
+                    for timeline in e.timelines:
+                        if i >= len(timeline):
+                            continue
+                        slot = timeline[i]
+                        if is_frame_slot(slot):
+                            s = slot  # type: FrameSlot
+                            layers_i.append((s.material_index, s.x, s.y))
+                        elif is_group_slot(slot):
+                            s = slot  # type: GroupSlot
+                            sub_frames, _ = self._expand_composition_group(
+                                s.group_id, group_manager, material_manager
+                            )
+                            if sub_frames:
+                                idx = i % len(sub_frames)
+                                for m, px, py in sub_frames[idx]:
+                                    layers_i.append((m, px + s.x, py + s.y))
+                    expanded_frames.append(layers_i)
+                    expanded_durations.append(dur)
+
+        return expanded_frames, expanded_durations
+
+    def get_preview_frames_for_group(
+        self,
+        group_id: int,
+        group_manager: "GroupManager",
+        material_manager: MaterialManager,
+    ) -> List[Tuple[Image.Image, int]]:
+        """Return preview frames (image, duration) for the given group only."""
+        expanded_frames, expanded_durations = self._expand_composition_group(
+            group_id, group_manager, material_manager
+        )
+        frames: List[Tuple[Image.Image, int]] = []
+        for frame_layers, duration in zip(expanded_frames, expanded_durations):
+            composed = self._compose_from_expanded_frame(frame_layers, material_manager)
+            frames.append((composed, duration))
+        return frames
+
+    def build_gif_from_group(
+        self,
+        group_id: int,
+        group_manager: "GroupManager",
+        material_manager: MaterialManager,
+        output_path: str,
+    ):
+        """Export a GIF from the given group only."""
+        group = group_manager.get_group(group_id)
+        if group is None:
+            raise ValueError("Group not found")
+        if len(material_manager) == 0:
+            raise ValueError("Material list is empty, cannot generate GIF")
+
+        expanded_frames, expanded_durations = self._expand_composition_group(
+            group_id, group_manager, material_manager
+        )
+        if not expanded_frames:
+            raise ValueError("No frames to export after expanding group")
+
+        frames: List[Image.Image] = []
+        durations: List[int] = []
+        for frame_layers, duration in zip(expanded_frames, expanded_durations):
+            composed = self._compose_from_expanded_frame(frame_layers, material_manager)
+            if composed.mode == "RGBA":
+                if self.background_color[3] == 0:
+                    alpha = composed.split()[3]
+                    composed = composed.convert("RGB").convert(
+                        "P", palette=Image.Palette.ADAPTIVE, colors=self.color_count - 1
+                    )
+                    mask = Image.eval(alpha, lambda a: 255 if a < 128 else 0)
+                    composed.paste(255, mask)
+                    composed.info["transparency"] = 255
+                else:
+                    rgb_bg = Image.new("RGB", composed.size, self.background_color[:3])
+                    rgb_bg.paste(composed, mask=composed.split()[3])
+                    composed = rgb_bg
             frames.append(composed)
             durations.append(duration)
 

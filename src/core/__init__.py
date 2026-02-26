@@ -14,6 +14,22 @@ from .template_manager import TemplateManager
 from .batch_processor import BatchProcessor, BatchProcessingError
 from .material_group import MaterialGroup
 from .group_manager import GroupManager
+from .composition_group import (
+    CompositionGroup,
+    FrameEntry,
+    SubGroupEntry,
+    LayerBlockEntry,
+    FrameSlot,
+    GroupSlot,
+    Slot,
+    Timeline,
+    Entry,
+    is_frame_entry,
+    is_sub_group_entry,
+    is_layer_block_entry,
+    is_frame_slot,
+    is_group_slot,
+)
 
 __all__ = [
     'ImageLoader',
@@ -38,5 +54,19 @@ __all__ = [
     'BatchProcessingError',
     'MaterialGroup',
     'GroupManager',
+    'CompositionGroup',
+    'FrameEntry',
+    'SubGroupEntry',
+    'LayerBlockEntry',
+    'FrameSlot',
+    'GroupSlot',
+    'Slot',
+    'Timeline',
+    'Entry',
+    'is_frame_entry',
+    'is_sub_group_entry',
+    'is_layer_block_entry',
+    'is_frame_slot',
+    'is_group_slot',
 ]
 

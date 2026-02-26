@@ -94,6 +94,10 @@ class TileEditorWidget(QWidget):
         self.split_by_grid_button.setMaximumHeight(25)
         grid_layout.addWidget(self.split_by_grid_button)
         grid_layout.addStretch()
+
+        self.row_base_checkbox = QCheckBox("Row Base")
+        self.row_base_checkbox.setChecked(True)
+        grid_layout.addWidget(self.row_base_checkbox)
         
         settings_layout.addLayout(grid_layout)
         
@@ -330,6 +334,7 @@ class TileEditorWidget(QWidget):
         
         rows = self.rows_spinbox.value()
         cols = self.cols_spinbox.value()
+        row_base = self.row_base_checkbox.isChecked()
         
         try:
             from ..core.image_loader import ImageLoader
@@ -340,7 +345,7 @@ class TileEditorWidget(QWidget):
                 if img_idx < len(self.loaded_images):
                     img, img_path = self.loaded_images[img_idx]
                     source_filename = Path(img_path).stem  # Get filename without extension
-                    tiles = ImageLoader.split_into_tiles(img, rows, cols)
+                    tiles = ImageLoader.split_into_tiles(img, rows, cols, row_base=row_base)
                     
                     for row, col in self.selected_positions:
                         tile_idx = row * cols + col

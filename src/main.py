@@ -4,20 +4,20 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
-                              QTableWidgetItem, QComboBox, QStackedWidget, QColorDialog, QDialog)
+                              QTableWidgetItem, QComboBox, QStackedWidget, QColorDialog, QDialog, QInputDialog)
 from PyQt6.QtCore import Qt, QSize, QItemSelectionModel, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QImage, QFont
 
 from PIL import Image
 from collections import Counter
 
-from .core import MaterialManager, GifBuilder, TemplateManager, LayerTimelineEditor, LayerTrack, LayerFrame, GroupManager
-from .widgets import PreviewWidget, PreviewPageWidget, TimelineWidget, TileEditorWidget, BatchProcessorWidget, GifOptimizerWidget, GroupEditorDialog, GroupSelectorDialog
+from .core import MaterialManager, GifBuilder, TemplateManager, GroupManager, CompositionGroup, FrameEntry, SubGroupEntry
+from .widgets import PreviewWidget, PreviewPageWidget, TileEditorWidget, BatchProcessorWidget, GifOptimizerWidget, GroupEditorDialog, GroupSelectorDialog, GroupCompositionWidget
 
 
 class MainWindow(QMainWindow):
@@ -26,8 +26,13 @@ class MainWindow(QMainWindow):
         
         self.material_manager = MaterialManager()
         self.group_manager = GroupManager()
-        self.layer_editor = LayerTimelineEditor()
         self.gif_builder = GifBuilder()
+        self.current_group_id: Optional[int] = None
+        # Ensure root group exists for group-led composition
+        if len(self.group_manager.groups) == 0:
+            root = CompositionGroup(name="Root")
+            self.group_manager.add_group(root)
+        self.current_group_id = self.group_manager.get_root_group_id()
         
         # Remember last used directories
         self.last_image_dir = ""
@@ -286,147 +291,34 @@ class MainWindow(QMainWindow):
     def create_middle_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout()
-
-        # Controls to add/remove/reorder layer tracks
-        layer_controls = QHBoxLayout()
-        self.add_layer_track_btn = QPushButton("+ Layer Track")
-        self.add_layer_track_btn.setMaximumHeight(25)
-        self.add_layer_track_btn.clicked.connect(self.on_add_layer_track)
-        layer_controls.addWidget(self.add_layer_track_btn)
-
-        self.remove_timeline_btn = QPushButton("🗑 Remove Layer")
-        self.remove_timeline_btn.setMaximumHeight(25)
-        self.remove_timeline_btn.clicked.connect(self.on_remove_timeline)
-        layer_controls.addWidget(self.remove_timeline_btn)
-
-        self.move_timeline_up_btn = QPushButton("▲ Move Up")
-        self.move_timeline_up_btn.setMaximumHeight(25)
-        self.move_timeline_up_btn.clicked.connect(self.on_move_timeline_up)
-        layer_controls.addWidget(self.move_timeline_up_btn)
-
-        self.move_timeline_down_btn = QPushButton("▼ Move Down")
-        self.move_timeline_down_btn.setMaximumHeight(25)
-        self.move_timeline_down_btn.clicked.connect(self.on_move_timeline_down)
-        layer_controls.addWidget(self.move_timeline_down_btn)
-
-        self.set_main_btn = QPushButton("★ Set Main")
-        self.set_main_btn.setMaximumHeight(25)
-        self.set_main_btn.setToolTip("Set selected tab as main timebase (controls frame durations)")
-        self.set_main_btn.clicked.connect(self.on_set_main_track)
-        layer_controls.addWidget(self.set_main_btn)
-
-        layer_controls.addStretch()
-        layout.addLayout(layer_controls)
-        
-        # Layer timeline tabs
-        tabs_row = QHBoxLayout()
-        self.timeline_tabs = QTabWidget()
-        self.timeline_tabs.currentChanged.connect(self.on_timeline_tab_changed)
-        layout.addWidget(self.timeline_tabs, stretch=2)
-        
-        # Row 1: Offset (left) and controls (right)
-        btn_row1 = QHBoxLayout()
-        # Offset group on left
-        btn_row1.addWidget(QLabel("Offset:"))
-        self.batch_offset_x = QSpinBox()
-        self.batch_offset_x.setMinimum(-10000)
-        self.batch_offset_x.setMaximum(10000)
-        self.batch_offset_x.setValue(0)
-        self.batch_offset_x.setMaximumWidth(60)
-        btn_row1.addWidget(self.batch_offset_x)
-        self.batch_offset_y = QSpinBox()
-        self.batch_offset_y.setMinimum(-10000)
-        self.batch_offset_y.setMaximum(10000)
-        self.batch_offset_y.setValue(0)
-        self.batch_offset_y.setMaximumWidth(60)
-        btn_row1.addWidget(self.batch_offset_y)
-        self.apply_batch_offset_btn = QPushButton("Apply")
-        self.apply_batch_offset_btn.clicked.connect(self.apply_batch_offset)
-        self.apply_batch_offset_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.apply_batch_offset_btn)
-        
-        btn_row1.addStretch()
-        
-        # Controls on the right
-        self.move_frame_up_btn = QPushButton("▲")
-        self.move_frame_up_btn.clicked.connect(self.move_frame_up)
-        self.move_frame_up_btn.setMaximumWidth(30)
-        self.move_frame_up_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.move_frame_up_btn)
-        
-        self.move_frame_down_btn = QPushButton("▼")
-        self.move_frame_down_btn.clicked.connect(self.move_frame_down)
-        self.move_frame_down_btn.setMaximumWidth(30)
-        self.move_frame_down_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.move_frame_down_btn)
-
-        # Reverse selected frames
-        self.reverse_frames_btn = QPushButton("⇄")
-        self.reverse_frames_btn.setToolTip("Reverse order of selected frames")
-        self.reverse_frames_btn.setMaximumWidth(30)
-        self.reverse_frames_btn.setMaximumHeight(25)
-        self.reverse_frames_btn.clicked.connect(self.reverse_selected_frames)
-        btn_row1.addWidget(self.reverse_frames_btn)
-        
-        # Copy/Delete as icons on the far right
-        self.duplicate_frame_btn = QPushButton("📄")
-        self.duplicate_frame_btn.setToolTip("Copy (duplicate) selected frames")
-        self.duplicate_frame_btn.clicked.connect(self.duplicate_frame)
-        self.duplicate_frame_btn.setMaximumWidth(30)
-        self.duplicate_frame_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.duplicate_frame_btn)
-        
-        self.remove_frame_btn = QPushButton("🗑")
-        self.remove_frame_btn.setToolTip("Delete selected frames")
-        self.remove_frame_btn.clicked.connect(self.remove_frame)
-        self.remove_frame_btn.setMaximumWidth(30)
-        self.remove_frame_btn.setMaximumHeight(25)
-        btn_row1.addWidget(self.remove_frame_btn)
-        
-        self.refresh_timeline_btn = QPushButton("🔄")
-        self.refresh_timeline_btn.clicked.connect(self.refresh_timeline)
-        self.refresh_timeline_btn.setMaximumWidth(30)
-        self.refresh_timeline_btn.setMaximumHeight(25)
-        self.refresh_timeline_btn.setToolTip("Refresh Timeline")
-        btn_row1.addWidget(self.refresh_timeline_btn)
-        
-        layout.addLayout(btn_row1)
-        
-        # Controls for assigning material to current timeline frame
-        assign_row = QHBoxLayout()
-        self.assign_selected_material_btn = QPushButton("Assign Selected Material")
-        self.assign_selected_material_btn.setMaximumHeight(25)
-        self.assign_selected_material_btn.clicked.connect(self.on_assign_selected_material)
-        assign_row.addWidget(self.assign_selected_material_btn)
-        self.assign_matched_materials_btn = QPushButton("Assign Selected (1:1)")
-        self.assign_matched_materials_btn.setMaximumHeight(25)
-        self.assign_matched_materials_btn.setToolTip("Assign selected materials to selected frames one-by-one in order")
-        self.assign_matched_materials_btn.clicked.connect(self.on_assign_selected_materials_matched)
-        assign_row.addWidget(self.assign_matched_materials_btn)
-        # Per-timeline global offset controls
-        assign_row.addWidget(QLabel("Timeline Offset:"))
-        self.timeline_offset_x = QSpinBox()
-        self.timeline_offset_x.setMinimum(-10000)
-        self.timeline_offset_x.setMaximum(10000)
-        self.timeline_offset_x.setValue(0)
-        self.timeline_offset_x.setMaximumWidth(60)
-        assign_row.addWidget(self.timeline_offset_x)
-        self.timeline_offset_y = QSpinBox()
-        self.timeline_offset_y.setMinimum(-10000)
-        self.timeline_offset_y.setMaximum(10000)
-        self.timeline_offset_y.setValue(0)
-        self.timeline_offset_y.setMaximumWidth(60)
-        assign_row.addWidget(self.timeline_offset_y)
-        self.apply_timeline_offset_btn = QPushButton("Apply")
-        self.apply_timeline_offset_btn.setMaximumHeight(25)
-        self.apply_timeline_offset_btn.clicked.connect(self.on_apply_timeline_offset)
-        assign_row.addWidget(self.apply_timeline_offset_btn)
-        layout.addLayout(assign_row)
-        
+        title = QLabel("Composition (Groups)")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title)
+        self.group_composition_widget = GroupCompositionWidget()
+        self.group_composition_widget.set_group_manager(self.group_manager)
+        self.group_composition_widget.set_material_manager(self.material_manager)
+        self.group_composition_widget.set_get_selected_material_indices(self._get_selected_material_indices)
+        self.group_composition_widget.current_group_changed.connect(self._on_current_group_changed)
+        self.group_composition_widget.entries_changed.connect(self._on_group_entries_changed)
+        layout.addWidget(self.group_composition_widget, stretch=1)
         panel.setLayout(layout)
-        # Populate initial tabs/tables
-        self.refresh_timeline()
         return panel
+
+    def _get_selected_material_indices(self) -> List[int]:
+        """Return list of selected material indices from the materials list (for Add Frame)."""
+        indices = []
+        for item in self.materials_list.selectedItems():
+            row = self.materials_list.row(item)
+            if 0 <= row < len(self.material_manager):
+                indices.append(row)
+        return sorted(indices)
+
+    def _on_current_group_changed(self, group_id: int):
+        self.current_group_id = group_id
+        self.update_preview()
+
+    def _on_group_entries_changed(self):
+        self.update_preview()
     
     def create_right_panel(self) -> QWidget:
         panel = QWidget()
@@ -442,7 +334,7 @@ class MainWindow(QMainWindow):
         self.preview_frame_spinbox.setMaximum(1)
         self.preview_frame_spinbox.setValue(1)
         self.preview_frame_spinbox.setMaximumWidth(60)
-        self.preview_frame_spinbox.valueChanged.connect(self.update_single_frame_preview)
+        self.preview_frame_spinbox.valueChanged.connect(self.update_preview)
         preview_controls.addWidget(self.preview_frame_spinbox)
         
         self.preview_all_checkbox = QCheckBox("Preview All (Animation)")
@@ -844,128 +736,36 @@ class MainWindow(QMainWindow):
         return QPixmap.fromImage(qimage)
     
     def add_selected_to_timebase(self):
-        """Append selected materials as new frames to the main timebase and all layer_tracks."""
-        selected_rows = []
-        for index in self.materials_list.selectedIndexes():
-            item = self.materials_list.item(index.row())
-            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-            selected_rows.append(mat_idx if mat_idx is not None else index.row())
-        if not selected_rows:
-            QMessageBox.warning(self, "Warning", "Please select at least one material!")
-            return
-        
-        try:
-            # Create a main timeline if none exists
-            if not self.layer_editor.layer_tracks:
-                self.layer_editor.add_layer_track("Main")
-                self.layer_editor.set_main_track(0)
-            
-            # Auto-set output size based on first material if empty
-            if self.layer_editor.get_frame_count() == 0 and selected_rows:
-                first_material_row = selected_rows[0]
-                if first_material_row < len(self.material_manager):
-                    material = self.material_manager.get_material(first_material_row)
-                    if material:
-                        img, name = material
-                        self.width_spinbox.setValue(img.width)
-                        self.height_spinbox.setValue(img.height)
-            
-            # Append timebase frames
-            duration = 100
-            if self.timeline_tabs.count() > 0:
-                # If main tab exists and has a widget, read its spinbox if available
-                current_widget = self.timeline_tabs.currentWidget()
-                if hasattr(current_widget, 'timeline_widget') and current_widget.timeline_widget.is_main_timebase:
-                    duration = current_widget.timeline_widget.duration_spinbox.value()
-            self.layer_editor.add_timebase_frames(len(selected_rows), duration)
-
-            # If only one timeline exists, set its frames' materials in order
-            # For new layer_tracks added later, frames are already created (empty materials)
-            main_idx = self.layer_editor.main_track_index
-            main_tl = self.layer_editor.get_layer_track(main_idx)
-            if main_tl is not None:
-                # Assign materials to the newly appended frames at the end
-                start = len(main_tl.frames) - len(selected_rows)
-                for i, material_idx in enumerate(selected_rows):
-                    pos = start + i
-                    if 0 <= pos < len(main_tl.frames):
-                        main_tl.frames[pos].material_index = material_idx
-                        main_tl.frames[pos].x = 0
-                        main_tl.frames[pos].y = 0
-            
-            self.refresh_timeline()
-        
-        except Exception as e:
-            print(f"ERROR in add_selected_to_timeline: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to add materials to timebase:\n{str(e)}")
-
-    def add_selected_to_current_timeline(self):
-        """Assign selected materials into the current timeline sequentially.
-
-        If the current tab is the main timebase, reuse Add to Timebase.
-        If more slots are needed, extends the timebase for all layer_tracks.
-        """
-        mat_indices = []
-        for index in self.materials_list.selectedIndexes():
-            item = self.materials_list.item(index.row())
-            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-            mat_indices.append(mat_idx if mat_idx is not None else index.row())
+        """Add selected materials as frame entries to the current group (group-led model)."""
+        mat_indices = self._get_selected_material_indices()
         if not mat_indices:
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
             return
-
-        # Ensure at least one timeline exists
-        if not self.layer_editor.layer_tracks:
-            self.layer_editor.add_layer_track("Main")
-            self.layer_editor.set_main_track(0)
-
-        current_index = self.timeline_tabs.currentIndex()
-        if current_index < 0:
-            current_index = 0
-
-        if current_index == self.layer_editor.main_track_index:
-            # Append to timebase directly
-            self.add_selected_to_timebase()
+        if self.current_group_id is None:
+            QMessageBox.warning(self, "Warning", "No group selected. Select a group in the composition panel.")
             return
-
-        tl = self.layer_editor.get_layer_track(current_index)
-        if tl is None:
+        group = self.group_manager.get_group(self.current_group_id)
+        if not group:
             return
+        try:
+            for mat_idx in mat_indices:
+                group.entries.append(FrameEntry(material_index=mat_idx, x=0, y=0))
+            self.group_manager.update_group(self.current_group_id, group)
+            if mat_indices and len(self.material_manager) > 0:
+                first = self.material_manager.get_material(mat_indices[0])
+                if first:
+                    img, _ = first
+                    self.width_spinbox.setValue(img.width)
+                    self.height_spinbox.setValue(img.height)
+            self.refresh_timeline()
+            self.update_preview()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to add materials:\n{str(e)}")
 
-        frame_count = self.layer_editor.get_frame_count()
-        # Find first empty slot to place materials
-        start = None
-        for i in range(frame_count):
-            if i >= len(tl.frames) or tl.frames[i].material_index is None:
-                start = i
-                break
-        if start is None:
-            start = frame_count
+    def add_selected_to_current_timeline(self):
+        """Add selected materials to the current group (same as Add to Timebase in group-led model)."""
+        self.add_selected_to_timebase()
 
-        needed = (start + len(mat_indices)) - frame_count
-        if needed > 0:
-            duration = 100
-            # Use main timebase default duration if available
-            main_idx = self.layer_editor.main_track_index
-            main_tab = self.timeline_tabs.widget(main_idx) if 0 <= main_idx < self.timeline_tabs.count() else None
-            if hasattr(main_tab, 'timeline_widget') and main_tab.timeline_widget.is_main_timebase:
-                duration = main_tab.timeline_widget.duration_spinbox.value()
-            self.layer_editor.add_timebase_frames(needed, duration)
-            frame_count = self.layer_editor.get_frame_count()
-
-        self.layer_editor.ensure_track_length(current_index, frame_count)
-        for offset, mat_idx in enumerate(mat_indices):
-            pos = start + offset
-            if 0 <= pos < len(tl.frames):
-                tl.frames[pos].material_index = mat_idx
-                tl.frames[pos].x = 0
-                tl.frames[pos].y = 0
-
-        self.refresh_timeline()
-        self.update_preview()
-    
     def remove_selected_material(self):
         # Map selected view rows to underlying material indices
         selected_rows = []
@@ -982,434 +782,183 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
     
     def create_group_from_selected(self):
-        """Create a MaterialGroup from selected materials"""
-        from .widgets import GroupEditorDialog
-        
-        selected_rows = sorted([item.row() for item in self.materials_list.selectedIndexes()])
-        if not selected_rows:
+        """Create a CompositionGroup from selected materials (name + frame entries)."""
+        material_indices = self._get_selected_material_indices()
+        if not material_indices:
             QMessageBox.warning(self, "Warning", "Please select at least one material to create a group!")
             return
-        
-        # Get actual material indices
-        material_indices = []
-        for row in selected_rows:
-            item = self.materials_list.item(row)
-            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else row
-            material_indices.append(mat_idx if mat_idx is not None else row)
-        
-        # Show group editor dialog
-        dialog = GroupEditorDialog(self, material_indices=material_indices)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            group = dialog.get_group()
-            if group:
-                group_idx = self.group_manager.add_group(group)
-                QMessageBox.information(
-                    self, 
-                    "Success", 
-                    f"Group '{group.name}' created with {group.get_total_frames()} frames!"
-                )
-                # Refresh groups list
-                self.refresh_groups_list()
+        name, ok = QInputDialog.getText(self, "New Group", "Group name:", text=f"Group_{len(material_indices)}")
+        if not ok:
+            return
+        comp_group = CompositionGroup(
+            name=name or f"Group_{len(material_indices)}",
+            entries=[FrameEntry(material_index=m, x=0, y=0) for m in material_indices],
+            default_duration_ms=100,
+        )
+        self.group_manager.add_group(comp_group)
+        self.refresh_groups_list()
+        if hasattr(self, 'group_composition_widget') and self.group_composition_widget is not None:
+            self.group_composition_widget.refresh_groups_list()
+        QMessageBox.information(self, "Success", f"Group '{comp_group.name}' created with {len(comp_group.entries)} frame(s).")
     
     def refresh_groups_list(self):
-        """Refresh the groups list display"""
+        """Refresh the groups list display (CompositionGroup model)."""
+        if hasattr(self, 'group_composition_widget') and self.group_composition_widget is not None:
+            self.group_composition_widget.refresh_groups_list()
+        if not hasattr(self, 'groups_list') or self.groups_list is None:
+            return
         self.groups_list.clear()
-        
         for idx, group in enumerate(self.group_manager.get_all_groups()):
-            # Create display text
-            text = f"[{idx}] {group.name} ({len(group.material_indices)} mats × {group.loop_count} loops = {group.get_total_frames()} frames)"
-            
+            text = f"[{idx}] {group.name} ({len(group.entries)} entries)"
             item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, idx)  # Store group index
+            item.setData(Qt.ItemDataRole.UserRole, idx)
             self.groups_list.addItem(item)
     
     def remove_selected_group(self):
-        """Remove selected groups"""
+        """Remove selected groups (CompositionGroup model)."""
+        if not hasattr(self, 'groups_list') or self.groups_list is None:
+            QMessageBox.information(self, "Info", "Use the Composition panel to manage groups.")
+            return
         selected_items = self.groups_list.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "Warning", "Please select at least one group to remove!")
             return
-        
-        # Get indices and remove in reverse order
         indices = []
         for item in selected_items:
             idx = item.data(Qt.ItemDataRole.UserRole)
             if idx is not None:
                 indices.append(idx)
-        
         for idx in sorted(indices, reverse=True):
             self.group_manager.remove_group(idx)
-        
         self.refresh_groups_list()
         QMessageBox.information(self, "Success", f"Removed {len(indices)} group(s).")
     
     def view_group_details(self):
-        """View details of selected group"""
-        selected_items = self.groups_list.selectedItems()
-        if not selected_items:
+        """View details of selected group (CompositionGroup model)."""
+        if hasattr(self, 'group_composition_widget') and self.group_composition_widget is not None:
+            gid = self.group_composition_widget.get_current_group_id()
+        else:
+            gid = self.current_group_id
+        if gid is None:
             QMessageBox.warning(self, "Warning", "Please select a group to view!")
             return
-        
-        item = selected_items[0]
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx is None:
-            return
-        
-        group = self.group_manager.get_group(idx)
+        group = self.group_manager.get_group(gid)
         if group is None:
             return
-        
-        # Show details
-        details = (
-            f"Group Name: {group.name}\n"
-            f"Materials: {group.material_indices}\n"
-            f"Frame Duration: {group.frame_duration} ms\n"
-            f"Loop Count: {group.loop_count}\n"
-            f"Total Frames: {group.get_total_frames()}\n"
-            f"Total Duration: {group.get_total_duration()} ms ({group.get_total_duration()/1000:.2f}s)"
-        )
-        
-        QMessageBox.information(self, f"Group Details - {group.name}", details)
+        details = f"Group: {group.name}\nEntries: {len(group.entries)}\nDefault duration: {group.default_duration_ms} ms"
+        QMessageBox.information(self, f"Group - {group.name}", details)
     
     def add_selected_groups_to_current_layer(self):
-        """Add selected groups to the current layer track"""
-        selected_items = self.groups_list.selectedItems()
-        if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select at least one group!")
+        """Add selected groups as SubGroupEntry to the current group (group-led model)."""
+        if self.current_group_id is None:
+            QMessageBox.warning(self, "Warning", "Select a group in the Composition panel first.")
             return
-        
-        # Get group indices
+        selected_items = getattr(self.group_composition_widget, 'groups_list', None)
+        if selected_items is None:
+            selected_items = getattr(self, 'groups_list', None)
+        if selected_items is None:
+            QMessageBox.information(self, "Info", "Select groups in the Composition panel, then use Add Sub-group.")
+            return
+        selected_items = selected_items.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Warning", "Please select at least one group in the list!")
+            return
+        from .core.composition_group import SubGroupEntry
         group_indices = []
         for item in selected_items:
             idx = item.data(Qt.ItemDataRole.UserRole)
-            if idx is not None:
+            if idx is not None and idx != self.current_group_id:
                 group_indices.append(idx)
-        
         if not group_indices:
+            QMessageBox.warning(self, "Warning", "Select other groups (not the current one) to add as sub-groups.")
             return
-        
-        # Ensure at least one layer track exists
-        if not self.layer_editor.layer_tracks:
-            self.layer_editor.add_layer_track("Main")
-            self.layer_editor.set_main_track(0)
-        
-        current_index = self.timeline_tabs.currentIndex()
-        if current_index < 0:
-            current_index = 0
-        
-        # Can't add groups to main timebase - groups need to be expanded
-        if current_index == self.layer_editor.main_track_index:
-            QMessageBox.warning(
-                self, 
-                "Warning", 
-                "Cannot add groups to main timebase.\nGroups will be expanded into individual frames.\nPlease select a different layer track."
-            )
+        group = self.group_manager.get_group(self.current_group_id)
+        if not group:
             return
-        
-        track = self.layer_editor.get_layer_track(current_index)
-        if track is None:
-            return
-        
-        frame_count = self.layer_editor.get_frame_count()
-        
-        # Find first empty slot
-        start = None
-        for i in range(frame_count):
-            if i >= len(track.frames) or (track.frames[i].material_index is None and track.frames[i].group_index is None):
-                start = i
-                break
-        if start is None:
-            start = frame_count
-        
-        # Calculate total frames needed (expand all groups)
-        total_frames_needed = 0
-        for group_idx in group_indices:
-            group = self.group_manager.get_group(group_idx)
-            if group:
-                total_frames_needed += group.get_total_frames()
-        
-        # Extend timebase if needed
-        needed = (start + total_frames_needed) - frame_count
-        if needed > 0:
-            duration = 100
-            main_idx = self.layer_editor.main_track_index
-            main_tab = self.timeline_tabs.widget(main_idx) if 0 <= main_idx < self.timeline_tabs.count() else None
-            if hasattr(main_tab, 'timeline_widget') and main_tab.timeline_widget.is_main_timebase:
-                duration = main_tab.timeline_widget.duration_spinbox.value()
-            self.layer_editor.add_timebase_frames(needed, duration)
-            frame_count = self.layer_editor.get_frame_count()
-        
-        self.layer_editor.ensure_track_length(current_index, frame_count)
-        
-        # Expand and add groups
-        pos = start
-        for group_idx in group_indices:
-            group = self.group_manager.get_group(group_idx)
-            if group:
-                # Expand group to individual frames
-                expanded_frames = group.expand_to_frames()
-                for mat_idx, duration in expanded_frames:
-                    if pos < len(track.frames):
-                        track.frames[pos].material_index = mat_idx
-                        track.frames[pos].group_index = None  # Expanded, so no group reference
-                        track.frames[pos].x = 0
-                        track.frames[pos].y = 0
-                        # Update frame duration in timebase if this is main track
-                        if current_index == self.layer_editor.main_track_index and pos < len(self.layer_editor.durations_ms):
-                            self.layer_editor.durations_ms[pos] = duration
-                        pos += 1
-        
+        for gid in group_indices:
+            group.entries.append(SubGroupEntry(group_id=gid, loop_count=1))
+        self.group_manager.update_group(self.current_group_id, group)
         self.refresh_timeline()
         self.update_preview()
-        QMessageBox.information(
-            self,
-            "Success",
-            f"Added {len(group_indices)} group(s) ({total_frames_needed} total frames) to layer track."
-        )
+        QMessageBox.information(self, "Success", f"Added {len(group_indices)} sub-group(s) to current group.")
     
     # ===== New Group Addition Methods =====
     
     def add_materials_to_existing_group(self):
-        """Add selected materials to an existing group in current timeline"""
-        # Get selected materials
-        material_indices = []
-        for index in self.materials_list.selectedIndexes():
-            item = self.materials_list.item(index.row())
-            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-            material_indices.append(mat_idx if mat_idx is not None else index.row())
-        
+        """Add selected materials as FrameEntry to an existing group (group-led model)."""
+        material_indices = self._get_selected_material_indices()
         if not material_indices:
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
             return
-        
-        # Auto-set output size based on first material if timeline is empty
-        # (though this is less likely since we're adding to existing group)
-        if self.layer_editor.get_frame_count() == 0 and material_indices:
-            first_material_idx = material_indices[0]
-            if first_material_idx < len(self.material_manager):
-                material = self.material_manager.get_material(first_material_idx)
-                if material:
-                    img, _ = material
-                    self.width_spinbox.setValue(img.width)
-                    self.height_spinbox.setValue(img.height)
-        
-        # Ensure at least one layer track exists
-        if not self.layer_editor.layer_tracks:
-            self.layer_editor.add_layer_track("Main")
-            self.layer_editor.set_main_track(0)
-        
-        current_index = self.timeline_tabs.currentIndex()
-        if current_index < 0:
-            current_index = 0
-        
-        # Show dialog to select group
-        dialog = GroupSelectorDialog(self.layer_editor, self.group_manager, current_index, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        groups = self.group_manager.get_all_groups()
+        if not groups:
+            QMessageBox.information(self, "Info", "Create a group first (e.g. Add as New Group).")
             return
-        
-        group_index = dialog.get_selected_group_index()
-        if group_index is None:
+        names = [g.name for g in groups]
+        item, ok = QInputDialog.getItem(self, "Add to Group", "Select group to add materials to:", names, 0, False)
+        if not ok:
             return
-        
-        # Get the group and add materials to it
-        group = self.group_manager.get_group(group_index)
-        if group is None:
-            QMessageBox.warning(self, "Warning", "Selected group not found!")
-            return
-        
-        # Add materials to the group's material_indices
-        original_count = len(group.material_indices)
-        group.material_indices.extend(material_indices)
-        
-        # Update the group in manager
-        self.group_manager.update_group(group_index, group)
-        
-        # Refresh timeline to show updated group
-        self.refresh_timeline()
-        self.update_preview()
-        
-        QMessageBox.information(
-            self,
-            "Success",
-            f"Added {len(material_indices)} material(s) to group '{group.name}'.\n"
-            f"Group now has {len(group.material_indices)} materials (was {original_count})."
-        )
-    
-    def add_materials_as_single_group(self):
-        """Combine selected materials into a single new group and add to timeline"""
-        # Get selected materials
-        material_indices = []
-        for index in self.materials_list.selectedIndexes():
-            item = self.materials_list.item(index.row())
-            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-            material_indices.append(mat_idx if mat_idx is not None else index.row())
-        
-        if not material_indices:
-            QMessageBox.warning(self, "Warning", "Please select at least one material!")
-            return
-        
-        # Auto-set output size based on first material if timeline is empty
-        if self.layer_editor.get_frame_count() == 0 and material_indices:
-            first_material_idx = material_indices[0]
-            if first_material_idx < len(self.material_manager):
-                material = self.material_manager.get_material(first_material_idx)
-                if material:
-                    img, _ = material
-                    self.width_spinbox.setValue(img.width)
-                    self.height_spinbox.setValue(img.height)
-        
-        # Show group editor dialog
-        dialog = GroupEditorDialog(self, material_indices=material_indices)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        
-        group = dialog.get_group()
+        idx = names.index(item)
+        group = self.group_manager.get_group(idx)
         if not group:
             return
-        
-        # Add group to manager
-        group_idx = self.group_manager.add_group(group)
-        
-        # Ensure at least one layer track exists
-        if not self.layer_editor.layer_tracks:
-            self.layer_editor.add_layer_track("Main")
-            self.layer_editor.set_main_track(0)
-        
-        current_index = self.timeline_tabs.currentIndex()
-        if current_index < 0:
-            current_index = 0
-        
-        track = self.layer_editor.get_layer_track(current_index)
-        if track is None:
-            return
-        
-        frame_count = self.layer_editor.get_frame_count()
-        
-        # Find first empty slot
-        start = None
-        for i in range(frame_count):
-            if i >= len(track.frames) or (track.frames[i].material_index is None and track.frames[i].group_index is None):
-                start = i
-                break
-        if start is None:
-            start = frame_count
-        
-        # Extend timebase if needed (1 frame for the group reference)
-        if start >= frame_count:
-            duration = 100
-            main_idx = self.layer_editor.main_track_index
-            main_tab = self.timeline_tabs.widget(main_idx) if 0 <= main_idx < self.timeline_tabs.count() else None
-            if hasattr(main_tab, 'timeline_widget') and main_tab.timeline_widget.is_main_timebase:
-                duration = main_tab.timeline_widget.duration_spinbox.value()
-            self.layer_editor.add_timebase_frames(1, duration)
-            frame_count = self.layer_editor.get_frame_count()
-        
-        self.layer_editor.ensure_track_length(current_index, frame_count)
-        
-        # Add group reference to timeline
-        track.frames[start].material_index = None
-        track.frames[start].group_index = group_idx
-        track.frames[start].x = 0
-        track.frames[start].y = 0
-        
+        original = len(group.entries)
+        for m in material_indices:
+            group.entries.append(FrameEntry(material_index=m, x=0, y=0))
+        self.group_manager.update_group(idx, group)
         self.refresh_timeline()
         self.update_preview()
-        
-        QMessageBox.information(
-            self,
-            "Success",
-            f"Created group '{group.name}' with {len(material_indices)} material(s) and added to timeline."
-        )
+        QMessageBox.information(self, "Success", f"Added {len(material_indices)} frame(s) to group '{group.name}' (now {len(group.entries)} entries).")
     
-    def add_materials_as_separate_groups(self):
-        """Create a separate group for each selected material and add to timeline"""
-        # Get selected materials
-        material_indices = []
-        for index in self.materials_list.selectedIndexes():
-            item = self.materials_list.item(index.row())
-            mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-            material_indices.append(mat_idx if mat_idx is not None else index.row())
-        
+    def add_materials_as_single_group(self):
+        """Create a new CompositionGroup from selected materials and add as SubGroupEntry to current group."""
+        material_indices = self._get_selected_material_indices()
         if not material_indices:
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
             return
-        
-        # Auto-set output size based on first material if timeline is empty
-        if self.layer_editor.get_frame_count() == 0 and material_indices:
-            first_material_idx = material_indices[0]
-            if first_material_idx < len(self.material_manager):
-                material = self.material_manager.get_material(first_material_idx)
-                if material:
-                    img, _ = material
-                    self.width_spinbox.setValue(img.width)
-                    self.height_spinbox.setValue(img.height)
-        
-        # Ensure at least one layer track exists
-        if not self.layer_editor.layer_tracks:
-            self.layer_editor.add_layer_track("Main")
-            self.layer_editor.set_main_track(0)
-        
-        current_index = self.timeline_tabs.currentIndex()
-        if current_index < 0:
-            current_index = 0
-        
-        track = self.layer_editor.get_layer_track(current_index)
-        if track is None:
+        name, ok = QInputDialog.getText(self, "New Group", "Group name:", text=f"Group_{len(material_indices)}")
+        if not ok:
             return
-        
-        frame_count = self.layer_editor.get_frame_count()
-        
-        # Find first empty slot
-        start = None
-        for i in range(frame_count):
-            if i >= len(track.frames) or (track.frames[i].material_index is None and track.frames[i].group_index is None):
-                start = i
-                break
-        if start is None:
-            start = frame_count
-        
-        # Calculate frames needed
-        frames_needed = len(material_indices)
-        needed = (start + frames_needed) - frame_count
-        if needed > 0:
-            duration = 100
-            main_idx = self.layer_editor.main_track_index
-            main_tab = self.timeline_tabs.widget(main_idx) if 0 <= main_idx < self.timeline_tabs.count() else None
-            if hasattr(main_tab, 'timeline_widget') and main_tab.timeline_widget.is_main_timebase:
-                duration = main_tab.timeline_widget.duration_spinbox.value()
-            self.layer_editor.add_timebase_frames(needed, duration)
-            frame_count = self.layer_editor.get_frame_count()
-        
-        self.layer_editor.ensure_track_length(current_index, frame_count)
-        
-        # Create a group for each material and add to timeline
-        pos = start
+        comp_group = CompositionGroup(
+            name=name or f"Group_{len(material_indices)}",
+            entries=[FrameEntry(material_index=m, x=0, y=0) for m in material_indices],
+            default_duration_ms=100,
+        )
+        group_idx = self.group_manager.add_group(comp_group)
+        if self.current_group_id is not None:
+            current = self.group_manager.get_group(self.current_group_id)
+            if current:
+                current.entries.append(SubGroupEntry(group_id=group_idx, loop_count=1))
+                self.group_manager.update_group(self.current_group_id, current)
+        self.refresh_timeline()
+        self.update_preview()
+        QMessageBox.information(self, "Success", f"Created group '{comp_group.name}' and added to current group.")
+    
+    def add_materials_as_separate_groups(self):
+        """Create one CompositionGroup per selected material and add each as SubGroupEntry to current group."""
+        material_indices = self._get_selected_material_indices()
+        if not material_indices:
+            QMessageBox.warning(self, "Warning", "Please select at least one material!")
+            return
+        if self.current_group_id is None:
+            QMessageBox.warning(self, "Warning", "Select a group in the Composition panel first.")
+            return
+        current = self.group_manager.get_group(self.current_group_id)
+        if not current:
+            return
         for mat_idx in material_indices:
-            # Get material name
             mat_name = f"Material_{mat_idx}"
             mat = self.material_manager.get_material(mat_idx)
             if mat:
                 _, mat_name = mat
-            
-            # Create single-material group
-            from .core.material_group import MaterialGroup
-            group = MaterialGroup(
-                material_indices=[mat_idx],
-                frame_duration=100,
-                loop_count=1,
-                name=f"{mat_name}"
+            comp_group = CompositionGroup(
+                name=mat_name,
+                entries=[FrameEntry(material_index=mat_idx, x=0, y=0)],
+                default_duration_ms=100,
             )
-            
-            group_idx = self.group_manager.add_group(group)
-            
-            # Add to timeline
-            if pos < len(track.frames):
-                track.frames[pos].material_index = None
-                track.frames[pos].group_index = group_idx
-                track.frames[pos].x = 0
-                track.frames[pos].y = 0
-                pos += 1
-        
+            group_idx = self.group_manager.add_group(comp_group)
+            current.entries.append(SubGroupEntry(group_id=group_idx, loop_count=1))
+        self.group_manager.update_group(self.current_group_id, current)
         self.refresh_timeline()
         self.update_preview()
         
@@ -1793,50 +1342,46 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", f"Applied duration {duration}ms to {len(frame_indices)} selected frames.")
     
     def export_gif(self):
-        """Export GIF from multi layer_tracks"""
-        if self.layer_editor.get_frame_count() == 0:
-            QMessageBox.warning(self, "Warning", "No frames to export!")
+        """Export GIF from the currently selected group."""
+        if self.current_group_id is None:
+            QMessageBox.warning(self, "Warning", "No group selected to export!")
             return
-        
-        # Construct default path
+        if self.group_manager.get_group(self.current_group_id) is None:
+            QMessageBox.warning(self, "Warning", "Selected group not found!")
+            return
+
         default_path = "output.gif"
         if self.last_export_dir:
             default_path = str(Path(self.last_export_dir) / "output.gif")
-        
+
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save GIF",
             default_path,
             "GIF Files (*.gif)"
         )
-        
+
         if file_path:
             try:
-                # Remember the directory
                 self.last_export_dir = str(Path(file_path).parent)
-                
                 self.gif_builder.set_output_size(
                     self.width_spinbox.value(),
                     self.height_spinbox.value()
                 )
                 self.gif_builder.set_loop(self.loop_spinbox.value())
-                
-                # Set color palette
                 color_count = int(self.color_palette_combo.currentText())
                 self.gif_builder.set_color_count(color_count)
-                
                 if self.transparent_bg_checkbox.isChecked():
                     self.gif_builder.set_background_color(0, 0, 0, 0)
                 else:
                     self.gif_builder.set_background_color(255, 255, 255, 255)
-                
-                self.gif_builder.build_from_layer_timeline(
-                    self.layer_editor,
-                    self.material_manager,
+                self.gif_builder.build_gif_from_group(
+                    self.current_group_id,
                     self.group_manager,
+                    self.material_manager,
                     file_path,
                 )
-                
+                QMessageBox.information(self, "Success", "GIF exported successfully.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export GIF:\n{str(e)}")
     
@@ -2457,164 +2002,12 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Success", f"Aligned {total} frame(s) to the bottom")
     
     def refresh_timeline(self):
-        """Refresh timeline tabs and the current tab's table content."""
-        # Ensure at least one timeline exists
-        if not self.layer_editor.layer_tracks:
-            self.layer_editor.add_layer_track("Main")
-            self.layer_editor.set_main_track(0)
+        """Refresh group composition widget (group-led model)."""
+        if hasattr(self, 'group_composition_widget') and self.group_composition_widget is not None:
+            self.group_composition_widget.refresh_groups_list()
+            self.group_composition_widget.refresh_entries_list()
+        return
 
-        # Ensure tab count matches layer_tracks
-        while self.timeline_tabs.count() > len(self.layer_editor.layer_tracks):
-            self.timeline_tabs.removeTab(self.timeline_tabs.count() - 1)
-        while self.timeline_tabs.count() < len(self.layer_editor.layer_tracks):
-            idx = self.timeline_tabs.count()
-            tab = QWidget()
-            v = QVBoxLayout()
-            timeline_widget = TimelineWidget()
-            timeline_widget.set_material_manager(self.material_manager)
-            timeline_widget.set_group_manager(self.group_manager)
-            # Mark main
-            timeline_widget.set_is_main_timebase(idx == self.layer_editor.main_track_index)
-            # Connect signals
-            timeline_widget.sequence_changed.connect(self.on_sequence_changed)
-            timeline_widget.timeline_table.itemSelectionChanged.connect(self.on_timeline_selection_changed)
-            timeline_widget.apply_duration_requested.connect(self.on_apply_duration)
-            timeline_widget.edit_group_requested.connect(self.edit_group_in_timeline)
-            timeline_widget.remove_group_requested.connect(self.remove_group_from_timeline)
-            timeline_widget.duplicate_group_requested.connect(self.duplicate_group_in_timeline)
-            timeline_widget.remove_material_from_group_requested.connect(self.remove_material_from_group)
-            # Store on tab for later access
-            tab.timeline_widget = timeline_widget
-            v.addWidget(timeline_widget)
-            tab.setLayout(v)
-            # Set initial tab name with asterisk if it's the main timeline
-            timeline_name = self.layer_editor.layer_tracks[idx].name
-            if idx == self.layer_editor.main_track_index and not timeline_name.startswith('*'):
-                timeline_name = f"★ {timeline_name}"
-            self.timeline_tabs.addTab(tab, timeline_name)
-
-        # Update which tab is main and update tab names with asterisk
-        for i in range(self.timeline_tabs.count()):
-            tab = self.timeline_tabs.widget(i)
-            if hasattr(tab, 'timeline_widget'):
-                tab.timeline_widget.set_is_main_timebase(i == self.layer_editor.main_track_index)
-            
-            # Update tab name with asterisk for main timeline
-            timeline_name = self.layer_editor.layer_tracks[i].name
-            if i == self.layer_editor.main_track_index:
-                # Add asterisk to main timeline name
-                if not timeline_name.startswith('★ '):
-                    timeline_name = f"★ {timeline_name}"
-            else:
-                # Remove asterisk from non-main timeline names
-                if timeline_name.startswith('★ '):
-                    timeline_name = timeline_name[2:]
-            
-            self.timeline_tabs.setTabText(i, timeline_name)
-
-        # Populate current tab table
-        current_index = self.timeline_tabs.currentIndex()
-        if current_index < 0:
-            current_index = 0
-            self.timeline_tabs.setCurrentIndex(0)
-        tab = self.timeline_tabs.widget(current_index)
-        if not hasattr(tab, 'timeline_widget'):
-            return
-        tw = tab.timeline_widget
-
-        # Block signals while filling
-        tw.timeline_table.blockSignals(True)
-        tw.timeline_table.setRowCount(0)
-
-        frame_count = self.layer_editor.get_frame_count()
-        tl = self.layer_editor.get_layer_track(current_index)
-        
-        # Display frames with expandable groups
-        table_row = 0
-        for i in range(frame_count):
-            if tl is None or i >= len(tl.frames):
-                # Empty frame
-                self._add_timeline_row(tw, table_row, i, None, None, None, False)
-                table_row += 1
-                continue
-            
-            fr = tl.frames[i]
-            
-            # Check if this frame has a group
-            if fr.group_index is not None:
-                group = self.group_manager.get_group(fr.group_index)
-                if group:
-                    # Add group row
-                    is_expanded = fr.group_index in tw.expanded_groups
-                    self._add_group_row(tw, table_row, i, fr, group, is_expanded)
-                    table_row += 1
-                    
-                    # Add expanded material rows if group is expanded
-                    if is_expanded:
-                        for mat_seq_idx, mat_idx in enumerate(group.material_indices):
-                            self._add_material_child_row(tw, table_row, i, mat_idx, mat_seq_idx, group, fr.group_index)
-                            table_row += 1
-                else:
-                    # Group index is set but group not found in group_manager
-                    # This means template has invalid group reference
-                    # Show as warning row that can be edited/removed
-                    tw.timeline_table.insertRow(table_row)
-                    
-                    # Column 0: Frame number with warning
-                    index_item = QTableWidgetItem(f"⚠ {i + 1}")
-                    index_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    index_item.setFlags(index_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    index_item.setData(Qt.ItemDataRole.UserRole, 'frame')
-                    index_item.setData(Qt.ItemDataRole.UserRole + 2, i)
-                    tw.timeline_table.setItem(table_row, 0, index_item)
-                    
-                    # Column 1: Empty preview
-                    preview_item = QTableWidgetItem()
-                    preview_item.setFlags(preview_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    tw.timeline_table.setItem(table_row, 1, preview_item)
-                    
-                    # Column 2: Show error info
-                    frame_item = QTableWidgetItem(f"⚠ Invalid Group Reference [G{fr.group_index}] | Pos({fr.x}, {fr.y})")
-                    frame_item.setFlags(frame_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    frame_item.setForeground(Qt.GlobalColor.red)
-                    tw.timeline_table.setItem(table_row, 2, frame_item)
-                    
-                    # Column 3: Duration from timebase
-                    duration = self.layer_editor.durations_ms[i] if i < len(self.layer_editor.durations_ms) else 100
-                    duration_item = QTableWidgetItem(f"{duration}ms")
-                    duration_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    duration_item.setFlags(duration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    tw.timeline_table.setItem(table_row, 3, duration_item)
-                    
-                    tw.timeline_table.setRowHeight(table_row, 70)
-                    table_row += 1
-            elif fr.material_index is not None:
-                # Old-style direct material reference (for backward compatibility)
-                # Auto-wrap into a temporary single-material group display
-                self._add_timeline_row(tw, table_row, i, fr.material_index, None, fr, False)
-                table_row += 1
-            else:
-                # Empty frame
-                self._add_timeline_row(tw, table_row, i, None, None, fr, False)
-                table_row += 1
-
-        # Sync duration spinbox to default
-        if hasattr(tw, 'duration_spinbox') and tw.is_main_timebase:
-            if self.layer_editor.durations_ms:
-                tw.duration_spinbox.setValue(self.layer_editor.durations_ms[0])
-
-        tw.timeline_table.blockSignals(False)
-
-        # Sync timeline-offset spinboxes with current tab timeline
-        tl = self.layer_editor.get_layer_track(current_index)
-        if tl is not None:
-            self.timeline_offset_x.blockSignals(True)
-            self.timeline_offset_y.blockSignals(True)
-            self.timeline_offset_x.setValue(tl.offset_x)
-            self.timeline_offset_y.setValue(tl.offset_y)
-            self.timeline_offset_x.blockSignals(False)
-            self.timeline_offset_y.blockSignals(False)
-    
     def _add_group_row(self, tw, table_row, frame_index, frame, group, is_expanded):
         """Add a group row to timeline table"""
         tw.timeline_table.insertRow(table_row)
@@ -2962,110 +2355,50 @@ class MainWindow(QMainWindow):
     
     
     def on_preview_mode_changed(self):
-        """Handle preview mode change"""
+        """Handle preview mode change (group-led: single frame vs full animation)."""
         if self.preview_all_checkbox.isChecked():
-            # Preview all frames (animation)
             self.preview_frame_spinbox.setEnabled(False)
-            self.update_preview()
         else:
-            # Preview single frame
             self.preview_frame_spinbox.setEnabled(True)
-            self.preview_frame_spinbox.setMaximum(max(1, self.layer_editor.get_frame_count()))
-            # If there's a selection, sync to it
-            current_index = self.timeline_tabs.currentIndex()
-            tab = self.timeline_tabs.widget(current_index)
-            if hasattr(tab, 'timeline_widget'):
-                tw = tab.timeline_widget
-                selected_rows = sorted({idx.row() for idx in tw.timeline_table.selectedIndexes()})
-                if selected_rows:
-                    self.preview_frame_spinbox.blockSignals(True)
-                    self.preview_frame_spinbox.setValue(selected_rows[0] + 1)
-                    self.preview_frame_spinbox.blockSignals(False)
-            self.update_single_frame_preview()
-    
+        self.update_preview()
+
     def update_single_frame_preview(self):
-        """Update preview for a single selected frame"""
-        if self.layer_editor.get_frame_count() == 0:
-            return
-        # Prefer current timeline selection if any; otherwise use spinbox
-        frame_idx = None
-        current_index = self.timeline_tabs.currentIndex()
-        tab = self.timeline_tabs.widget(current_index)
-        if hasattr(tab, 'timeline_widget'):
-            tw = tab.timeline_widget
-            selected_rows = sorted({idx.row() for idx in tw.timeline_table.selectedIndexes()})
-            if selected_rows:
-                frame_idx = selected_rows[0]
-        if frame_idx is None:
-            frame_idx = self.preview_frame_spinbox.value() - 1
-        if frame_idx >= self.layer_editor.get_frame_count():
-            return
-        
-        try:
-            self.gif_builder.set_output_size(
-                self.width_spinbox.value(),
-                self.height_spinbox.value()
-            )
-            
-            # Set color palette for preview
-            color_count = int(self.color_palette_combo.currentText())
-            self.gif_builder.set_color_count(color_count)
-            
-            if self.transparent_bg_checkbox.isChecked():
-                self.gif_builder.set_background_color(0, 0, 0, 0)
-            else:
-                self.gif_builder.set_background_color(255, 255, 255, 255)
-            
-            # Compose single frame
-            img = self.gif_builder._compose_from_multi_timeline_frame(self.layer_editor, self.material_manager, frame_idx)
-            dur = self.layer_editor.durations_ms[frame_idx] if 0 <= frame_idx < len(self.layer_editor.durations_ms) else 100
-            self.preview.set_frames([(img, dur)])
-            
-        except Exception as e:
-            print(f"ERROR in update_single_frame_preview: {e}")
-            import traceback
-            traceback.print_exc()
+        """Update preview for a single frame (delegates to update_preview; group-led model)."""
+        self.update_preview()
     
     def update_preview(self):
-        """Update preview"""
-        if self.layer_editor.get_frame_count() == 0:
+        """Update preview from the currently selected group."""
+        if self.current_group_id is None:
             return
-        
-        # Update preview frame spinbox range
-        total_frames = self.layer_editor.get_frame_count()
-        self.preview_frame_spinbox.setMaximum(max(1, total_frames))
-        
-        # If single frame mode, update single frame
-        if not self.preview_all_checkbox.isChecked():
-            self.update_single_frame_preview()
+        if self.group_manager.get_group(self.current_group_id) is None:
             return
-        
         try:
             self.gif_builder.set_output_size(
                 self.width_spinbox.value(),
                 self.height_spinbox.value()
             )
             self.gif_builder.set_loop(self.loop_spinbox.value())
-            
-            # Set color palette for preview
             color_count = int(self.color_palette_combo.currentText())
             self.gif_builder.set_color_count(color_count)
-            
             if self.transparent_bg_checkbox.isChecked():
                 self.gif_builder.set_background_color(0, 0, 0, 0)
             else:
                 self.gif_builder.set_background_color(255, 255, 255, 255)
-            
-            frames = self.gif_builder.get_layer_timeline_preview_frames(
-                self.layer_editor,
+            frames = self.gif_builder.get_preview_frames_for_group(
+                self.current_group_id,
+                self.group_manager,
                 self.material_manager,
-                self.group_manager
             )
-            
+            self.preview_frame_spinbox.setMaximum(max(1, len(frames)))
+            if not self.preview_all_checkbox.isChecked():
+                idx = self.preview_frame_spinbox.value() - 1
+                if 0 <= idx < len(frames):
+                    self.preview.set_frames([frames[idx]])
+                else:
+                    self.preview.set_frames(frames[:1] if frames else [])
+                return
             self.preview.set_frames(frames)
-            
         except Exception as e:
-            # Just print to console, don't show error dialog on every property change
             print(f"ERROR in update_preview: {e}")
             import traceback
             traceback.print_exc()
