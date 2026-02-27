@@ -274,27 +274,28 @@ QGroupBox::title {{
 QTabWidget::pane {{
     border: 1px solid {BORDER};
     background-color: {BG};
-    border-radius: 0 4px 4px 4px;
-    top: -1px;
+}}
+QTabBar {{
+    background-color: {PANEL};
+    border-bottom: 1px solid {BORDER};
 }}
 QTabBar::tab {{
-    background-color: {PANEL};
+    background-color: transparent;
     color: {TEXT_DIM};
-    border: 1px solid {BORDER};
-    border-bottom: none;
-    padding: 6px 16px;
-    border-radius: 4px 4px 0 0;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 9px 20px;
     margin-right: 2px;
     font-size: 12px;
+    min-width: 100px;
 }}
 QTabBar::tab:hover {{
-    background-color: {ELEVATED};
     color: {TEXT};
+    border-bottom: 2px solid {BORDER_MID};
 }}
 QTabBar::tab:selected {{
-    background-color: {BG};
     color: {ACCENT};
-    border-bottom-color: {BG};
+    border-bottom: 2px solid {ACCENT};
     font-weight: bold;
 }}
 QTabBar::tab:disabled {{

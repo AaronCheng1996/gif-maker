@@ -172,10 +172,10 @@ class MainWindow(QMainWindow):
         # ── Top-level QTabWidget ───────────────────────────────────────────────
         self.tool_tabs = QTabWidget()
         self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
-        self.tool_tabs.addTab(self._composer_splitter,    "🎬  Composer")
-        self.tool_tabs.addTab(self._tile_outer_splitter,  "✂️  Tile Splitter")
-        self.tool_tabs.addTab(self.batch_processor,       "⚡  Batch Processor")
-        self.tool_tabs.addTab(self.gif_optimizer,         "🔧  GIF Optimizer")
+        self.tool_tabs.addTab(self._composer_splitter,   "🎬 Composer")
+        self.tool_tabs.addTab(self._tile_outer_splitter, "✂️ Tile Splitter")
+        self.tool_tabs.addTab(self.batch_processor,      "⚡ Batch Processor")
+        self.tool_tabs.addTab(self.gif_optimizer,        "🔧 GIF Optimizer")
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
@@ -302,10 +302,15 @@ class MainWindow(QMainWindow):
         self.add_to_existing_group_btn.clicked.connect(self.add_materials_to_existing_group)
         group_add_layout.addWidget(self.add_to_existing_group_btn)
 
-        self.add_as_single_group_btn = QPushButton("📦 Add as New Group (Merge)")
-        self.add_as_single_group_btn.setToolTip("Combine selected materials into a single new group and add to timeline")
-        self.add_as_single_group_btn.clicked.connect(self.add_materials_as_single_group)
+        self.add_as_single_group_btn = QPushButton("📦 Add as New Group")
+        self.add_as_single_group_btn.setToolTip("Create a standalone new group from selected materials (not nested into any group)")
+        self.add_as_single_group_btn.clicked.connect(self.add_materials_as_standalone_group)
         group_add_layout.addWidget(self.add_as_single_group_btn)
+
+        self.add_to_group_as_subgroup_btn = QPushButton("📦➕ Add to Selected Group as New Group")
+        self.add_to_group_as_subgroup_btn.setToolTip("Create a new group from selected materials and nest it into the currently selected group")
+        self.add_to_group_as_subgroup_btn.clicked.connect(self.add_materials_as_single_group)
+        group_add_layout.addWidget(self.add_to_group_as_subgroup_btn)
 
         self.add_each_as_group_btn = QPushButton("📦📦 Add Each as Group")
         self.add_each_as_group_btn.setToolTip("Create a separate group for each selected material and add to timeline")
@@ -359,8 +364,18 @@ class MainWindow(QMainWindow):
 
     def _on_current_group_changed(self, group_id: int):
         self.current_group_id = group_id
+        if getattr(self, 'auto_size_checkbox', None) and self.auto_size_checkbox.isChecked():
+            self.auto_fit_output_size()
         self.update_preview()
         self._update_status_labels()
+
+    def _on_auto_size_toggled(self, state: int):
+        """Enable/disable size spinboxes based on Auto checkbox; auto-fit immediately when enabled."""
+        manual = (state == 0)
+        self.width_spinbox.setEnabled(manual)
+        self.height_spinbox.setEnabled(manual)
+        if not manual:
+            self.auto_fit_output_size()
 
     def _on_group_entries_changed(self):
         self.update_preview()
@@ -445,7 +460,7 @@ class MainWindow(QMainWindow):
         settings_layout = QVBoxLayout()
         settings_layout.setSpacing(3)
         
-        # Size (more compact)
+        # Size (more compact) — with Auto checkbox
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("Size:"))
         self.width_spinbox = QSpinBox()
@@ -459,6 +474,12 @@ class MainWindow(QMainWindow):
         self.height_spinbox.setMaximum(4096)
         self.height_spinbox.setValue(400)
         size_layout.addWidget(self.height_spinbox)
+        self.auto_size_checkbox = QCheckBox("Auto")
+        self.auto_size_checkbox.setToolTip(
+            "Auto-fit output size to materials whenever the selected group changes"
+        )
+        self.auto_size_checkbox.stateChanged.connect(self._on_auto_size_toggled)
+        size_layout.addWidget(self.auto_size_checkbox)
         size_layout.addStretch()
         settings_layout.addLayout(size_layout)
         
@@ -845,8 +866,27 @@ class MainWindow(QMainWindow):
         self.update_preview()
         self._status(f"Added {len(material_indices)} frame(s) to '{group.name}' ({len(group.entries)} entries total)")
     
+    def add_materials_as_standalone_group(self):
+        """Create a new CompositionGroup from selected materials as a top-level group (not nested)."""
+        material_indices = self._get_selected_material_indices()
+        if not material_indices:
+            QMessageBox.warning(self, "Warning", "Please select at least one material!")
+            return
+        name, ok = QInputDialog.getText(self, "New Group", "Group name:", text=f"Group_{len(material_indices)}")
+        if not ok:
+            return
+        comp_group = CompositionGroup(
+            name=name or f"Group_{len(material_indices)}",
+            entries=[FrameEntry(material_index=m, x=0, y=0) for m in material_indices],
+            default_duration_ms=100,
+        )
+        self.group_manager.add_group(comp_group)
+        self.refresh_timeline()
+        self.update_preview()
+        self._status(f"Created standalone group '{comp_group.name}'")
+
     def add_materials_as_single_group(self):
-        """Create a new CompositionGroup from selected materials and add as SubGroupEntry to current group."""
+        """Create a new CompositionGroup from selected materials and nest it into the current group."""
         material_indices = self._get_selected_material_indices()
         if not material_indices:
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
@@ -867,7 +907,7 @@ class MainWindow(QMainWindow):
                 self.group_manager.update_group(self.current_group_id, current)
         self.refresh_timeline()
         self.update_preview()
-        QMessageBox.information(self, "Success", f"Created group '{comp_group.name}' and added to current group.")
+        self._status(f"Created group '{comp_group.name}' and nested into current group")
     
     def add_materials_as_separate_groups(self):
         """Create one CompositionGroup per selected material and add each as SubGroupEntry to current group."""

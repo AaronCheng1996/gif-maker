@@ -62,12 +62,13 @@ class _ClickableHeader(QFrame):
         super().mousePressEvent(event)
 
 
-def _small_btn(text: str, color: str = _T.TEXT_DIM, width: int = 22) -> QPushButton:
+def _small_btn(text: str, color: str = _T.TEXT_DIM, width: int = 28) -> QPushButton:
     b = QPushButton(text)
     b.setFixedSize(width, 22)
     b.setStyleSheet(
-        f"QPushButton {{ color: {color}; font-size: 11px; "
-        f"background: {_T.BTN_BG}; border: 1px solid {_T.BTN_BORDER}; border-radius: 3px; }}"
+        f"QPushButton {{ color: {color}; font-size: 11px; font-weight: bold; "
+        f"background: {_T.BTN_BG}; border: 1px solid {_T.BTN_BORDER}; "
+        f"border-radius: 3px; padding: 0 2px; }}"
         f"QPushButton:hover {{ background: {_T.BTN_HOVER}; border-color: {_T.BORDER_MID}; }}"
         f"QPushButton:pressed {{ background: {_T.BTN_PRESSED}; }}"
     )
@@ -352,7 +353,7 @@ class GroupCompositionWidget(QWidget):
         hl.addWidget(name_lbl)
 
         # Rename — always visible for every group header
-        ren = _small_btn("✏", _T.TEXT_DIM, width=26)
+        ren = _small_btn("Rn", _T.TEXT, width=28)
         ren.setToolTip("Rename this group")
         ren.clicked.connect(lambda _=None, g=gid: self._cmd_rename_group(g))
         hl.addWidget(ren)
@@ -361,7 +362,7 @@ class GroupCompositionWidget(QWidget):
 
         # ── SubGroupEntry controls (loop, x, y, duration-override) — only when nested ──
         if sub_entry is not None:
-            hl.addWidget(_lbl("×"))
+            hl.addWidget(_lbl("loop"))
             loop_sp = _spinbox(1, 999, sub_entry.loop_count, w=50)
             loop_sp.setToolTip("Loop count for this reference")
             def _set_loop(v, e=sub_entry):
@@ -431,7 +432,7 @@ class GroupCompositionWidget(QWidget):
 
         # Top-level: delete button for non-root groups
         if parent_gid is None and not is_root:
-            del_btn = _small_btn("🗑", _T.ERROR, width=26)
+            del_btn = _small_btn("X", _T.ERROR, width=34)
             del_btn.setToolTip("Delete this group from the project")
             del_btn.clicked.connect(lambda _=None, g=gid: self._cmd_delete_group(g))
             hl.addWidget(del_btn)
@@ -591,7 +592,7 @@ class GroupCompositionWidget(QWidget):
         il.addLayout(ctrl)
         hl.addWidget(info)
 
-        # ── Move / Remove ────────────────────────────────────────────────────
+        # ── Move / Duplicate / Remove ─────────────────────────────────────────
         btn_col = QVBoxLayout()
         btn_col.setSpacing(2)
         for ico, d in [("↑", -1), ("↓", +1)]:
@@ -601,7 +602,14 @@ class GroupCompositionWidget(QWidget):
                     self._cmd_move(pg, ei, dd)
             )
             btn_col.addWidget(b)
-        rm = _small_btn("✕", _T.ERROR)
+        dup = _small_btn("Dup", _T.TEXT_DIM, width=34)
+        dup.setToolTip("Duplicate this frame (insert a copy right after)")
+        dup.clicked.connect(
+            lambda _=None, pg=parent_gid, ei=entry_idx: self._cmd_duplicate_frame(pg, ei)
+        )
+        btn_col.addWidget(dup)
+        rm = _small_btn("X", _T.ERROR, width=34)
+        rm.setToolTip("Remove this frame")
         rm.clicked.connect(
             lambda _=None, pg=parent_gid, ei=entry_idx: self._cmd_remove(pg, ei)
         )
@@ -1069,6 +1077,25 @@ class GroupCompositionWidget(QWidget):
         if not group or not (0 <= entry_idx < len(group.entries)):
             return
         group.entries.pop(entry_idx)
+        self._notify()
+
+    def _cmd_duplicate_frame(self, parent_gid: int, entry_idx: int):
+        """Insert a shallow copy of the FrameEntry right after entry_idx."""
+        if not self._gm:
+            return
+        group = self._gm.get_group(parent_gid)
+        if not group or not (0 <= entry_idx < len(group.entries)):
+            return
+        original = group.entries[entry_idx]
+        if not is_frame_entry(original):
+            return
+        copy = FrameEntry(
+            material_index=original.material_index,
+            x=original.x,
+            y=original.y,
+            duration_ms=original.duration_ms,
+        )
+        group.entries.insert(entry_idx + 1, copy)
         self._notify()
 
     def _cmd_move(self, parent_gid: int, entry_idx: int, direction: int):
