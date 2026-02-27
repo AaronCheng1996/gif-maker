@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List
 
 from ..core.gif_optimizer import optimize_gif_lossy, GifOptimizationError, is_gifsicle_available
+from .theme import AppTheme as _T
 
 
 class GifOptimizerWidget(QWidget):
@@ -24,7 +25,7 @@ class GifOptimizerWidget(QWidget):
         layout = QVBoxLayout()
 
         title = QLabel("GIF Optimizer (Lossy)")
-        title.setStyleSheet("font-weight: bold; font-size: 16px;")
+        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
         layout.addWidget(title)
 
         desc = QLabel(
@@ -32,7 +33,7 @@ class GifOptimizerWidget(QWidget):
             "Set a lossy value (0-200). Higher = smaller file, lower quality."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #666; font-size: 11px;")
+        desc.setStyleSheet(f"color: {_T.TEXT_DIM}; font-size: 11px;")
         layout.addWidget(desc)
 
         # Inputs group
@@ -54,7 +55,7 @@ class GifOptimizerWidget(QWidget):
         input_layout.addWidget(self.list_widget)
 
         self.count_label = QLabel("No GIFs selected")
-        self.count_label.setStyleSheet("color: #666;")
+        self.count_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
         input_layout.addWidget(self.count_label)
 
         input_group.setLayout(input_layout)
@@ -106,7 +107,7 @@ class GifOptimizerWidget(QWidget):
         hint = QLabel(
             "gifsicle " + ("found on PATH" if is_gifsicle_available() else "not found - using Pillow fallback")
         )
-        hint.setStyleSheet("color: #888; font-size: 10px;")
+        hint.setStyleSheet(f"color: {_T.TEXT_HINT}; font-size: 10px;")
         settings_layout.addWidget(hint)
 
         settings_group.setLayout(settings_layout)
@@ -126,7 +127,7 @@ class GifOptimizerWidget(QWidget):
 
         # Status
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: #666;")
+        self.status_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
         layout.addWidget(self.status_label)
 
         self.setLayout(layout)

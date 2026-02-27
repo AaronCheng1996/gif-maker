@@ -8,6 +8,8 @@ from PIL import Image
 from pathlib import Path
 from typing import List, Tuple
 
+from .theme import AppTheme as _T
+
 
 class TileEditorWidget(QWidget):
     
@@ -26,7 +28,7 @@ class TileEditorWidget(QWidget):
         layout.setSpacing(5)
         
         title_label = QLabel("Tile Splitter")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
         layout.addWidget(title_label)
         
         # Load images section (compact)
@@ -358,7 +360,7 @@ class TileEditorWidget(QWidget):
                 return
             
             self.result_label.setText(f"✓ Created {len(selected_tiles)} tiles")
-            self.result_label.setStyleSheet("color: green;")
+            self.result_label.setStyleSheet(f"color: {_T.SUCCESS};")
             
             self.tiles_created.emit(selected_tiles)
             
@@ -374,7 +376,7 @@ class TileEditorWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to split images:\n{str(e)}")
             self.result_label.setText(f"✗ Error: {str(e)}")
-            self.result_label.setStyleSheet("color: red;")
+            self.result_label.setStyleSheet(f"color: {_T.ERROR};")
     
     def split_by_size(self):
         # Get selected images
@@ -415,7 +417,7 @@ class TileEditorWidget(QWidget):
                 return
             
             self.result_label.setText(f"✓ Created {len(selected_tiles)} tiles")
-            self.result_label.setStyleSheet("color: green;")
+            self.result_label.setStyleSheet(f"color: {_T.SUCCESS};")
             
             self.tiles_created.emit(selected_tiles)
             
@@ -432,7 +434,7 @@ class TileEditorWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to split images:\n{str(e)}")
             self.result_label.setText(f"✗ Error: {str(e)}")
-            self.result_label.setStyleSheet("color: red;")
+            self.result_label.setStyleSheet(f"color: {_T.ERROR};")
     
     def update_button_states(self):
         has_images = len(self.loaded_images) > 0

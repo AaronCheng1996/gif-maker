@@ -26,6 +26,7 @@ from ..core.composition_group import (
     is_frame_entry, is_sub_group_entry, is_layer_block_entry,
     is_frame_slot, is_group_slot,
 )
+from .theme import AppTheme as _T
 
 # Thumbnail dimensions (frame entries & layer-block slot rows)
 _TW, _TH = 100, 70
@@ -61,23 +62,33 @@ class _ClickableHeader(QFrame):
         super().mousePressEvent(event)
 
 
-def _small_btn(text: str, color: str = "#ddd", width: int = 22) -> QPushButton:
+def _small_btn(text: str, color: str = _T.TEXT_DIM, width: int = 22) -> QPushButton:
     b = QPushButton(text)
     b.setFixedSize(width, 22)
     b.setStyleSheet(
         f"QPushButton {{ color: {color}; font-size: 11px; "
-        f"background: #3d4455; border: 1px solid #5a6070; border-radius: 3px; }}"
-        f"QPushButton:hover {{ background: #4a536a; }}"
+        f"background: {_T.BTN_BG}; border: 1px solid {_T.BTN_BORDER}; border-radius: 3px; }}"
+        f"QPushButton:hover {{ background: {_T.BTN_HOVER}; border-color: {_T.BORDER_MID}; }}"
+        f"QPushButton:pressed {{ background: {_T.BTN_PRESSED}; }}"
     )
     return b
+
+
+def _lighten(hex_color: str, amount: int = 28) -> str:
+    """Return a slightly lighter hex color for hover states."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"#{min(255, r + amount):02x}{min(255, g + amount):02x}{min(255, b + amount):02x}"
 
 
 def _action_btn(label: str, bg: str) -> QPushButton:
     b = QPushButton(label)
     b.setFixedHeight(22)
     b.setStyleSheet(
-        f"QPushButton {{ background: {bg}; color: white; border: none; "
-        f"border-radius: 3px; padding: 0 6px; font-size: 10px; }}"
+        f"QPushButton {{ background: {bg}; color: {_T.TEXT}; border: none; "
+        f"border-radius: 3px; padding: 0 8px; font-size: 11px; font-weight: bold; }}"
+        f"QPushButton:hover {{ background: {_lighten(bg)}; }}"
+        f"QPushButton:pressed {{ background: {bg}; }}"
     )
     return b
 
@@ -87,13 +98,12 @@ def _spinbox(lo: int, hi: int, val: int, suffix: str = "", w: int = 60) -> QSpin
     s.setRange(lo, hi)
     s.setValue(val)
     s.setMaximumWidth(w)
-    s.setStyleSheet("font-size: 10px;")
     if suffix:
         s.setSuffix(suffix)
     return s
 
 
-def _lbl(text: str, style: str = "color: #aaa; font-size: 10px;") -> QLabel:
+def _lbl(text: str, style: str = f"color: {_T.TEXT_DIM}; font-size: 10px;") -> QLabel:
     l = QLabel(text)
     l.setStyleSheet(style)
     return l
@@ -175,10 +185,12 @@ class GroupCompositionWidget(QWidget):
         outer.addWidget(self._scroll, stretch=1)
 
         bar = QFrame()
-        bar.setStyleSheet("QFrame { background: #222; border-top: 1px solid #444; }")
+        bar.setStyleSheet(
+            f"QFrame {{ background: {_T.PANEL}; border-top: 1px solid {_T.BORDER}; }}"
+        )
         bl = QHBoxLayout(bar)
         bl.setContentsMargins(6, 4, 6, 4)
-        new_btn = _action_btn("＋ New Group", "#2e7d32")
+        new_btn = _action_btn("＋ New Group", _T.SUCCESS)
         new_btn.setToolTip(
             "Create a standalone group (shown as unlinked below root tree).\n"
             "Drag it into the tree via +Group in any group header."
@@ -224,7 +236,7 @@ class GroupCompositionWidget(QWidget):
                 if non_root:
                     sep = _lbl(
                         "── All Groups ──",
-                        "color: #557; font-size: 10px; font-style: italic;"
+                        f"color: {_T.SEP_COLOR}; font-size: 10px; font-style: italic;"
                     )
                     sep.setContentsMargins(4, 8, 4, 2)
                     layout.insertWidget(insert_at, sep)
@@ -276,7 +288,7 @@ class GroupCompositionWidget(QWidget):
         group = self._gm.get_group(gid) if self._gm else None
         if group is None:
             lbl = QLabel(f"⚠ Group {gid} not found")
-            lbl.setStyleSheet("color: #f88;")
+            lbl.setStyleSheet(f"color: {_T.ERROR};")
             return lbl
 
         # Retrieve the SubGroupEntry (if any) so we can edit loop/x/y inline
@@ -293,7 +305,7 @@ class GroupCompositionWidget(QWidget):
 
         # Outer frame
         outer = QFrame()
-        border = "#4a9eff" if is_selected else "#555"
+        border = _T.GRP_BORDER_SEL if is_selected else _T.GRP_BORDER_DEF
         outer.setObjectName("grp_outer")
         outer.setStyleSheet(
             f"QFrame#grp_outer {{ border: 2px solid {border}; border-radius: 5px; }}"
@@ -304,21 +316,22 @@ class GroupCompositionWidget(QWidget):
 
         # ── Header ──────────────────────────────────────────────────────────
         hdr = _ClickableHeader()
-        hdr_bg = "#1e3a5f" if is_selected else "#2e3440"
+        hdr_bg = _T.GRP_HEADER_SEL if is_selected else _T.GRP_HEADER_DEF
         hdr.setStyleSheet(
             f"QFrame {{ background: {hdr_bg}; border: none; "
             f"border-radius: 4px 4px 0 0; }}"
         )
         hdr.clicked.connect(lambda g=gid: self._cmd_select(g))
         hl = QHBoxLayout(hdr)
-        hl.setContentsMargins(5, 3, 5, 3)
+        hl.setContentsMargins(5, 4, 5, 4)
         hl.setSpacing(4)
 
         # Toggle collapse
         tog = QPushButton("▶" if is_collapsed else "▼")
         tog.setFixedSize(20, 20)
         tog.setStyleSheet(
-            "QPushButton { background: none; border: none; color: #888; font-size: 11px; }"
+            f"QPushButton {{ background: none; border: none; "
+            f"color: {_T.TEXT_DIM}; font-size: 11px; }}"
         )
         tog.clicked.connect(lambda _=None, g=gid: self._cmd_toggle(g))
         hl.addWidget(tog)
@@ -326,20 +339,20 @@ class GroupCompositionWidget(QWidget):
         # Selected indicator
         star = QLabel("★" if is_selected else "☆")
         star.setStyleSheet(
-            "color: #ffb300; font-size: 14px; background: transparent; border: none;"
+            f"color: {_T.STAR}; font-size: 14px; background: transparent; border: none;"
         )
         hl.addWidget(star)
 
         # Group name
         name_lbl = QLabel(group.name)
         name_lbl.setStyleSheet(
-            "color: #eceff4; font-weight: bold; font-size: 12px; "
+            f"color: {_T.TEXT}; font-weight: bold; font-size: 12px; "
             "background: transparent; border: none;"
         )
         hl.addWidget(name_lbl)
 
         # Rename — always visible for every group header
-        ren = _small_btn("✏", "#ccc", width=26)
+        ren = _small_btn("✏", _T.TEXT_DIM, width=26)
         ren.setToolTip("Rename this group")
         ren.clicked.connect(lambda _=None, g=gid: self._cmd_rename_group(g))
         hl.addWidget(ren)
@@ -405,11 +418,11 @@ class GroupCompositionWidget(QWidget):
         # Action buttons
         for label, tip, fn, color in [
             ("+Frame", "Add frame(s) from selected materials",
-             lambda _=None, g=gid: self._cmd_add_frame(g), "#2e7d32"),
+             lambda _=None, g=gid: self._cmd_add_frame(g), "#2d6a3f"),
             ("+Group", "Add sub-group entry",
-             lambda _=None, g=gid: self._cmd_add_subgroup(g), "#1565c0"),
+             lambda _=None, g=gid: self._cmd_add_subgroup(g), "#1a4a8c"),
             ("+Layer", "Add layer-block entry",
-             lambda _=None, g=gid: self._cmd_add_layerblock(g), "#6a1b9a"),
+             lambda _=None, g=gid: self._cmd_add_layerblock(g), "#5a1a80"),
         ]:
             btn = _action_btn(label, color)
             btn.setToolTip(tip)
@@ -418,14 +431,14 @@ class GroupCompositionWidget(QWidget):
 
         # Top-level: delete button for non-root groups
         if parent_gid is None and not is_root:
-            del_btn = _small_btn("🗑", "#ef5350", width=26)
+            del_btn = _small_btn("🗑", _T.ERROR, width=26)
             del_btn.setToolTip("Delete this group from the project")
             del_btn.clicked.connect(lambda _=None, g=gid: self._cmd_delete_group(g))
             hl.addWidget(del_btn)
 
         # Nested: clone / move / remove
         if parent_gid is not None and entry_idx is not None:
-            clone_btn = _small_btn("⎘", "#88c0d0", width=26)
+            clone_btn = _small_btn("⎘", _T.CLONE_BTN, width=26)
             clone_btn.setToolTip(
                 "Duplicate this group into an independent copy.\n"
                 "After cloning, adding/removing frames no longer affects other references."
@@ -443,7 +456,7 @@ class GroupCompositionWidget(QWidget):
                         self._cmd_move(pg, ei, dd)
                 )
                 hl.addWidget(b)
-            rm = _small_btn("✕", color="#ef5350")
+            rm = _small_btn("✕", color=_T.ERROR)
             rm.setToolTip("Remove this sub-group entry from the parent (group is kept)")
             rm.clicked.connect(
                 lambda _=None, pg=parent_gid, ei=entry_idx: self._cmd_remove(pg, ei)
@@ -477,7 +490,7 @@ class GroupCompositionWidget(QWidget):
             if not group.entries:
                 hint = _lbl(
                     "Empty — use +Frame, +Group, or +Layer to add entries.",
-                    "color: #555; font-style: italic; font-size: 10px;"
+                    f"color: {_T.TEXT_HINT}; font-style: italic; font-size: 10px;"
                 )
                 cl.addWidget(hint)
 
@@ -502,7 +515,8 @@ class GroupCompositionWidget(QWidget):
     ) -> QWidget:
         row = QFrame()
         row.setStyleSheet(
-            "QFrame { background: #232a35; border: 1px solid #3b4252; border-radius: 3px; }"
+            f"QFrame {{ background: {_T.FRAME_ROW_BG}; "
+            f"border: 1px solid {_T.FRAME_ROW_BORDER}; border-radius: 3px; }}"
         )
         hl = QHBoxLayout(row)
         hl.setContentsMargins(4, 4, 4, 4)
@@ -512,7 +526,9 @@ class GroupCompositionWidget(QWidget):
         thumb = QLabel()
         thumb.setFixedSize(_TW, _TH)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        thumb.setStyleSheet("border: 1px solid #555; background: #111;")
+        thumb.setStyleSheet(
+            f"border: 1px solid {_T.THUMB_BORDER}; background: {_T.THUMB_BG};"
+        )
         if self._mm:
             mat = self._mm.get_material(entry.material_index)
             if mat:
@@ -538,7 +554,9 @@ class GroupCompositionWidget(QWidget):
             mat = self._mm.get_material(entry.material_index)
             if mat:
                 _, mat_name = mat
-        name_lbl = _lbl(mat_name, "color: #b0bec5; font-size: 11px; font-weight: bold;")
+        name_lbl = _lbl(
+            mat_name, f"color: {_T.MAT_NAME}; font-size: 11px; font-weight: bold;"
+        )
         il.addWidget(name_lbl)
 
         # Controls row
@@ -583,7 +601,7 @@ class GroupCompositionWidget(QWidget):
                     self._cmd_move(pg, ei, dd)
             )
             btn_col.addWidget(b)
-        rm = _small_btn("✕", "#ef5350")
+        rm = _small_btn("✕", _T.ERROR)
         rm.clicked.connect(
             lambda _=None, pg=parent_gid, ei=entry_idx: self._cmd_remove(pg, ei)
         )
@@ -603,7 +621,7 @@ class GroupCompositionWidget(QWidget):
         outer = QFrame()
         outer.setObjectName("lb_outer")
         outer.setStyleSheet(
-            "QFrame#lb_outer { border: 1px solid #7b5ea7; border-radius: 4px; }"
+            f"QFrame#lb_outer {{ border: 1px solid {_T.LB_BORDER}; border-radius: 4px; }}"
         )
         vl = QVBoxLayout(outer)
         vl.setContentsMargins(0, 0, 0, 0)
@@ -612,21 +630,23 @@ class GroupCompositionWidget(QWidget):
         # Header
         hdr = QFrame()
         hdr.setStyleSheet(
-            "QFrame { background: #2a1f3d; border: none; border-radius: 3px 3px 0 0; }"
+            f"QFrame {{ background: {_T.LB_HEADER}; border: none; "
+            f"border-radius: 3px 3px 0 0; }}"
         )
         hl = QHBoxLayout(hdr)
-        hl.setContentsMargins(5, 3, 5, 3)
+        hl.setContentsMargins(5, 4, 5, 4)
         hl.setSpacing(4)
 
         tog = QPushButton("▶" if is_collapsed else "▼")
         tog.setFixedSize(20, 20)
         tog.setStyleSheet(
-            "QPushButton { background: none; border: none; color: #888; font-size: 11px; }"
+            f"QPushButton {{ background: none; border: none; "
+            f"color: {_T.TEXT_DIM}; font-size: 11px; }}"
         )
         tog.clicked.connect(lambda _=None, lid=lb_id: self._cmd_toggle(lid))
         hl.addWidget(tog)
 
-        hl.addWidget(_lbl("🎞 Layer Block", "color: #d0c0ff; font-size: 11px;"))
+        hl.addWidget(_lbl("🎞 Layer Block", f"color: {_T.LB_LABEL}; font-size: 11px;"))
 
         hl.addWidget(_lbl("⏱"))
         bk_dur = _spinbox(10, 99999, entry.default_duration_ms, suffix="ms", w=80)
@@ -636,11 +656,14 @@ class GroupCompositionWidget(QWidget):
         bk_dur.valueChanged.connect(_set_bkdur)
         hl.addWidget(bk_dur)
 
-        tl_lbl = _lbl(f"({len(entry.timelines)} timelines)", "color: #777; font-size: 10px;")
+        tl_lbl = _lbl(
+            f"({len(entry.timelines)} timelines)",
+            f"color: {_T.TEXT_HINT}; font-size: 10px;"
+        )
         hl.addWidget(tl_lbl)
         hl.addStretch()
 
-        add_tl = _action_btn("+Timeline", "#6a1b9a")
+        add_tl = _action_btn("+Timeline", "#5a1a80")
         add_tl.clicked.connect(
             lambda _=None, e=entry, pg=parent_gid: self._cmd_add_timeline(e, pg)
         )
@@ -654,7 +677,7 @@ class GroupCompositionWidget(QWidget):
             )
             hl.addWidget(b)
 
-        rm = _small_btn("✕", "#ef5350")
+        rm = _small_btn("✕", _T.ERROR)
         rm.clicked.connect(
             lambda _=None, pg=parent_gid, ei=entry_idx: self._cmd_remove(pg, ei)
         )
@@ -690,7 +713,8 @@ class GroupCompositionWidget(QWidget):
     ) -> QWidget:
         outer = QFrame()
         outer.setStyleSheet(
-            "QFrame { background: #1e1a2a; border: 1px solid #4a4060; border-radius: 3px; }"
+            f"QFrame {{ background: {_T.TL_BG}; border: 1px solid {_T.TL_BORDER}; "
+            f"border-radius: 3px; }}"
         )
         vl = QVBoxLayout(outer)
         vl.setContentsMargins(4, 3, 4, 6)
@@ -698,8 +722,12 @@ class GroupCompositionWidget(QWidget):
 
         # Timeline header
         th = QHBoxLayout()
-        th.addWidget(_lbl(f"Layer {tl_idx}", "color: #c0a0ff; font-size: 11px; font-weight: bold;"))
-        th.addWidget(_lbl(f"({len(timeline)} slots)", "color: #666; font-size: 10px;"))
+        th.addWidget(
+            _lbl(f"Layer {tl_idx}", f"color: {_T.TL_LABEL}; font-size: 11px; font-weight: bold;")
+        )
+        th.addWidget(
+            _lbl(f"({len(timeline)} slots)", f"color: {_T.TEXT_HINT}; font-size: 10px;")
+        )
         th.addStretch()
 
         for label, fn in [
@@ -708,16 +736,13 @@ class GroupCompositionWidget(QWidget):
             ("+Group", lambda _=None, e=lb_entry, ti=tl_idx, pg=parent_gid:
                  self._cmd_add_groupslot(e, ti, pg)),
         ]:
-            b = QPushButton(label)
-            b.setFixedHeight(20)
-            b.setStyleSheet("font-size: 10px;")
+            b = _small_btn(label, _T.TEXT_DIM, width=56)
             b.clicked.connect(fn)
             th.addWidget(b)
 
         # Layer reorder buttons
         for ico, d in [("↑", -1), ("↓", +1)]:
             b = _small_btn(ico)
-            b.setFixedHeight(20)
             b.setToolTip("Move this layer up/down")
             b.clicked.connect(
                 lambda _=None, e=lb_entry, ti=tl_idx, dd=d, pg=parent_gid:
@@ -725,9 +750,7 @@ class GroupCompositionWidget(QWidget):
             )
             th.addWidget(b)
 
-        rm_tl = QPushButton("✕ TL")
-        rm_tl.setFixedHeight(20)
-        rm_tl.setStyleSheet("QPushButton { color: #ef5350; font-size: 10px; }")
+        rm_tl = _small_btn("✕ TL", _T.ERROR, width=44)
         rm_tl.clicked.connect(
             lambda _=None, e=lb_entry, ti=tl_idx, pg=parent_gid:
                 self._cmd_remove_timeline(e, ti, pg)
@@ -742,7 +765,9 @@ class GroupCompositionWidget(QWidget):
             )
 
         if not timeline:
-            vl.addWidget(_lbl("  (empty)", "color: #555; font-style: italic; font-size: 10px;"))
+            vl.addWidget(
+                _lbl("  (empty)", f"color: {_T.TEXT_HINT}; font-style: italic; font-size: 10px;")
+            )
 
         return outer
 
@@ -758,7 +783,8 @@ class GroupCompositionWidget(QWidget):
     ) -> QWidget:
         row = QFrame()
         row.setStyleSheet(
-            "QFrame { background: #161220; border: 1px solid #3a3550; border-radius: 3px; }"
+            f"QFrame {{ background: {_T.SLOT_BG}; border: 1px solid {_T.SLOT_BORDER}; "
+            f"border-radius: 3px; }}"
         )
         hl = QHBoxLayout(row)
         hl.setContentsMargins(4, 4, 4, 4)
@@ -768,7 +794,9 @@ class GroupCompositionWidget(QWidget):
         thumb = QLabel()
         thumb.setFixedSize(_TW, _TH)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        thumb.setStyleSheet("border: 1px solid #555; background: #0e0c18;")
+        thumb.setStyleSheet(
+            f"border: 1px solid {_T.THUMB_BORDER}; background: {_T.THUMB_BG};"
+        )
 
         # Info column
         info = QWidget()
@@ -796,7 +824,7 @@ class GroupCompositionWidget(QWidget):
                 mat = self._mm.get_material(slot.material_index)
                 if mat:
                     _, mat_name = mat
-            il.addWidget(_lbl(mat_name, "color: #b0bec5; font-size: 11px;"))
+            il.addWidget(_lbl(mat_name, f"color: {_T.MAT_NAME}; font-size: 11px;"))
 
             ctrl.addWidget(_lbl("x"))
             xs = _spinbox(-9999, 9999, slot.x)
@@ -817,7 +845,7 @@ class GroupCompositionWidget(QWidget):
         elif is_group_slot(slot):
             grp = self._gm.get_group(slot.group_id) if self._gm else None
             name = grp.name if grp else f"Group {slot.group_id}"
-            il.addWidget(_lbl(name, "color: #88c0d0; font-size: 11px; font-weight: bold;"))
+            il.addWidget(_lbl(name, f"color: {_T.CLONE_BTN}; font-size: 11px; font-weight: bold;"))
 
             ctrl.addWidget(_lbl("×"))
             lp = _spinbox(1, 999, slot.loop_count, w=50)
@@ -849,7 +877,7 @@ class GroupCompositionWidget(QWidget):
         hl.addWidget(info)
 
         # Remove slot
-        rm = _small_btn("✕", "#ef5350")
+        rm = _small_btn("✕", _T.ERROR)
         rm.clicked.connect(
             lambda _=None, e=lb_entry, ti=tl_idx, si=slot_idx, pg=parent_gid:
                 self._cmd_remove_slot(e, ti, si, pg)

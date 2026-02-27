@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from typing import List, Optional
 
 from ..core.material_group import MaterialGroup
+from .theme import AppTheme as _T
 
 
 class GroupEditorDialog(QDialog):
@@ -44,7 +45,7 @@ class GroupEditorDialog(QDialog):
         
         # Info section
         info_label = QLabel(f"Creating a group from {len(self.material_indices)} material(s)")
-        info_label.setStyleSheet("font-weight: bold;")
+        info_label.setStyleSheet(f"font-weight: bold; color: {_T.TEXT};")
         layout.addWidget(info_label)
         
         # Form section
@@ -90,7 +91,10 @@ class GroupEditorDialog(QDialog):
         preview_layout = QVBoxLayout()
         
         self.preview_label = QLabel()
-        self.preview_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 4px;")
+        self.preview_label.setStyleSheet(
+            f"padding: 10px; background-color: {_T.CARD}; border: 1px solid {_T.BORDER}; "
+            f"border-radius: 4px; color: {_T.TEXT_DIM};"
+        )
         preview_layout.addWidget(self.preview_label)
         
         preview_group.setLayout(preview_layout)

@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from typing import Optional
 
+from .theme import AppTheme as _T
+
 
 class GroupSelectorDialog(QDialog):
     """Dialog for selecting an existing group from the current timeline"""
@@ -44,7 +46,7 @@ class GroupSelectorDialog(QDialog):
         
         # Info label
         self.info_label = QLabel("")
-        self.info_label.setStyleSheet("color: gray; font-style: italic;")
+        self.info_label.setStyleSheet(f"color: {_T.TEXT_HINT}; font-style: italic;")
         layout.addWidget(self.info_label)
         
         if self.group_list.count() == 0:

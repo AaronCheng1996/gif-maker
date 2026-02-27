@@ -1,129 +1,181 @@
-from src.core.template_manager import TemplateManager
-from src.core.layer_timeline import LayerTimelineEditor, LayerFrame
+"""
+Unit tests for TemplateManager (composition_group format v4.0)
+"""
+import json
+import pytest
+from pathlib import Path
+
+from src.core.template_manager import TemplateManager, FORMAT, VERSION
 from src.core.group_manager import GroupManager
+from src.core.composition_group import (
+    CompositionGroup, FrameEntry, SubGroupEntry, LayerBlockEntry,
+    FrameSlot, GroupSlot,
+)
 
 
-def test_export_apply_layer_timeline_template_roundtrip(tmp_path):
-    """Test exporting and applying layer timeline template with material index mapping"""
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("Main")
-    ed.add_timebase_frames(2, duration_ms=100)
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(material_index=3, x=1, y=2)
-    ed.layer_tracks[tl_idx].frames[1] = LayerFrame(material_index=None, x=0, y=0)
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-    # Use new template format (v3.0) - only encoding settings
-    tmpl = TemplateManager.export_layer_timeline_template(
-        ed, group_manager=None, transparent_bg=True, color_count=128
+def _make_gm() -> GroupManager:
+    """Build a small GroupManager with two groups for reuse across tests."""
+    gm = GroupManager()
+
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(FrameEntry(material_index=0, x=5, y=10, duration_ms=150))
+    root.entries.append(SubGroupEntry(group_id=1, loop_count=2, x=0, y=0))
+    root.entries.append(
+        LayerBlockEntry(
+            timelines=[
+                [FrameSlot(material_index=1, x=0, y=0)],
+                [FrameSlot(material_index=2, x=10, y=20)],
+            ],
+            default_duration_ms=80,
+        )
     )
+    gm.add_group(root)
 
-    p = tmp_path / "tmpl.json"
-    TemplateManager.save_template_to_file(tmpl, str(p))
-    loaded = TemplateManager.load_template_from_file(str(p))
+    sub = CompositionGroup(name="Sub", default_duration_ms=200)
+    sub.entries.append(FrameEntry(material_index=3, x=0, y=0))
+    gm.add_group(sub)
 
-    new_ed, new_group_manager, settings = TemplateManager.apply_layer_timeline_template(
-        loaded, material_index_mapping={3: 7}
-    )
+    return gm
+
+
+# ── Export ────────────────────────────────────────────────────────────────────
+
+def test_export_format_and_version():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    assert tpl["format"] == FORMAT
+    assert tpl["version"] == VERSION
+    assert tpl["root_group_id"] == 0
+    assert len(tpl["groups"]) == 2
+
+
+def test_export_settings():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm, transparent_bg=True, color_count=64)
+    assert tpl["settings"]["transparent_bg"] is True
+    assert tpl["settings"]["color_count"] == 64
+
+
+def test_export_group_entries():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    root_entries = tpl["groups"][0]["entries"]
+    assert root_entries[0] == {
+        "type": "frame", "material_index": 0, "x": 5, "y": 10, "duration_ms": 150
+    }
+    assert root_entries[1]["type"] == "subgroup"
+    assert root_entries[1]["group_id"] == 1
+    assert root_entries[1]["loop_count"] == 2
+    assert root_entries[2]["type"] == "layerblock"
+    assert len(root_entries[2]["timelines"]) == 2
+
+
+# ── Round-trip ────────────────────────────────────────────────────────────────
+
+def test_roundtrip():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm, transparent_bg=True, color_count=128)
+    gm2, settings = TemplateManager.import_composition_template(tpl)
+
+    assert isinstance(gm2, GroupManager)
+    assert isinstance(settings, dict)
     assert settings["transparent_bg"] is True
     assert settings["color_count"] == 128
-    assert new_ed.get_frame_count() == 2
-    # mapped index
-    assert new_ed.layer_tracks[0].frames[0].material_index == 7
+
+    assert len(gm2.groups) == len(gm.groups)
+    assert gm2.get_root_group_id() == 0
+
+    root2 = gm2.groups[0]
+    assert root2.name == "Root"
+    assert len(root2.entries) == 3
+    assert isinstance(root2.entries[0], FrameEntry)
+    assert root2.entries[0].material_index == 0
+    assert root2.entries[0].duration_ms == 150
+    assert isinstance(root2.entries[1], SubGroupEntry)
+    assert root2.entries[1].loop_count == 2
+    assert isinstance(root2.entries[2], LayerBlockEntry)
+    assert len(root2.entries[2].timelines) == 2
+
+    sub2 = gm2.groups[1]
+    assert sub2.name == "Sub"
+    assert sub2.entries[0].material_index == 3
 
 
-def test_export_apply_template_with_groups(tmp_path):
-    """Test template export/import with Material Groups"""
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("Main")
-    ed.add_timebase_frames(2, duration_ms=100)
-    
-    # Create a group
-    group_mgr = GroupManager()
-    group_mgr.create_group_from_materials(
-        material_indices=[0, 1, 2],
-        frame_duration=100,
-        loop_count=2,
-        name="Test Group"
-    )
-    
-    # Use group in timeline
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(group_index=0, x=0, y=0)
-    ed.layer_tracks[tl_idx].frames[1] = LayerFrame(material_index=5, x=10, y=10)
-    
-    # Export with groups
-    tmpl = TemplateManager.export_layer_timeline_template(
-        ed, group_manager=group_mgr, transparent_bg=False, color_count=256
-    )
-    
-    # Verify groups are in template
-    assert "groups" in tmpl
-    assert len(tmpl["groups"]) == 1
-    assert tmpl["groups"][0]["name"] == "Test Group"
-    
-    # Save and reload
-    p = tmp_path / "tmpl_with_groups.json"
-    TemplateManager.save_template_to_file(tmpl, str(p))
-    loaded = TemplateManager.load_template_from_file(str(p))
-    
-    # Apply template
-    new_ed, new_group_mgr, settings = TemplateManager.apply_layer_timeline_template(loaded)
-    
-    # Verify groups were restored
-    assert len(new_group_mgr) == 1
-    restored_group = new_group_mgr.get_group(0)
-    assert restored_group.name == "Test Group"
-    assert restored_group.material_indices == [0, 1, 2]
-    assert restored_group.frame_duration == 100
-    assert restored_group.loop_count == 2
-    
-    # Verify timeline references group
-    assert new_ed.layer_tracks[0].frames[0].group_index == 0
-    assert new_ed.layer_tracks[0].frames[1].material_index == 5
+# ── File I/O ──────────────────────────────────────────────────────────────────
+
+def test_save_load_file(tmp_path):
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    path = str(tmp_path / "template.json")
+    TemplateManager.save_template_to_file(tpl, path)
+    loaded = TemplateManager.load_template_from_file(path)
+    assert loaded["format"] == FORMAT
+    assert len(loaded["groups"]) == 2
 
 
-def test_template_auto_filter_materials(tmp_path):
-    """Test that templates auto-filter out-of-range materials"""
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("Main")
-    ed.add_timebase_frames(1, duration_ms=100)
-    
-    # Create a group with materials 0-22
-    group_mgr = GroupManager()
-    group_mgr.create_group_from_materials(
-        material_indices=list(range(23)),  # 0-22
-        frame_duration=100,
-        loop_count=1,
-        name="Large Group"
-    )
-    
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(group_index=0, x=0, y=0)
-    
-    # Export template
-    tmpl = TemplateManager.export_layer_timeline_template(
-        ed, group_manager=group_mgr, transparent_bg=True
-    )
-    
-    # Apply template with max_material_index=19 (only 0-18 exist)
-    new_ed, new_group_mgr, settings = TemplateManager.apply_layer_timeline_template(
-        tmpl, max_material_index=19
-    )
-    
-    # Verify materials were filtered
-    restored_group = new_group_mgr.get_group(0)
-    assert len(restored_group.material_indices) == 19  # Only 0-18
-    assert max(restored_group.material_indices) < 19
+# ── get_template_info ─────────────────────────────────────────────────────────
+
+def test_get_template_info():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    info = TemplateManager.get_template_info(tpl)
+    assert info["format"] == FORMAT
+    assert info["group_count"] == 2
+    # Materials 0,1,2,3 → max=3, needed=4
+    assert info["materials_needed"] == 4
+    assert isinstance(info["unique_material_indices"], list)
 
 
-def test_get_template_info_layer_timeline():
-    """Test getting template info from layer timeline format"""
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("T")
-    ed.add_timebase_frames(1, duration_ms=90)
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(material_index=5, x=0, y=0)
-    tmpl = TemplateManager.export_layer_timeline_template(ed, None, True)
-
-    info = TemplateManager.get_template_info(tmpl)
-    assert info["format"] == "layer_timeline"
-    assert info["frame_count"] == 1
-    assert info["track_count"] == 1
+def test_get_template_info_wrong_format():
+    with pytest.raises(ValueError, match="Unsupported"):
+        TemplateManager.get_template_info({"format": "old_format", "version": "3.0"})
 
 
+# ── validate_template ─────────────────────────────────────────────────────────
+
+def test_validate_ok():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    assert TemplateManager.validate_template(tpl) is True
+
+
+def test_validate_wrong_format():
+    with pytest.raises(ValueError):
+        TemplateManager.validate_template({"version": "4.0", "format": "old", "groups": []})
+
+
+def test_validate_missing_groups():
+    with pytest.raises(ValueError, match="groups"):
+        TemplateManager.validate_template({"version": "4.0", "format": FORMAT})
+
+
+# ── estimate_required_tiles ───────────────────────────────────────────────────
+
+def test_estimate_required_tiles():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    assert TemplateManager.estimate_required_tiles(tpl) == 4  # max index = 3
+
+
+def test_estimate_required_tiles_empty():
+    gm = GroupManager()
+    gm.add_group(CompositionGroup(name="Empty"))
+    tpl = TemplateManager.export_composition_template(gm)
+    assert TemplateManager.estimate_required_tiles(tpl) == 0
+
+
+# ── material_index_mapping ────────────────────────────────────────────────────
+
+def test_import_with_material_mapping():
+    gm = _make_gm()
+    tpl = TemplateManager.export_composition_template(gm)
+    mapping = {0: 10, 1: 11, 2: 12, 3: 13}
+    gm2, _ = TemplateManager.import_composition_template(tpl, material_index_mapping=mapping)
+    root2 = gm2.groups[0]
+    assert root2.entries[0].material_index == 10
+    assert root2.entries[2].timelines[0][0].material_index == 11
+    assert root2.entries[2].timelines[1][0].material_index == 12
+    sub2 = gm2.groups[1]
+    assert sub2.entries[0].material_index == 13

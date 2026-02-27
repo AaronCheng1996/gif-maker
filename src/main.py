@@ -17,7 +17,7 @@ from PIL import Image
 from collections import Counter
 
 from .core import MaterialManager, GifBuilder, TemplateManager, GroupManager, CompositionGroup, FrameEntry, SubGroupEntry
-from .widgets import PreviewWidget, PreviewPageWidget, TileEditorWidget, BatchProcessorWidget, GifOptimizerWidget, GroupEditorDialog, GroupSelectorDialog, GroupCompositionWidget
+from .widgets import AppTheme, PreviewWidget, PreviewPageWidget, TileEditorWidget, BatchProcessorWidget, GifOptimizerWidget, GroupEditorDialog, GroupSelectorDialog, GroupCompositionWidget
 
 
 class MainWindow(QMainWindow):
@@ -62,8 +62,8 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.setWindowTitle("GIF Maker - Layer Timeline GIF Editor")
         self.resize(1600, 950)
-        # Default preview background color
-        self.preview_bg_color = "#e8e8e8"
+        # Default preview background color (neutral dark for dark theme)
+        self.preview_bg_color = "#2a2e3c"
         
         # Chroma key state
         self.chroma_key_colors = []  # List of (color_rgb, percentage, display_name) tuples
@@ -136,7 +136,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         
         title = QLabel("Materials & Tools")
-        title.setStyleSheet("font-weight: bold; font-size: 16px;")
+        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
         layout.addWidget(title)
         
         tabs = QTabWidget()
@@ -198,10 +198,21 @@ class MainWindow(QMainWindow):
         load_group.setLayout(load_layout)
         layout.addWidget(load_group)
         
+        lib_header_row = QHBoxLayout()
         list_label = QLabel("Material Library")
-        list_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(list_label)
-        
+        list_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        lib_header_row.addWidget(list_label)
+        lib_header_row.addStretch()
+        self.material_view_btn = QPushButton("⊞ Grid")
+        self.material_view_btn.setFixedSize(58, 22)
+        self.material_view_btn.setToolTip("Switch between list and grid (icon) view")
+        self.material_view_btn.setCheckable(True)
+        self.material_view_btn.clicked.connect(self._toggle_material_view)
+        lib_header_row.addWidget(self.material_view_btn)
+        layout.addLayout(lib_header_row)
+
+        self._material_icon_mode = False  # False = list, True = icon/grid
+
         # Sorting controls for materials
         sort_row = QHBoxLayout()
         sort_row.addWidget(QLabel("Sort:"))
@@ -225,50 +236,37 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.materials_list)
         
         material_actions = QHBoxLayout()
-        
-        self.add_to_timebase_btn = QPushButton("Add to Timebase")
-        self.add_to_timebase_btn.setToolTip("Append frames to main timeline using selected materials")
-        self.add_to_timebase_btn.clicked.connect(self.add_selected_to_timebase)
-        material_actions.addWidget(self.add_to_timebase_btn)
-        
-        self.add_to_current_timeline_btn = QPushButton("Add to Current Layer")
-        self.add_to_current_timeline_btn.setToolTip("Assign selected materials into current layer track (appends; extends timebase if needed)")
-        self.add_to_current_timeline_btn.clicked.connect(self.add_selected_to_current_timeline)
-        material_actions.addWidget(self.add_to_current_timeline_btn)
-        
-        self.remove_material_btn = QPushButton("Remove")
+
+        self.remove_material_btn = QPushButton("Remove Selected")
         self.remove_material_btn.clicked.connect(self.remove_selected_material)
         material_actions.addWidget(self.remove_material_btn)
-        
+
+        self.clear_materials_btn2 = QPushButton("Clear All")
+        self.clear_materials_btn2.clicked.connect(self.clear_materials)
+        material_actions.addWidget(self.clear_materials_btn2)
+
         layout.addLayout(material_actions)
-        
-        # Three group addition buttons
-        group_add_label = QLabel("Add Materials to Timeline:")
-        group_add_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        layout.addWidget(group_add_label)
-        
+
+        # Group addition buttons
         group_add_layout = QVBoxLayout()
-        
-        self.add_to_existing_group_btn = QPushButton("➕ Add to Existing Group")
-        self.add_to_existing_group_btn.setToolTip("Add selected materials to an existing group in the current timeline")
+        group_add_layout.setSpacing(4)
+
+        self.add_to_existing_group_btn = QPushButton("➕ Add to Selected Group")
+        self.add_to_existing_group_btn.setToolTip("Add selected materials to the currently selected group")
         self.add_to_existing_group_btn.clicked.connect(self.add_materials_to_existing_group)
         group_add_layout.addWidget(self.add_to_existing_group_btn)
-        
+
         self.add_as_single_group_btn = QPushButton("📦 Add as New Group (Merge)")
         self.add_as_single_group_btn.setToolTip("Combine selected materials into a single new group and add to timeline")
         self.add_as_single_group_btn.clicked.connect(self.add_materials_as_single_group)
         group_add_layout.addWidget(self.add_as_single_group_btn)
-        
+
         self.add_each_as_group_btn = QPushButton("📦📦 Add Each as Group")
         self.add_each_as_group_btn.setToolTip("Create a separate group for each selected material and add to timeline")
         self.add_each_as_group_btn.clicked.connect(self.add_materials_as_separate_groups)
         group_add_layout.addWidget(self.add_each_as_group_btn)
-        
+
         layout.addLayout(group_add_layout)
-        
-        self.clear_materials_btn = QPushButton("Clear All Materials")
-        self.clear_materials_btn.clicked.connect(self.clear_materials)
-        layout.addWidget(self.clear_materials_btn)
         
         # Export materials section
         export_group = QGroupBox("Export Materials")
@@ -292,7 +290,7 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout()
         title = QLabel("Composition (Groups)")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
         layout.addWidget(title)
         self.group_composition_widget = GroupCompositionWidget()
         self.group_composition_widget.set_group_manager(self.group_manager)
@@ -503,7 +501,7 @@ class MainWindow(QMainWindow):
         
         # Horizontal alignment buttons
         h_align_label = QLabel("Horizontal:")
-        h_align_label.setStyleSheet("font-size: 10px; color: #666;")
+        h_align_label.setStyleSheet("font-size: 10px; color: #9ba8c0;")
         auto_layout_layout.addWidget(h_align_label)
         
         h_align_layout = QHBoxLayout()
@@ -526,7 +524,7 @@ class MainWindow(QMainWindow):
         
         # Vertical alignment buttons
         v_align_label = QLabel("Vertical:")
-        v_align_label.setStyleSheet("font-size: 10px; color: #666;")
+        v_align_label.setStyleSheet("font-size: 10px; color: #9ba8c0;")
         auto_layout_layout.addWidget(v_align_label)
         
         v_align_layout = QHBoxLayout()
@@ -557,7 +555,10 @@ class MainWindow(QMainWindow):
         
         self.export_gif_btn = QPushButton("💾 Export GIF")
         self.export_gif_btn.clicked.connect(self.export_gif)
-        self.export_gif_btn.setStyleSheet("font-weight: bold; background-color: #4CAF50; color: white;")
+        self.export_gif_btn.setStyleSheet(
+            "font-weight: bold; font-size: 13px; background-color: #2d6a3f; "
+            "color: #d4f5db; border: 1px solid #3d8a52; border-radius: 4px; padding: 5px 14px;"
+        )
         layout.addWidget(self.export_gif_btn)
         
         panel.setLayout(layout)
@@ -684,6 +685,11 @@ class MainWindow(QMainWindow):
         # Could add additional actions here if needed (e.g., logging, statistics)
         pass
     
+    def _toggle_material_view(self, checked: bool):
+        self._material_icon_mode = checked
+        self.material_view_btn.setText("☰ List" if checked else "⊞ Grid")
+        self.refresh_materials_list()
+
     def refresh_materials_list(self):
         self.materials_list.clear()
 
@@ -712,16 +718,39 @@ class MainWindow(QMainWindow):
             indices.sort(key=lambda i: get_size(i)[1], reverse=True)
         # else Default keeps original order
 
+        icon_mode = getattr(self, '_material_icon_mode', False)
+        if icon_mode:
+            self.materials_list.setViewMode(QListWidget.ViewMode.IconMode)
+            self.materials_list.setIconSize(QSize(80, 80))
+            self.materials_list.setGridSize(QSize(100, 110))
+            self.materials_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self.materials_list.setWordWrap(True)
+            self.materials_list.setSpacing(4)
+        else:
+            self.materials_list.setViewMode(QListWidget.ViewMode.ListMode)
+            self.materials_list.setIconSize(QSize(64, 64))
+            self.materials_list.setGridSize(QSize())
+            self.materials_list.setSpacing(0)
+
         for i in indices:
             mat = self.material_manager.get_material(i)
             if not mat:
                 continue
             img, name = mat
-            thumbnail = self.create_thumbnail(img, 64, 64)
-            icon = QIcon(thumbnail)
-            item = QListWidgetItem(icon, f"[{i}] {name} ({img.width}x{img.height})")
+            if icon_mode:
+                thumbnail = self.create_thumbnail(img, 80, 80)
+                icon = QIcon(thumbnail)
+                short_name = name if len(name) <= 12 else name[:11] + "…"
+                item = QListWidgetItem(icon, short_name)
+                item.setToolTip(f"[{i}] {name}\n{img.width}×{img.height}")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+                item.setSizeHint(QSize(96, 106))
+            else:
+                thumbnail = self.create_thumbnail(img, 64, 64)
+                icon = QIcon(thumbnail)
+                item = QListWidgetItem(icon, f"[{i}] {name} ({img.width}x{img.height})")
+                item.setSizeHint(QSize(200, 70))
             item.setData(Qt.ItemDataRole.UserRole, i)
-            item.setSizeHint(QSize(200, 70))
             self.materials_list.addItem(item)
     
     def create_thumbnail(self, pil_image, width, height):
@@ -2404,223 +2433,107 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
     
     def export_template(self):
-        """Export current timeline as a template"""
-        if len(self.layered_sequence_editor) == 0:
-            QMessageBox.warning(self, "Warning", "No frames to export as template!")
+        """Export current composition as a template to file."""
+        if len(self.group_manager.groups) == 0:
+            QMessageBox.warning(self, "Warning", "No groups to export as template!")
             return
-        
-        # Construct default path
-        default_path = "timeline_template.json"
+        default_path = "composition_template.json"
         if self.last_template_dir:
-            default_path = str(Path(self.last_template_dir) / "timeline_template.json")
-        
+            default_path = str(Path(self.last_template_dir) / "composition_template.json")
         file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Template",
-            default_path,
-            "JSON Files (*.json)"
+            self, "Save Template", default_path, "JSON Files (*.json)"
         )
-        
         if file_path:
             try:
-                # Remember the directory
                 self.last_template_dir = str(Path(file_path).parent)
-                
-                # Export template
                 color_count = int(self.color_palette_combo.currentText())
-                template = TemplateManager.export_template(
-                    self.layered_sequence_editor,
-                    self.width_spinbox.value(),
-                    self.height_spinbox.value(),
-                    self.loop_spinbox.value(),
+                template = TemplateManager.export_composition_template(
+                    self.group_manager,
                     self.transparent_bg_checkbox.isChecked(),
-                    len(self.material_manager),
-                    color_count
+                    color_count,
                 )
-                
-                # Save to file
                 TemplateManager.save_template_to_file(template, file_path)
-                
-                # Show info
                 info = TemplateManager.get_template_info(template)
                 QMessageBox.information(
-                    self,
-                    "Success",
+                    self, "Success",
                     f"Template saved successfully!\n\n"
-                    f"Frames: {info['frame_count']}\n"
-                    f"Materials used: {info['unique_materials_used']}/{info['material_count']}\n"
-                    f"Total layers: {info['total_layers']}\n"
-                    f"Duration: {info['total_duration_ms']}ms\n"
-                    f"Output size: {info['output_size'][0]}x{info['output_size'][1]}\n\n"
-                    f"File: {file_path}"
+                    f"Groups: {info['group_count']}\n"
+                    f"Materials needed: {info['materials_needed']}\n"
+                    f"File: {file_path}",
                 )
-                
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export template:\n{str(e)}")
     
     def import_template(self):
-        """Import and apply a template"""
+        """Import and apply a composition template from file."""
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Template",
-            self.last_template_dir,
-            "JSON Files (*.json)"
+            self, "Load Template", self.last_template_dir, "JSON Files (*.json)"
         )
-        
         if not file_path:
             return
-        
         try:
-            # Remember the directory
             self.last_template_dir = str(Path(file_path).parent)
-            
-            # Load template
             template = TemplateManager.load_template_from_file(file_path)
-            
-            # Get template info
             info = TemplateManager.get_template_info(template)
-            
-            # Check if we have enough materials
-            materials_needed = info['unique_materials_used']
+            materials_needed = info["materials_needed"]
             materials_available = len(self.material_manager)
-            
-            if materials_available == 0:
-                QMessageBox.warning(
-                    self,
-                    "Warning",
-                    f"No materials loaded!\n\n"
-                    f"This template requires {materials_needed} materials.\n"
-                    f"Please load materials first before importing a template."
-                )
-                return
-            
-            # Show template info and ask for confirmation
             reply = QMessageBox.question(
-                self,
-                "Import Template",
+                self, "Import Template",
                 f"Template Info:\n"
-                f"• Frames: {info['frame_count']}\n"
-                f"• Materials needed: {materials_needed}\n"
-                f"• Total layers: {info['total_layers']}\n"
-                f"• Duration: {info['total_duration_ms']}ms\n"
-                f"• Output size: {info['output_size'][0]}x{info['output_size'][1]}\n\n"
+                f"• Groups: {info['group_count']}\n"
+                f"• Materials needed: {materials_needed}\n\n"
                 f"Available materials: {materials_available}\n\n"
-                f"Import Method:\n"
-                f"• Use First N: Uses first {materials_needed} materials in order\n"
-                f"• Use Selected: Uses selected materials (must select {materials_needed} materials)\n\n"
-                f"Choose import method:",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Yes
+                f"Apply this template? (replaces current composition)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            
-            if reply == QMessageBox.StandardButton.Cancel:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
-            
-            # Determine material mapping
-            material_mapping = {}
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                # Use first N materials
-                if materials_available < materials_needed:
-                    QMessageBox.warning(
-                        self,
-                        "Warning",
-                        f"Not enough materials!\n\n"
-                        f"Template needs {materials_needed} materials, but only {materials_available} available.\n"
-                        f"Please load more materials first."
-                    )
-                    return
-                
-                # Create 1:1 mapping for first N materials
-                for i in range(materials_needed):
-                    material_mapping[i] = i
-                    
-            else:  # No = Use Selected
-                # Get selected materials
-                selected_rows = []
-                for index in self.materials_list.selectedIndexes():
-                    item = self.materials_list.item(index.row())
-                    mat_idx = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-                    selected_rows.append(mat_idx if mat_idx is not None else index.row())
-                selected_rows = sorted(selected_rows)
-                
-                if len(selected_rows) != materials_needed:
-                    QMessageBox.warning(
-                        self,
-                        "Warning",
-                        f"Please select exactly {materials_needed} materials!\n\n"
-                        f"Currently selected: {len(selected_rows)}\n"
-                        f"Required: {materials_needed}"
-                    )
-                    return
-                
-                # Create mapping from template indices to selected material indices
-                for template_idx in range(materials_needed):
-                    material_mapping[template_idx] = selected_rows[template_idx]
-            
-            # Apply template
-            new_editor, settings = TemplateManager.apply_template(template, material_mapping)
-            
-            # Replace current sequence
-            self.layered_sequence_editor = new_editor
-            
-            # Apply settings
+            new_gm, settings = TemplateManager.import_composition_template(template)
+            self.group_manager = new_gm
             if settings:
-                self.width_spinbox.setValue(settings.get('output_width', 400))
-                self.height_spinbox.setValue(settings.get('output_height', 400))
-                self.loop_spinbox.setValue(settings.get('loop_count', 0))
-                self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', False))
-                
-                # Apply color palette setting
-                color_count = settings.get('color_count', 256)
+                self.transparent_bg_checkbox.setChecked(settings.get("transparent_bg", False))
+                color_count = settings.get("color_count", 256)
                 self.color_palette_combo.setCurrentText(str(color_count))
-                self.gif_builder.set_color_count(color_count)
-            
-            # Refresh UI
-            self.refresh_timeline()
+            if hasattr(self, "group_composition_widget"):
+                self.group_composition_widget.set_group_manager(self.group_manager)
             self.update_preview()
-            
             QMessageBox.information(
-                self,
-                "Success",
-                f"Template imported successfully!\n\n"
-                f"Created {info['frame_count']} frames with {info['total_layers']} total layers."
+                self, "Success",
+                f"Template imported successfully!\nGroups: {info['group_count']}",
             )
-            
         except Exception as e:
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to import template:\n{str(e)}")
     
     def quick_save_template(self):
-        """Save current multi-timeline state into in-memory template list."""
-        if self.layer_editor.get_frame_count() == 0:
-            QMessageBox.warning(self, "Warning", "No frames to save as template!")
+        """Save current group composition to in-memory template list."""
+        if len(self.group_manager.groups) == 0:
+            QMessageBox.warning(self, "Warning", "No groups to save as template!")
             return
         try:
             color_count = int(self.color_palette_combo.currentText())
-            template = TemplateManager.export_layer_timeline_template(
-                self.layer_editor,
+            template = TemplateManager.export_composition_template(
                 self.group_manager,
                 self.transparent_bg_checkbox.isChecked(),
-                color_count
+                color_count,
             )
-            # Generate a simple name
             timestamp = datetime.now().strftime("%H:%M:%S")
             name = f"Template {len(self.templates) + 1} ({timestamp})"
             self.templates[name] = template
             self.refresh_template_list()
             info = TemplateManager.get_template_info(template)
             QMessageBox.information(
-                self,
-                "Saved",
-                f"Saved template in memory.\nTimelines: {info.get('timeline_count', 0)}\nFrames: {info.get('frame_count', 0)}"
+                self, "Saved",
+                f"Saved template '{name}'.\n"
+                f"Groups: {info['group_count']}  |  "
+                f"Materials needed: {info['materials_needed']}",
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save template: {str(e)}")
     
     def quick_apply_template(self):
-        """Apply selected in-memory template to current editor."""
+        """Apply selected in-memory template to current composition."""
         current_item = self.template_list.currentItem()
         if not current_item:
             QMessageBox.warning(self, "Warning", "Please select a template to apply!")
@@ -2631,65 +2544,31 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Selected template not found!")
             return
         try:
-            # Apply depending on format
-            if template.get("format") == "multi_timeline" or ("layer_tracks" in template and "timebase" in template):
-                # Pass max_material_index to filter out materials that don't exist
-                max_material_index = len(self.material_manager) if len(self.material_manager) > 0 else None
-                new_editor, new_group_manager, settings = TemplateManager.apply_layer_timeline_template(
-                    template,
-                    max_material_index=max_material_index
+            new_gm, settings = TemplateManager.import_composition_template(template)
+            self.group_manager = new_gm
+            if settings:
+                self.transparent_bg_checkbox.setChecked(
+                    settings.get("transparent_bg", self.transparent_bg_checkbox.isChecked())
                 )
-                self.layer_editor = new_editor
-                self.group_manager = new_group_manager
-                
-                # Auto-set output size from first available material
-                if len(self.material_manager) > 0:
-                    # Try to get first material from first group
-                    first_mat_idx = None
-                    if len(self.group_manager) > 0:
-                        first_group = self.group_manager.get_group(0)
-                        if first_group and len(first_group.material_indices) > 0:
-                            first_mat_idx = first_group.material_indices[0]
-                    
-                    # If found, set size from material
-                    if first_mat_idx is not None and first_mat_idx < len(self.material_manager):
-                        material = self.material_manager.get_material(first_mat_idx)
-                        if material:
-                            img, _ = material
-                            self.width_spinbox.setValue(img.width)
-                            self.height_spinbox.setValue(img.height)
-                
-                # Apply other settings (transparent_bg and color_count only)
-                if settings:
-                    self.transparent_bg_checkbox.setChecked(settings.get('transparent_bg', self.transparent_bg_checkbox.isChecked()))
-                    color_count = settings.get('color_count', int(self.color_palette_combo.currentText()))
-                    self.color_palette_combo.setCurrentText(str(color_count))
-                
-                self.refresh_timeline()
-                self.update_preview()
-            else:
-                QMessageBox.warning(self, "Unsupported", "Selected template format is not multi-timeline.")
+                color_count = settings.get("color_count", int(self.color_palette_combo.currentText()))
+                self.color_palette_combo.setCurrentText(str(color_count))
+            if hasattr(self, "group_composition_widget"):
+                self.group_composition_widget.set_group_manager(self.group_manager)
+            self.update_preview()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to apply template: {str(e)}")
     
     def quick_import_template(self):
-        """Import a template JSON from disk into in-memory templates."""
+        """Import a composition template JSON from disk into in-memory templates."""
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Template",
-            self.last_template_dir,
-            "JSON Files (*.json)"
+            self, "Load Template", self.last_template_dir, "JSON Files (*.json)"
         )
         if not file_path:
             return
         try:
             self.last_template_dir = str(Path(file_path).parent)
             template = TemplateManager.load_template_from_file(file_path)
-            info = TemplateManager.get_template_info(template)
-            # Support both "layer_timeline" and "multi_timeline" formats
-            if info.get('format') not in ('layer_timeline', 'multi_timeline'):
-                QMessageBox.warning(self, "Warning", "Only layer timeline templates are supported.")
-                return
+            TemplateManager.validate_template(template)
             name = Path(file_path).stem
             suffix = 1
             unique_name = name
@@ -2814,19 +2693,18 @@ class MainWindow(QMainWindow):
     def refresh_template_list(self):
         """Refresh template list widget with current in-memory templates."""
         self.template_list.clear()
-        # Populate list with name and brief info
         for name, tpl in self.templates.items():
             try:
                 info = TemplateManager.get_template_info(tpl)
-                if info.get('format') == 'multi_timeline':
-                    subtitle = f"{info.get('timeline_count', 0)} TL, {info.get('frame_count', 0)} F"
-                else:
-                    subtitle = f"{info.get('frame_count', 0)} F"
+                subtitle = (
+                    f"{info.get('group_count', 0)} groups, "
+                    f"{info.get('materials_needed', 0)} tiles"
+                )
             except Exception:
                 subtitle = "invalid"
             item = QListWidgetItem(f"{name} - {subtitle}")
             self.template_list.addItem(item)
-        if hasattr(self, 'batch_processor'):
+        if hasattr(self, "batch_processor"):
             self.batch_processor.set_templates(self.templates)
     
     def show_about(self):
@@ -2849,60 +2727,49 @@ class MainWindow(QMainWindow):
         )
     
     def auto_save_template(self):
-        """Automatically save current work as a multi-timeline template."""
+        """Automatically save current composition as a template."""
         if not self.auto_save_enabled:
             return
-        # Only save if there's actual content
-        if self.layer_editor.get_frame_count() == 0:
+        if len(self.group_manager.groups) == 0:
             return
         try:
-            # Create content hash to avoid duplicate saves
             content_hash = self._get_content_hash()
             if content_hash == self.last_auto_save_content_hash:
-                return  # No changes since last save
+                return
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            frame_count = self.layer_editor.get_frame_count()
-            material_count = len(self.material_manager)
-            file_path = self.auto_save_file
             color_count = int(self.color_palette_combo.currentText())
-            template = TemplateManager.export_layer_timeline_template(
-                self.layer_editor,
+            template = TemplateManager.export_composition_template(
                 self.group_manager,
                 self.transparent_bg_checkbox.isChecked(),
-                color_count
+                color_count,
             )
             template["auto_save_metadata"] = {
                 "timestamp": timestamp,
-                "frame_count": frame_count,
-                "material_count": material_count,
-                "content_hash": content_hash
+                "group_count": len(self.group_manager.groups),
+                "material_count": len(self.material_manager),
+                "content_hash": content_hash,
             }
-            TemplateManager.save_template_to_file(template, str(file_path))
+            TemplateManager.save_template_to_file(template, str(self.auto_save_file))
             self.last_auto_save_content_hash = content_hash
-            print(f"Auto-saved: {file_path.name}")
+            print(f"Auto-saved: {self.auto_save_file.name}")
         except Exception as e:
             print(f"Auto-save failed: {e}")
     
     def _get_content_hash(self):
-        """Generate hash of current multi-timeline content for change detection"""
+        """Hash current group composition for change detection."""
         import hashlib
-        parts = []
-        # Timebase
-        parts.append("durations:" + ",".join(str(d) for d in self.layer_editor.durations_ms))
-        # Timelines
-        for t in self.layer_editor.layer_tracks:
-            parts.append(f"tl:{t.name}:{t.offset_x}:{t.offset_y}")
-            for fr in t.frames:
-                mi = "n" if fr.material_index is None else str(fr.material_index)
-                parts.append(f"f:{mi}:{fr.x}:{fr.y}")
-        # Settings
-        parts.append(f"settings:{self.width_spinbox.value()}:{self.height_spinbox.value()}:{self.loop_spinbox.value()}:{self.transparent_bg_checkbox.isChecked()}:{self.color_palette_combo.currentText()}")
-        return hashlib.md5("|".join(parts).encode()).hexdigest()
+        try:
+            template = TemplateManager.export_composition_template(self.group_manager)
+            import json as _json
+            content = _json.dumps(template, sort_keys=True)
+        except Exception:
+            content = str(id(self.group_manager))
+        return hashlib.md5(content.encode()).hexdigest()
     
     
     def closeEvent(self, event):
         """Handle application closing - perform emergency auto-save"""
-        if self.auto_save_enabled and self.layer_editor.get_frame_count() > 0:
+        if self.auto_save_enabled and len(self.group_manager.groups) > 0:
             try:
                 # Force emergency save
                 self.auto_save_template()
@@ -2918,50 +2785,33 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
     
     def restore_auto_save(self):
-        """Restore from the latest auto-save"""
+        """Restore composition from the latest auto-save."""
         try:
-            # Check if auto-save file exists
             if not self.auto_save_file.exists():
                 QMessageBox.information(self, "No Auto-Save", "No auto-save file found.")
                 return
-            
-            # Load template
             template = TemplateManager.load_template_from_file(str(self.auto_save_file))
-            info = TemplateManager.get_template_info(template)
-            if info.get('format') == 'multi_timeline':
-                # Pass max_material_index to filter out materials that don't exist
-                max_material_index = len(self.material_manager) if len(self.material_manager) > 0 else None
-                new_editor, new_group_manager, settings = TemplateManager.apply_layer_timeline_template(
-                    template,
-                    max_material_index=max_material_index
+            new_gm, settings = TemplateManager.import_composition_template(template)
+            self.group_manager = new_gm
+            if settings:
+                self.transparent_bg_checkbox.setChecked(
+                    settings.get("transparent_bg", self.transparent_bg_checkbox.isChecked())
                 )
-                self.layer_editor = new_editor
-                self.group_manager = new_group_manager
-                if settings:
-                    self.width_spinbox.setValue(settings.get("output_width", self.width_spinbox.value()))
-                    self.height_spinbox.setValue(settings.get("output_height", self.height_spinbox.value()))
-                    self.loop_spinbox.setValue(settings.get("loop_count", self.loop_spinbox.value()))
-                    self.transparent_bg_checkbox.setChecked(settings.get("transparent_bg", self.transparent_bg_checkbox.isChecked()))
-                    color_count = settings.get("color_count", int(self.color_palette_combo.currentText()))
-                    color_text = str(color_count)
-                    if color_text in [self.color_palette_combo.itemText(i) for i in range(self.color_palette_combo.count())]:
-                        self.color_palette_combo.setCurrentText(color_text)
-                # Refresh UI
-                self.refresh_timeline()
-            
-            # Get metadata
+                color_count = settings.get("color_count", int(self.color_palette_combo.currentText()))
+                color_text = str(color_count)
+                if color_text in [self.color_palette_combo.itemText(i) for i in range(self.color_palette_combo.count())]:
+                    self.color_palette_combo.setCurrentText(color_text)
+            if hasattr(self, "group_composition_widget"):
+                self.group_composition_widget.set_group_manager(self.group_manager)
+            self.update_preview()
             metadata = template.get("auto_save_metadata", {})
-            timestamp = metadata.get("timestamp", "unknown")
-            
             QMessageBox.information(
-                self,
-                "Auto-Save Restored",
-                f"Restored from auto-save:\n{self.auto_save_file.name}\n\n"
-                f"Saved: {timestamp}\n"
-                f"Frames: {metadata.get('frame_count', info.get('frame_count', 0))}\n"
-                f"Materials: {metadata.get('material_count', 0)}"
+                self, "Auto-Save Restored",
+                f"Restored from: {self.auto_save_file.name}\n\n"
+                f"Saved: {metadata.get('timestamp', 'unknown')}\n"
+                f"Groups: {metadata.get('group_count', len(self.group_manager.groups))}\n"
+                f"Materials: {metadata.get('material_count', 0)}",
             )
-            
         except Exception as e:
             QMessageBox.critical(self, "Restore Failed", f"Failed to restore auto-save:\n{str(e)}")
     
@@ -3125,12 +2975,9 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    
-    app.setStyle('Fusion')
-    
+    AppTheme.apply(app)
     window = MainWindow()
     window.show()
-    
     sys.exit(app.exec())
 
 

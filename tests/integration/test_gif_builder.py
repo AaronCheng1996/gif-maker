@@ -63,129 +63,86 @@ def test_build_from_layer_timeline(tmp_gif_path, rgb_image_small):
     assert info['frame_count'] == 2
 
 
-def test_build_with_group_expansion(tmp_gif_path, rgb_image_small):
-    """Test building GIF with Material Groups that need expansion"""
+def test_build_gif_from_group_with_loops(tmp_gif_path):
+    """CompositionGroup: SubGroupEntry with loop_count=2 → 6 frames + 1 = 7 total."""
+    from src.core.composition_group import CompositionGroup, FrameEntry, SubGroupEntry
+
     mm = MaterialManager()
-    # Add 4 different materials
     for i in range(4):
-        img = Image.new('RGB', (10, 10), (i*60, i*40, i*20))
-        mm.add_material(img, name=f"mat_{i}")
-    
-    # Create a group with materials [0, 1, 2] × 2 loops = 6 frames
+        mm.add_material(Image.new("RGB", (10, 10), (i * 60, i * 40, i * 20)), name=f"mat_{i}")
+
+    # sub group: 3 frames (mat 0,1,2)
     group_mgr = GroupManager()
-    group_mgr.create_group_from_materials(
-        material_indices=[0, 1, 2],
-        frame_duration=100,
-        loop_count=2,
-        name="Test Group"
-    )
-    
-    # Create timeline with group
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("Main")
-    ed.add_timebase_frames(2, duration_ms=100)
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(group_index=0, x=0, y=0)
-    ed.layer_tracks[tl_idx].frames[1] = LayerFrame(material_index=3, x=0, y=0)
-    
+    sub = CompositionGroup(name="Sub", default_duration_ms=100)
+    sub.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=100))
+    sub.entries.append(FrameEntry(material_index=1, x=0, y=0, duration_ms=100))
+    sub.entries.append(FrameEntry(material_index=2, x=0, y=0, duration_ms=100))
+    group_mgr.add_group(sub)  # id=0
+
+    # root: sub×2 + single mat3 → 3×2 + 1 = 7 frames
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(SubGroupEntry(group_id=0, loop_count=2))
+    root.entries.append(FrameEntry(material_index=3, x=0, y=0, duration_ms=100))
+    group_mgr.add_group(root)  # id=1
+
     gb = GifBuilder()
     gb.set_output_size(10, 10)
     gb.set_background_color(255, 255, 255, 255)
-    gb.build_from_layer_timeline(ed, mm, output_path=str(tmp_gif_path), group_manager=group_mgr)
-    
+    gb.build_gif_from_group(1, group_mgr, mm, str(tmp_gif_path))
+
     info = gb.get_gif_info(str(tmp_gif_path))
-    # Should have 7 frames: 6 from group (3 materials × 2 loops) + 1 from single material
-    assert info['frame_count'] == 7
+    assert info["frame_count"] == 7
 
 
-def test_build_with_empty_group_no_crash(tmp_gif_path, rgb_image_small):
-    """Test that empty groups (all materials filtered out) don't cause ZeroDivisionError"""
+def test_build_gif_from_group_empty_group_no_crash(tmp_gif_path, rgb_image_small):
+    """Empty subgroup produces no frames; root still exports the non-empty entries."""
+    from src.core.composition_group import CompositionGroup, FrameEntry, SubGroupEntry
+
     mm = MaterialManager()
-    # Add only 2 materials
     mm.add_material(rgb_image_small, name="mat_0")
-    mm.add_material(rgb_image_small, name="mat_1")
-    
-    # Create a group with materials that exceed material library size
-    # (simulating a template with out-of-range materials)
+
     group_mgr = GroupManager()
-    from src.core.material_group import MaterialGroup
-    empty_group = MaterialGroup(
-        material_indices=[],  # Empty after filtering
-        frame_duration=100,
-        loop_count=2,
-        name="Empty Group"
-    )
-    group_mgr.add_group(empty_group)
-    
-    # Create another normal group
-    group_mgr.create_group_from_materials(
-        material_indices=[0, 1],
-        frame_duration=100,
-        loop_count=1,
-        name="Normal Group"
-    )
-    
-    # Create timeline with both groups
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("Main")
-    ed.add_timebase_frames(2, duration_ms=100)
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(group_index=0, x=0, y=0)  # Empty group
-    ed.layer_tracks[tl_idx].frames[1] = LayerFrame(group_index=1, x=0, y=0)  # Normal group
-    
+    empty = CompositionGroup(name="Empty")  # no entries
+    group_mgr.add_group(empty)  # id=0
+
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(SubGroupEntry(group_id=0, loop_count=1))  # expands to nothing
+    root.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=100))
+    group_mgr.add_group(root)  # id=1
+
     gb = GifBuilder()
     gb.set_output_size(10, 10)
     gb.set_background_color(255, 255, 255, 255)
-    
-    # Should not raise ZeroDivisionError
-    gb.build_from_layer_timeline(ed, mm, output_path=str(tmp_gif_path), group_manager=group_mgr)
-    
+    gb.build_gif_from_group(1, group_mgr, mm, str(tmp_gif_path))
+
     info = gb.get_gif_info(str(tmp_gif_path))
-    # Should have 2 frames from normal group, empty group produces nothing
-    assert info['frame_count'] == 2
+    assert info["frame_count"] == 1
 
 
-def test_build_with_group_independent_offsets(tmp_gif_path):
-    """Test building GIF with groups that have independent material offsets"""
+def test_build_gif_from_group_subgroup_xy_offset(tmp_gif_path):
+    """SubGroupEntry x/y offset shifts materials during expansion."""
+    from src.core.composition_group import CompositionGroup, FrameEntry, SubGroupEntry
+
     mm = MaterialManager()
-    # Add 3 different-sized materials
-    img1 = Image.new('RGB', (10, 10), (255, 0, 0))  # Red
-    img2 = Image.new('RGB', (15, 15), (0, 255, 0))  # Green
-    img3 = Image.new('RGB', (8, 8), (0, 0, 255))    # Blue
-    mm.add_material(img1, name="red")
-    mm.add_material(img2, name="green")
-    mm.add_material(img3, name="blue")
-    
-    # Create a group with independent offsets
+    img = Image.new("RGB", (8, 8), (0, 128, 255))
+    mm.add_material(img, name="tile")
+
     group_mgr = GroupManager()
-    from src.core.material_group import MaterialGroup
-    group = MaterialGroup(
-        material_indices=[0, 1, 2],
-        frame_duration=100,
-        loop_count=1,
-        name="Independent Group",
-        independent_offsets=True
-    )
-    # Set different offsets for each material
-    group.set_material_offset(0, 5, 5)   # Red at (5, 5) relative to group
-    group.set_material_offset(1, 10, 10) # Green at (10, 10) relative to group
-    group.set_material_offset(2, 0, 0)   # Blue at (0, 0) relative to group
-    group_mgr.add_group(group)
-    
-    # Create timeline
-    ed = LayerTimelineEditor()
-    tl_idx = ed.add_layer_track("Main")
-    ed.add_timebase_frames(1, duration_ms=100)
-    ed.layer_tracks[tl_idx].frames[0] = LayerFrame(group_index=0, x=2, y=2)  # Group base position
-    
+    sub = CompositionGroup(name="Sub", default_duration_ms=100)
+    sub.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=100))
+    group_mgr.add_group(sub)  # id=0
+
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(SubGroupEntry(group_id=0, loop_count=1, x=5, y=10))
+    group_mgr.add_group(root)  # id=1
+
     gb = GifBuilder()
     gb.set_output_size(30, 30)
     gb.set_background_color(255, 255, 255, 255)
-    gb.build_from_layer_timeline(ed, mm, output_path=str(tmp_gif_path), group_manager=group_mgr)
-    
+    gb.build_gif_from_group(1, group_mgr, mm, str(tmp_gif_path))
+
     info = gb.get_gif_info(str(tmp_gif_path))
-    # Should have 3 frames (3 materials × 1 loop)
-    assert info['frame_count'] == 3
-    
-    # Verify the GIF was created successfully (offsets were applied)
-    assert info['size'] == (30, 30)
+    assert info["frame_count"] == 1
+    assert info["size"] == (30, 30)
 
 

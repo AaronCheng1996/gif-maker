@@ -1,3 +1,4 @@
+from .theme import AppTheme
 from .preview_widget import PreviewWidget
 from .preview_page_widget import PreviewPageWidget
 from .timeline_widget import TimelineWidget
@@ -10,6 +11,7 @@ from .group_selector_dialog import GroupSelectorDialog
 from .group_composition_widget import GroupCompositionWidget
 
 __all__ = [
+    'AppTheme',
     'PreviewWidget',
     'PreviewPageWidget',
     'TimelineWidget',

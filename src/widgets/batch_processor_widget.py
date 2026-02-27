@@ -19,6 +19,8 @@ from PIL import Image
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
+from .theme import AppTheme as _T
+
 
 class BatchProcessorWidget(QWidget):
     """
@@ -44,7 +46,7 @@ class BatchProcessorWidget(QWidget):
         
         # Title
         title_label = QLabel("Batch GIF Generator")
-        title_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        title_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
         layout.addWidget(title_label)
         
         # Description
@@ -53,7 +55,7 @@ class BatchProcessorWidget(QWidget):
             "Each image will be processed: split → apply template → export as GIF."
         )
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("color: #666; font-size: 11px;")
+        desc_label.setStyleSheet(f"color: {_T.TEXT_DIM}; font-size: 11px;")
         layout.addWidget(desc_label)
         
         # === Image Selection Section ===
@@ -77,7 +79,7 @@ class BatchProcessorWidget(QWidget):
         image_layout.addWidget(self.image_list)
         
         self.image_count_label = QLabel("No images selected")
-        self.image_count_label.setStyleSheet("color: #666;")
+        self.image_count_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
         image_layout.addWidget(self.image_count_label)
         
         image_group.setLayout(image_layout)
@@ -101,7 +103,7 @@ class BatchProcessorWidget(QWidget):
         template_layout.addLayout(template_select_layout)
         
         self.template_info_label = QLabel("No template selected")
-        self.template_info_label.setStyleSheet("color: #666; font-size: 10px;")
+        self.template_info_label.setStyleSheet(f"color: {_T.TEXT_DIM}; font-size: 10px;")
         self.template_info_label.setWordWrap(True)
         template_layout.addWidget(self.template_info_label)
         
@@ -181,7 +183,7 @@ class BatchProcessorWidget(QWidget):
         
         # Position selector
         position_label = QLabel("Select Tile Positions to Keep:")
-        position_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+        position_label.setStyleSheet("font-weight: bold; margin-top: 5px; font-size: 12px;")
         split_layout.addWidget(position_label)
         
         position_controls = QHBoxLayout()
@@ -276,7 +278,9 @@ class BatchProcessorWidget(QWidget):
         # === Validation Info ===
         self.validation_label = QLabel("")
         self.validation_label.setWordWrap(True)
-        self.validation_label.setStyleSheet("padding: 5px; border-radius: 3px;")
+        self.validation_label.setStyleSheet(
+            f"padding: 5px; border-radius: 3px; color: {_T.TEXT_DIM}; font-size: 11px;"
+        )
         layout.addWidget(self.validation_label)
         
         # === Progress Section ===
@@ -289,7 +293,7 @@ class BatchProcessorWidget(QWidget):
         progress_layout.addWidget(self.progress_bar)
         
         self.progress_label = QLabel("Ready to process")
-        self.progress_label.setStyleSheet("color: #666;")
+        self.progress_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
         progress_layout.addWidget(self.progress_label)
         
         progress_group.setLayout(progress_layout)
@@ -304,7 +308,11 @@ class BatchProcessorWidget(QWidget):
         
         self.process_btn = QPushButton("Start Batch Processing")
         self.process_btn.clicked.connect(self.start_batch_processing)
-        self.process_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+        self.process_btn.setStyleSheet(
+            f"font-weight: bold; font-size: 13px; padding: 8px 20px; "
+            f"background-color: {_T.ACCENT_DARK}; color: white; "
+            f"border: 1px solid {_T.ACCENT}; border-radius: 4px;"
+        )
         action_layout.addWidget(self.process_btn)
         
         layout.addLayout(action_layout)
@@ -384,33 +392,20 @@ class BatchProcessorWidget(QWidget):
         else:
             self.selected_template = self.template_combo.currentData()
             self.selected_template_name = self.template_combo.currentText()
-            
+
             if self.selected_template:
                 from ..core.template_manager import TemplateManager
-                info = TemplateManager.get_template_info(self.selected_template)
-                # Determine materials needed depending on format
-                fmt = info.get('format')
-                materials_needed = None
-                if fmt == 'multi_timeline' or ("timelines" in self.selected_template and "timebase" in self.selected_template):
-                    # For multi-timeline, require at least max material index + 1 (0-based)
-                    max_index = -1
-                    for tl in self.selected_template.get('timelines', []):
-                        for fr in tl.get('frames', []):
-                            if isinstance(fr, dict):
-                                mi = fr.get('material_index')
-                                if isinstance(mi, int) and mi > max_index:
-                                    max_index = mi
-                    materials_needed = max_index + 1 if max_index >= 0 else 0
-                else:
-                    materials_needed = info.get('material_count', 0)
-                
-                self.template_info_label.setText(
-                    f"Frames: {info.get('frame_count', 0)} | "
-                    f"Materials needed: {materials_needed} | "
-                    f"Size: {info.get('output_size', (0, 0))[0]}×{info.get('output_size', (0, 0))[1]} | "
-                    f"Loop: {info.get('loop_count', 0)}"
-                )
-        
+                try:
+                    info = TemplateManager.get_template_info(self.selected_template)
+                    self.template_info_label.setText(
+                        f"Groups: {info.get('group_count', 0)} | "
+                        f"Tiles needed: {info.get('materials_needed', 0)} | "
+                        f"Transparent: {info.get('transparent_bg', False)} | "
+                        f"Colors: {info.get('color_count', 256)}"
+                    )
+                except Exception as e:
+                    self.template_info_label.setText(f"Template info unavailable: {e}")
+
         self.update_button_states()
     
     def on_split_mode_changed(self):
@@ -571,16 +566,16 @@ class BatchProcessorWidget(QWidget):
         """Show validation error"""
         self.validation_label.setText(f"❌ {message}")
         self.validation_label.setStyleSheet(
-            "background-color: #ffebee; color: #c62828; "
-            "padding: 5px; border-radius: 3px; border: 1px solid #ef5350;"
+            f"background-color: #3a1010; color: {_T.ERROR}; "
+            f"padding: 5px; border-radius: 3px; border: 1px solid {_T.ERROR};"
         )
     
     def show_validation_success(self, message: str):
         """Show validation success"""
         self.validation_label.setText(f"✓ {message}")
         self.validation_label.setStyleSheet(
-            "background-color: #e8f5e9; color: #2e7d32; "
-            "padding: 5px; border-radius: 3px; border: 1px solid #66bb6a;"
+            f"background-color: #0d2a14; color: {_T.SUCCESS}; "
+            f"padding: 5px; border-radius: 3px; border: 1px solid {_T.SUCCESS};"
         )
     
     def update_button_states(self):

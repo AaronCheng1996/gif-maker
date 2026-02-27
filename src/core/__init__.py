@@ -29,6 +29,11 @@ from .composition_group import (
     is_layer_block_entry,
     is_frame_slot,
     is_group_slot,
+    # Serialization helpers
+    slot_to_dict, slot_from_dict,
+    entry_to_dict, entry_from_dict,
+    group_to_dict, group_from_dict,
+    max_material_index, remap_material_indices,
 )
 
 __all__ = [

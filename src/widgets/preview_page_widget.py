@@ -4,6 +4,8 @@ from PyQt6.QtGui import QPixmap, QImage, QColor
 from PIL import Image
 from typing import List, Tuple
 
+from .theme import AppTheme as _T
+
 
 class PreviewPageWidget(QWidget):
     """專門的預覽頁面，提供更大的預覽空間"""
@@ -39,9 +41,9 @@ class PreviewPageWidget(QWidget):
         layout.addLayout(back_layout)
         
         # 標題
-        title_label = QLabel("預覽")
+        title_label = QLabel("Preview")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        title_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
         layout.addWidget(title_label)
         
         # 控制按鈕
@@ -77,11 +79,11 @@ class PreviewPageWidget(QWidget):
         
         self.preview_label = QLabel("No Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setStyleSheet("""
-            QLabel { 
-                background-color: #e8e8e8; 
-                border: 2px solid #ccc; 
-            }
+        self.preview_label.setStyleSheet(f"""
+            QLabel {{ 
+                background-color: {_T.CARD}; 
+                border: 2px solid {_T.BORDER}; 
+            }}
         """)
         self.preview_label.setMinimumSize(800, 600)  # 更大的最小尺寸
         
@@ -131,7 +133,7 @@ class PreviewPageWidget(QWidget):
         self.preview_label.setStyleSheet(f"""
             QLabel {{ 
                 background-color: {hex_color}; 
-                border: 2px solid #ccc; 
+                border: 2px solid {_T.BORDER}; 
             }}
         """)
     

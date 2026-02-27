@@ -4,6 +4,8 @@ from PyQt6.QtGui import QPixmap, QImage, QMouseEvent, QColor
 from PIL import Image
 from typing import List, Tuple
 
+from .theme import AppTheme as _T
+
 
 class ClickableLabel(QLabel):
     """可點擊的 QLabel"""
@@ -67,16 +69,16 @@ class PreviewWidget(QWidget):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setFixedSize(400, 400)  # Fixed size to prevent UI layout issues
         self.preview_label.setScaledContents(False)  # Don't auto-scale, we'll handle it manually
-        # Light background default; can be customized via set_background_color
-        self.preview_label.setStyleSheet("""
-            QLabel { 
-                background-color: #e8e8e8; 
-                border: 2px solid #ccc; 
-            }
-            QLabel:hover {
-                border: 2px solid #4CAF50;
-                background-color: #f0f0f0;
-            }
+        # Default preview canvas; can be customized via set_background_color
+        self.preview_label.setStyleSheet(f"""
+            QLabel {{ 
+                background-color: {_T.CARD}; 
+                border: 2px solid {_T.BORDER}; 
+            }}
+            QLabel:hover {{
+                border: 2px solid {_T.BORDER_FOCUS};
+                background-color: {_T.ELEVATED};
+            }}
         """)
         self.preview_label.clicked.connect(self.on_preview_clicked)
         layout.addWidget(self.preview_label)
@@ -100,11 +102,10 @@ class PreviewWidget(QWidget):
         self.preview_label.setStyleSheet(f"""
             QLabel {{ 
                 background-color: {hex_color}; 
-                border: 2px solid #ccc; 
+                border: 2px solid {_T.BORDER}; 
             }}
             QLabel:hover {{
-                border: 2px solid #4CAF50;
-                background-color: #f0f0f0;
+                border: 2px solid {_T.BORDER_FOCUS};
             }}
         """)
     

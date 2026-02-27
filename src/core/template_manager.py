@@ -1,434 +1,211 @@
 """
-Template Manager - Export and import timeline templates
-Allows saving and reusing timeline structures with different materials
+Template Manager - Export and import composition templates (v4 format).
+
+Templates capture the full GroupManager state (all CompositionGroups,
+root_group_id) plus render settings. Material indices are positional
+references so the same template can be applied to different tile sets.
 """
 
 import json
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
-from .layer_system import Layer, LayeredFrame
-from .layered_sequence_editor import LayeredSequenceEditor
-from .layer_timeline import LayerTimelineEditor, LayerTrack, LayerFrame
-from .material_group import MaterialGroup
+
+from .composition_group import (
+    group_to_dict, group_from_dict, max_material_index, remap_material_indices,
+)
 from .group_manager import GroupManager
+
+
+FORMAT = "composition_group"
+VERSION = "4.0"
 
 
 class TemplateManager:
     """
-    Manages template export/import for timeline structures
-    
-    Templates store the structure of frames and layers, with material references
-    replaced by relative indices. This allows applying the same timeline structure
-    to different sets of materials.
-    """
-    
-    VERSION = "3.0"  # Updated to 3.0 for Group support
-    
-    @staticmethod
-    def export_template(
-        layered_sequence_editor: LayeredSequenceEditor,
-        output_width: int,
-        output_height: int,
-        loop_count: int,
-        transparent_bg: bool,
-        material_count: int,
-        color_count: int = 256
-    ) -> Dict[str, Any]:
-        """
-        Export current timeline as a template
-        
-        Args:
-            layered_sequence_editor: The sequence editor with frames
-            output_width: Output GIF width
-            output_height: Output GIF height
-            loop_count: GIF loop count
-            transparent_bg: Whether background is transparent
-            material_count: Total number of materials used
-            color_count: Number of colors in the palette (256, 128, 64, 32, 16)
-        
-        Returns:
-            Template dictionary
-        """
-        template = {
-            "version": TemplateManager.VERSION,
-            "settings": {
-                "output_width": output_width,
-                "output_height": output_height,
-                "loop_count": loop_count,
-                "transparent_bg": transparent_bg,
-                "material_count": material_count,
-                "color_count": color_count
-            },
-            "frames": []
-        }
-        
-        # Export each frame
-        for frame_idx, frame in enumerate(layered_sequence_editor.get_frames()):
-            frame_data = {
-                "index": frame_idx,
-                "duration": frame.duration,
-                "name": frame.name,
-                "layers": []
-            }
-            
-            # Export each layer
-            for layer_idx, layer in enumerate(frame.layers):
-                layer_data = {
-                    "index": layer_idx,
-                    "material_index": layer.material_index,  # Relative material index
-                    "name": layer.name,
-                    "x": layer.x,
-                    "y": layer.y,
-                    "crop_x": layer.crop_x,
-                    "crop_y": layer.crop_y,
-                    "crop_width": layer.crop_width,
-                    "crop_height": layer.crop_height,
-                    "scale": layer.scale,
-                    "opacity": layer.opacity,
-                    "visible": layer.visible
-                }
-                frame_data["layers"].append(layer_data)
-            
-            template["frames"].append(frame_data)
-        
-        return template
-    
-    @staticmethod
-    def save_template_to_file(template: Dict[str, Any], file_path: str):
-        """
-        Save template to JSON file
-        
-        Args:
-            template: Template dictionary
-            file_path: Output file path
-        """
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(template, f, indent=2, ensure_ascii=False)
-    
-    @staticmethod
-    def load_template_from_file(file_path: str) -> Dict[str, Any]:
-        """
-        Load template from JSON file
-        
-        Args:
-            file_path: Template file path
-        
-        Returns:
-            Template dictionary
-        """
-        with open(file_path, 'r', encoding='utf-8') as f:
-            template = json.load(f)
-        
-        # Validate version
-        if "version" not in template:
-            raise ValueError("Invalid template: missing version")
-        
-        if template["version"] != TemplateManager.VERSION:
-            # In future, handle version migration here
-            pass
-        
-        return template
-    
-    @staticmethod
-    def apply_template(
-        template: Dict[str, Any],
-        material_index_mapping: Optional[Dict[int, int]] = None
-    ) -> Tuple[LayeredSequenceEditor, Dict[str, Any]]:
-        """
-        Apply template to create a new sequence
-        
-        Args:
-            template: Template dictionary
-            material_index_mapping: Mapping from template material indices to new material indices
-                                   If None, uses identity mapping (same indices)
-        
-        Returns:
-            Tuple of (LayeredSequenceEditor, settings dictionary)
-        """
-        # Create new sequence editor
-        editor = LayeredSequenceEditor()
-        
-        # Default to identity mapping if not provided
-        if material_index_mapping is None:
-            material_index_mapping = {}
-        
-        # Reconstruct frames
-        for frame_data in template["frames"]:
-            frame = LayeredFrame(
-                duration=frame_data["duration"],
-                name=frame_data.get("name", f"Frame {frame_data['index'] + 1}")
-            )
-            
-            # Reconstruct layers
-            for layer_data in frame_data["layers"]:
-                # Map material index
-                old_material_idx = layer_data["material_index"]
-                new_material_idx = material_index_mapping.get(old_material_idx, old_material_idx)
-                
-                layer = Layer(
-                    material_index=new_material_idx,
-                    name=layer_data.get("name", f"Layer {layer_data['index'] + 1}"),
-                    x=layer_data.get("x", 0),
-                    y=layer_data.get("y", 0),
-                    crop_x=layer_data.get("crop_x", 0),
-                    crop_y=layer_data.get("crop_y", 0),
-                    crop_width=layer_data.get("crop_width"),
-                    crop_height=layer_data.get("crop_height"),
-                    scale=layer_data.get("scale", 1.0),
-                    opacity=layer_data.get("opacity", 1.0),
-                    visible=layer_data.get("visible", True)
-                )
-                frame.add_layer(layer)
-            
-            editor.add_frame(frame)
-        
-        # Extract settings
-        settings = template.get("settings", {})
-        
-        return editor, settings
+    Export / import CompositionGroup templates (JSON).
 
-    # ----- Layer timeline templates -----
-    @staticmethod
-    def export_layer_timeline_template(
-        layer_editor: LayerTimelineEditor,
-        group_manager: Optional[GroupManager],
-        transparent_bg: bool,
-        color_count: int = 256
-    ) -> Dict[str, Any]:
-        """
-        Export the layer timeline editor state as a template with group support.
-
-        The template schema:
+    Template schema
+    ───────────────
+    {
+      "version": "4.0",
+      "format": "composition_group",
+      "settings": {
+        "transparent_bg": bool,
+        "color_count": int        # 16 / 32 / 64 / 128 / 256
+      },
+      "root_group_id": int | null,
+      "groups": [
         {
-          "version": "3.0",
-          "format": "layer_timeline",
-          "settings": { ... },
-          "groups": [ {...}, ... ],  # MaterialGroup definitions
-          "timebase": { "durations_ms": [int, ...] },
-          "main_track_index": int,
-          "layer_tracks": [
-             { "name": str, "offset_x": int, "offset_y": int,
-               "frames": [ null | {"material_index": int, "group_index": int, "x": int, "y": int}, ... ]
-             }, ...
+          "id": int,
+          "name": str,
+          "default_duration_ms": int,
+          "entries": [
+            { "type": "frame",     "material_index": int, "x": int, "y": int, "duration_ms": int|null },
+            { "type": "subgroup",  "group_id": int, "loop_count": int, "x": int, "y": int,
+                                   "duration_override_ms": int|null },
+            { "type": "layerblock","default_duration_ms": int,
+              "timelines": [
+                [ {"type": "frameslot", "material_index": int, "x": int, "y": int}, ... ],
+                [ {"type": "groupslot", "group_id": int, "loop_count": int, "x": int, "y": int}, ... ]
+              ]
+            }
           ]
-        }
-        
-        Note: output_width, output_height, and loop_count are NOT stored in templates.
-        They should be determined from materials or set by the user.
-        """
-        template: Dict[str, Any] = {
-            "version": TemplateManager.VERSION,
-            "format": "layer_timeline",
+        },
+        ...
+      ]
+    }
+    """
+
+    # ── Export ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def export_composition_template(
+        group_manager: GroupManager,
+        transparent_bg: bool = False,
+        color_count: int = 256,
+    ) -> Dict[str, Any]:
+        """Serialize a GroupManager into a template dict."""
+        groups_list = []
+        for gid, group in enumerate(group_manager.groups):
+            groups_list.append(group_to_dict(gid, group))
+
+        return {
+            "version": VERSION,
+            "format": FORMAT,
             "settings": {
                 "transparent_bg": transparent_bg,
                 "color_count": color_count,
             },
-            "groups": [],
-            "timebase": {
-                "durations_ms": list(layer_editor.durations_ms),
-            },
-            "main_track_index": int(layer_editor.main_track_index),
-            "layer_tracks": []
+            "root_group_id": group_manager.get_root_group_id(),
+            "groups": groups_list,
         }
 
-        # Export groups if present
-        if group_manager is not None:
-            for group in group_manager.get_all_groups():
-                template["groups"].append(group.to_dict())
-
-        frame_count = len(layer_editor.durations_ms)
-        for track in layer_editor.layer_tracks:
-            track_entry: Dict[str, Any] = {
-                "name": track.name,
-                "offset_x": track.offset_x,
-                "offset_y": track.offset_y,
-                "frames": []
-            }
-            for i in range(frame_count):
-                if i < len(track.frames):
-                    fr = track.frames[i]
-                    if fr.material_index is None and fr.group_index is None:
-                        track_entry["frames"].append(None)
-                    else:
-                        track_entry["frames"].append({
-                            "material_index": fr.material_index,
-                            "group_index": fr.group_index,
-                            "x": fr.x,
-                            "y": fr.y,
-                        })
-                else:
-                    track_entry["frames"].append(None)
-            template["layer_tracks"].append(track_entry)
-
-        return template
+    # ── Import ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def apply_layer_timeline_template(
+    def import_composition_template(
         template: Dict[str, Any],
         material_index_mapping: Optional[Dict[int, int]] = None,
-        max_material_index: Optional[int] = None
-    ) -> Tuple[LayerTimelineEditor, GroupManager, Dict[str, Any]]:
+    ) -> Tuple[GroupManager, Dict[str, Any]]:
         """
-        Apply a layer timeline template to create a new LayerTimelineEditor and GroupManager
+        Deserialize a template dict back into a GroupManager.
 
         Args:
-            template: Layer timeline template dictionary
-            material_index_mapping: Optional mapping from template material indices to
-                                    current material indices. Defaults to identity.
-            max_material_index: Maximum valid material index (exclusive). If provided,
-                               material indices >= this value will be filtered out.
+            template: Template dict (must be format "composition_group").
+            material_index_mapping: Optional {old_idx: new_idx} remapping for
+                                    applying the template to a different tile set.
+
         Returns:
-            (LayerTimelineEditor, GroupManager, settings)
+            (GroupManager, settings_dict)
         """
-        editor = LayerTimelineEditor()
-        group_manager = GroupManager()
+        if template.get("format") != FORMAT:
+            raise ValueError(
+                f"Expected format={FORMAT!r}, got {template.get('format')!r}"
+            )
 
-        # Default to identity mapping
-        if material_index_mapping is None:
-            material_index_mapping = {}
+        gm = GroupManager()
+        for group_data in template.get("groups", []):
+            gm.add_group(group_from_dict(group_data))
 
-        # Load groups
-        groups_data = template.get("groups", [])
-        for group_data in groups_data:
-            group = MaterialGroup.from_dict(group_data)
-            # Map material indices in group
-            if material_index_mapping:
-                group.material_indices = [
-                    material_index_mapping.get(idx, idx) for idx in group.material_indices
-                ]
-            
-            # Filter out material indices that are out of range
-            if max_material_index is not None:
-                original_count = len(group.material_indices)
-                group.material_indices = [
-                    idx for idx in group.material_indices if idx < max_material_index
-                ]
-                filtered_count = original_count - len(group.material_indices)
-                if filtered_count > 0:
-                    print(f"INFO: Group '{group.name}' - filtered out {filtered_count} material(s) that exceed material library size")
-            
-            group_manager.add_group(group)
+        root = template.get("root_group_id")
+        if root is not None and 0 <= root < len(gm.groups):
+            gm.set_root_group_id(root)
 
-        # Load timebase
-        timebase = template.get("timebase", {})
-        durations = list(timebase.get("durations_ms", []))
-        editor.durations_ms = durations
+        if material_index_mapping:
+            remap_material_indices(gm, material_index_mapping)
 
-        # Load layer tracks
-        tracks_data: List[Dict[str, Any]] = template.get("layer_tracks", [])
-        if not tracks_data:
-            # Backward compatibility: try "timelines" key
-            tracks_data = template.get("timelines", [])
-        
-        frame_count = len(durations)
-        for track_data in tracks_data:
-            name = track_data.get("name", f"Layer {len(editor.layer_tracks) + 1}")
-            track_index = editor.add_layer_track(name)
-            track = editor.get_layer_track(track_index)
-            if track is None:
-                continue
-            track.offset_x = int(track_data.get("offset_x", 0))
-            track.offset_y = int(track_data.get("offset_y", 0))
+        settings = dict(template.get("settings", {}))
+        return gm, settings
 
-            frames_data = track_data.get("frames", [])
-            # Ensure length
-            while len(track.frames) < frame_count:
-                track.frames.append(LayerFrame())
-            for i in range(min(frame_count, len(frames_data))):
-                fr = frames_data[i]
-                if fr is None:
-                    track.frames[i] = LayerFrame()
-                else:
-                    # Map material index if given
-                    old_mat_idx = fr.get("material_index")
-                    new_mat_idx = material_index_mapping.get(old_mat_idx, old_mat_idx) if old_mat_idx is not None else None
-                    
-                    # Group index (no mapping needed - groups were already mapped above)
-                    group_idx = fr.get("group_index")
-                    
-                    track.frames[i] = LayerFrame(
-                        material_index=new_mat_idx,
-                        group_index=group_idx,
-                        x=int(fr.get("x", 0)),
-                        y=int(fr.get("y", 0)),
-                    )
+    # ── File I/O ──────────────────────────────────────────────────────────────
 
-        # Main track index
-        main_idx = int(template.get("main_track_index", template.get("main_timeline_index", 0)))
-        editor.set_main_track(min(max(0, main_idx), len(editor.layer_tracks) - 1))
+    @staticmethod
+    def save_template_to_file(template: Dict[str, Any], file_path: str) -> None:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(template, f, indent=2, ensure_ascii=False)
 
-        settings = template.get("settings", {})
-        return editor, group_manager, settings
+    @staticmethod
+    def load_template_from_file(file_path: str) -> Dict[str, Any]:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    # ── Info & validation ─────────────────────────────────────────────────────
 
     @staticmethod
     def get_template_info(template: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get summary information about a template. Supports both legacy layered and
-        new layer timeline formats.
-        """
-        # Layer timeline format detection (including backward compatibility with "multi_timeline")
-        if template.get("format") in ("layer_timeline", "multi_timeline") or ("layer_tracks" in template or "timelines" in template) and "timebase" in template:
+        """Return a summary dict for display in the UI."""
+        if template.get("format") == FORMAT:
+            groups = template.get("groups", [])
             settings = template.get("settings", {})
-            durations = template.get("timebase", {}).get("durations_ms", [])
-            
-            # Support both new "layer_tracks" and old "timelines" keys
-            tracks = template.get("layer_tracks", template.get("timelines", []))
-            
-            frame_count = len(durations)
-            unique_materials = set()
-            unique_groups = set()
-            placements = 0
-            for track in tracks:
-                for fr in track.get("frames", []):
-                    if isinstance(fr, dict):
-                        mi = fr.get("material_index")
-                        gi = fr.get("group_index")
-                        if mi is not None:
-                            unique_materials.add(mi)
-                            placements += 1
-                        if gi is not None:
-                            unique_groups.add(gi)
-                            placements += 1
-            total_duration = sum(int(d) for d in durations)
+
+            # Count total frame entries across all groups
+            total_frames = 0
+            total_subgroups = 0
+            total_layerblocks = 0
+            mat_indices: set = set()
+
+            def _scan_entries(entries):
+                nonlocal total_frames, total_subgroups, total_layerblocks
+                for e in entries:
+                    t = e.get("type")
+                    if t == "frame":
+                        total_frames += 1
+                        mat_indices.add(e.get("material_index", 0))
+                    elif t == "subgroup":
+                        total_subgroups += 1
+                    elif t == "layerblock":
+                        total_layerblocks += 1
+                        for tl in e.get("timelines", []):
+                            for s in tl:
+                                if s.get("type") == "frameslot":
+                                    mat_indices.add(s.get("material_index", 0))
+
+            for g in groups:
+                _scan_entries(g.get("entries", []))
+
             return {
-                "version": template.get("version", "unknown"),
-                "format": "layer_timeline",
-                "frame_count": frame_count,
-                "track_count": len(tracks),
-                "unique_materials_used": len(unique_materials),
-                "unique_groups_used": len(unique_groups),
-                "placements": placements,
-                "timebase_total_duration_ms": total_duration,
-                "output_size": (settings.get("output_width", 0), settings.get("output_height", 0)),
-                "loop_count": settings.get("loop_count", 0),
+                "version": template.get("version", VERSION),
+                "format": FORMAT,
+                "group_count": len(groups),
+                "root_group_id": template.get("root_group_id"),
+                "total_frame_entries": total_frames,
+                "total_subgroup_entries": total_subgroups,
+                "total_layerblock_entries": total_layerblocks,
+                "unique_material_indices": sorted(mat_indices),
+                "materials_needed": (max(mat_indices) + 1) if mat_indices else 0,
                 "transparent_bg": settings.get("transparent_bg", False),
                 "color_count": settings.get("color_count", 256),
             }
 
-        # Fallback to legacy layered format
-        settings = template.get("settings", {})
-        frames = template.get("frames", [])
-        material_indices = set()
-        total_layers = 0
-        for frame in frames:
-            for layer in frame.get("layers", []):
-                material_indices.add(layer["material_index"])
-                total_layers += 1
-        total_duration = sum(frame.get("duration", 100) for frame in frames)
-        return {
-            "version": template.get("version", "unknown"),
-            "format": "layered",
-            "frame_count": len(frames),
-            "material_count": settings.get("material_count", len(material_indices)),
-            "unique_materials_used": len(material_indices),
-            "total_layers": total_layers,
-            "total_duration_ms": total_duration,
-            "output_size": (settings.get("output_width", 0), settings.get("output_height", 0)),
-            "loop_count": settings.get("loop_count", 0),
-            "transparent_bg": settings.get("transparent_bg", False)
-        }
-    
+        raise ValueError(
+            f"Unsupported template format: {template.get('format')!r} "
+            f"(expected {FORMAT!r})"
+        )
 
-# Backward compatibility aliases (deprecated)
-export_multi_template = TemplateManager.export_layer_timeline_template
-apply_multi_template = TemplateManager.apply_layer_timeline_template
+    @staticmethod
+    def validate_template(template: Dict[str, Any]) -> bool:
+        """
+        Validate that a template has the required structure.
+
+        Raises ValueError if invalid, returns True if valid.
+        """
+        if not isinstance(template, dict):
+            raise ValueError("Template must be a dict")
+        if "version" not in template:
+            raise ValueError("Template missing 'version'")
+        if template.get("format") != FORMAT:
+            raise ValueError(
+                f"Unsupported format {template.get('format')!r}; "
+                f"expected {FORMAT!r}"
+            )
+        if "groups" not in template:
+            raise ValueError("Template missing 'groups'")
+        return True
+
+    @staticmethod
+    def estimate_required_tiles(template: Dict[str, Any]) -> int:
+        """Return max_material_index + 1 for the template (tiles needed for batch)."""
+        if template.get("format") != FORMAT:
+            return 0
+        info = TemplateManager.get_template_info(template)
+        return info.get("materials_needed", 0)
