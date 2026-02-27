@@ -1,7 +1,7 @@
 from .theme import AppTheme
 from .preview_widget import PreviewWidget
 from .preview_page_widget import PreviewPageWidget
-from .tile_editor import TileEditorWidget
+from .tile_editor import TileEditorWidget, TileSplitterPage
 from .batch_processor_widget import BatchProcessorWidget
 from .gif_optimizer_widget import GifOptimizerWidget
 from .group_editor_dialog import GroupEditorDialog
@@ -15,6 +15,7 @@ __all__ = [
     'PreviewPageWidget',
     'GroupCompositionWidget',
     'TileEditorWidget',
+    'TileSplitterPage',
     'BatchProcessorWidget',
     'GifOptimizerWidget',
     'GroupEditorDialog',

@@ -1,12 +1,12 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QLabel, QSpinBox, QGroupBox, QFileDialog, QMessageBox,
                               QGridLayout, QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
-                              QCheckBox, QScrollArea)
-from PyQt6.QtCore import pyqtSignal, Qt, QSize
-from PyQt6.QtGui import QIcon, QPixmap, QImage
+                              QCheckBox, QScrollArea, QSplitter)
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QRectF
+from PyQt6.QtGui import QIcon, QPixmap, QImage, QPainter, QPen, QColor
 from PIL import Image
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Set
 
 from .theme import AppTheme as _T
 
@@ -441,3 +441,433 @@ class TileEditorWidget(QWidget):
         self.split_by_grid_button.setEnabled(has_images)
         self.split_by_size_button.setEnabled(has_images)
         self.clear_images_button.setEnabled(has_images)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TilePreviewWidget — interactive image canvas with grid overlay & cell toggle
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TilePreviewWidget(QWidget):
+    """Displays an image with a tile-grid overlay. Click cells to toggle selection."""
+
+    selection_changed = pyqtSignal(list)  # List[Tuple[int, int]] selected (row, col)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pil_image: Optional[Image.Image] = None
+        self._rows = 4
+        self._cols = 4
+        self._selected: Set[Tuple[int, int]] = set()
+        # Cached geometry of the scaled image (updated in paintEvent)
+        self._img_x = 0
+        self._img_y = 0
+        self._img_w = 0
+        self._img_h = 0
+        self.setMinimumSize(200, 200)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+    # ── public API ──────────────────────────────────────────────
+
+    def set_image(self, pil_image: Optional[Image.Image]):
+        self._pil_image = pil_image
+        self._select_all()
+        self.update()
+
+    def set_grid(self, rows: int, cols: int):
+        self._rows = max(1, rows)
+        self._cols = max(1, cols)
+        self._select_all()
+        self.update()
+
+    def select_all(self):
+        self._select_all()
+        self.update()
+
+    def deselect_all(self):
+        self._selected = set()
+        self.selection_changed.emit([])
+        self.update()
+
+    def get_selected_positions(self) -> List[Tuple[int, int]]:
+        return sorted(self._selected)
+
+    # ── internal ────────────────────────────────────────────────
+
+    def _select_all(self):
+        self._selected = {(r, c) for r in range(self._rows) for c in range(self._cols)}
+        self.selection_changed.emit(list(self._selected))
+
+    def _cell_rect(self, row: int, col: int) -> QRectF:
+        if self._img_w == 0 or self._img_h == 0:
+            return QRectF()
+        cw = self._img_w / self._cols
+        ch = self._img_h / self._rows
+        return QRectF(self._img_x + col * cw, self._img_y + row * ch, cw, ch)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.fillRect(self.rect(), QColor(_T.BG))
+
+        if self._pil_image is None:
+            painter.setPen(QColor(_T.TEXT_DIM))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Select an image on the left to preview")
+            return
+
+        # Convert PIL → QPixmap and scale to fit
+        img = self._pil_image.convert("RGBA")
+        data = img.tobytes("raw", "RGBA")
+        qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimg)
+
+        w, h = self.width() - 4, self.height() - 4
+        scaled = pixmap.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+        self._img_x = (self.width() - scaled.width()) // 2
+        self._img_y = (self.height() - scaled.height()) // 2
+        self._img_w = scaled.width()
+        self._img_h = scaled.height()
+        painter.drawPixmap(self._img_x, self._img_y, scaled)
+
+        # Draw grid cells
+        cw = self._img_w / self._cols
+        ch = self._img_h / self._rows
+        for r in range(self._rows):
+            for c in range(self._cols):
+                rect = QRectF(self._img_x + c * cw, self._img_y + r * ch, cw, ch)
+                if (r, c) in self._selected:
+                    painter.fillRect(rect, QColor(80, 200, 100, 70))
+                    painter.setPen(QPen(QColor(80, 220, 100), 1.5))
+                else:
+                    painter.fillRect(rect, QColor(200, 60, 60, 50))
+                    painter.setPen(QPen(QColor(220, 80, 80, 180), 1))
+                painter.drawRect(rect)
+
+        # Count label
+        n = len(self._selected)
+        total = self._rows * self._cols
+        painter.setPen(QColor(_T.TEXT))
+        painter.drawText(4, self.height() - 6, f"{n}/{total} tiles selected")
+
+    def mousePressEvent(self, event):
+        if self._pil_image is None or self._img_w == 0:
+            return
+        mx, my = event.position().x(), event.position().y()
+        if not (self._img_x <= mx < self._img_x + self._img_w and
+                self._img_y <= my < self._img_y + self._img_h):
+            return
+        cw = self._img_w / self._cols
+        ch = self._img_h / self._rows
+        col = int((mx - self._img_x) / cw)
+        row = int((my - self._img_y) / ch)
+        if 0 <= row < self._rows and 0 <= col < self._cols:
+            if (row, col) in self._selected:
+                self._selected.discard((row, col))
+            else:
+                self._selected.add((row, col))
+            self.selection_changed.emit(list(self._selected))
+            self.update()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TileSplitterPage — full-page 2-panel tile splitting tool
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TileSplitterPage(QWidget):
+    """Full-page tile splitter: left=image list+settings, right=interactive preview."""
+
+    tiles_created = pyqtSignal(list)  # same contract as TileEditorWidget
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.loaded_images: List[Tuple[Image.Image, str]] = []
+        self._init_ui()
+
+    def _init_ui(self):
+        root = QHBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self._build_left_panel())
+        splitter.addWidget(self._build_right_panel())
+        splitter.setSizes([420, 780])
+
+        root.addWidget(splitter)
+        self.setLayout(root)
+
+    # ── left panel ──────────────────────────────────────────────
+
+    def _build_left_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
+
+        # Load buttons
+        load_row = QHBoxLayout()
+        btn_single = QPushButton("Load Image")
+        btn_single.clicked.connect(self._load_single)
+        load_row.addWidget(btn_single)
+        btn_multi = QPushButton("Load Multiple")
+        btn_multi.clicked.connect(self._load_multiple)
+        load_row.addWidget(btn_multi)
+        btn_clear = QPushButton("Clear")
+        btn_clear.clicked.connect(self._clear_images)
+        load_row.addWidget(btn_clear)
+        layout.addLayout(load_row)
+
+        # Images table
+        lbl = QLabel("Loaded Images (click row to preview)")
+        lbl.setStyleSheet("font-size: 11px; color: #9ba8c0;")
+        layout.addWidget(lbl)
+
+        self.images_table = QTableWidget()
+        self.images_table.setColumnCount(3)
+        self.images_table.setHorizontalHeaderLabels(["Preview", "Filename", "Size"])
+        self.images_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.images_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.images_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.images_table.setColumnWidth(0, 60)
+        self.images_table.setColumnWidth(2, 80)
+        self.images_table.setIconSize(QSize(48, 48))
+        self.images_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.images_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.images_table.verticalHeader().setVisible(False)
+        self.images_table.selectionModel().currentRowChanged.connect(self._on_image_row_changed)
+        layout.addWidget(self.images_table, stretch=1)
+
+        # Settings
+        settings_group = QGroupBox("Split Settings")
+        sg_layout = QVBoxLayout()
+        sg_layout.setSpacing(4)
+
+        # Grid mode
+        grid_row = QHBoxLayout()
+        grid_row.addWidget(QLabel("Grid:"))
+        self.rows_spin = QSpinBox()
+        self.rows_spin.setRange(1, 100); self.rows_spin.setValue(4)
+        self.rows_spin.setMaximumWidth(55)
+        self.rows_spin.valueChanged.connect(self._on_grid_changed)
+        grid_row.addWidget(self.rows_spin)
+        grid_row.addWidget(QLabel("×"))
+        self.cols_spin = QSpinBox()
+        self.cols_spin.setRange(1, 100); self.cols_spin.setValue(4)
+        self.cols_spin.setMaximumWidth(55)
+        self.cols_spin.valueChanged.connect(self._on_grid_changed)
+        grid_row.addWidget(self.cols_spin)
+        self.row_base_chk = QCheckBox("Row-major")
+        self.row_base_chk.setChecked(True)
+        grid_row.addWidget(self.row_base_chk)
+        self.split_grid_btn = QPushButton("Split by Grid")
+        self.split_grid_btn.clicked.connect(self._split_by_grid)
+        grid_row.addWidget(self.split_grid_btn)
+        sg_layout.addLayout(grid_row)
+
+        # Size mode
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Tile:"))
+        self.tile_w_spin = QSpinBox()
+        self.tile_w_spin.setRange(1, 10000); self.tile_w_spin.setValue(32)
+        self.tile_w_spin.setMaximumWidth(55)
+        self.tile_w_spin.valueChanged.connect(self._on_size_changed)
+        size_row.addWidget(self.tile_w_spin)
+        size_row.addWidget(QLabel("×"))
+        self.tile_h_spin = QSpinBox()
+        self.tile_h_spin.setRange(1, 10000); self.tile_h_spin.setValue(32)
+        self.tile_h_spin.setMaximumWidth(55)
+        self.tile_h_spin.valueChanged.connect(self._on_size_changed)
+        size_row.addWidget(self.tile_h_spin)
+        self.split_size_btn = QPushButton("Split by Size")
+        self.split_size_btn.clicked.connect(self._split_by_size)
+        size_row.addWidget(self.split_size_btn)
+        sg_layout.addLayout(size_row)
+
+        settings_group.setLayout(sg_layout)
+        layout.addWidget(settings_group)
+
+        # Select all / deselect all
+        sel_row = QHBoxLayout()
+        btn_all = QPushButton("Select All Tiles")
+        btn_all.clicked.connect(lambda: self.preview.select_all())
+        sel_row.addWidget(btn_all)
+        btn_none = QPushButton("Deselect All")
+        btn_none.clicked.connect(lambda: self.preview.deselect_all())
+        sel_row.addWidget(btn_none)
+        layout.addLayout(sel_row)
+
+        # Result label
+        self.result_label = QLabel("")
+        layout.addWidget(self.result_label)
+
+        panel.setLayout(layout)
+        return panel
+
+    # ── right panel ─────────────────────────────────────────────
+
+    def _build_right_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        lbl = QLabel("Tile Preview  (click cell to toggle selection)")
+        lbl.setStyleSheet("font-size: 11px; color: #9ba8c0;")
+        layout.addWidget(lbl)
+
+        self.preview = TilePreviewWidget()
+        layout.addWidget(self.preview, stretch=1)
+
+        panel.setLayout(layout)
+        return panel
+
+    # ── slots ────────────────────────────────────────────────────
+
+    def _load_single(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if path:
+            self._load_path(path)
+
+    def _load_multiple(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Images", "", "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
+        for p in paths:
+            self._load_path(p)
+
+    def _load_path(self, path: str):
+        try:
+            img = Image.open(path)
+            self.loaded_images.append((img, path))
+            self._refresh_table()
+            # Auto-select newly added row
+            self.images_table.selectRow(len(self.loaded_images) - 1)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load:\n{e}")
+
+    def _clear_images(self):
+        self.loaded_images.clear()
+        self._refresh_table()
+        self.preview.set_image(None)
+
+    def _refresh_table(self):
+        self.images_table.setRowCount(0)
+        for i, (img, path) in enumerate(self.loaded_images):
+            self.images_table.insertRow(i)
+            # Preview icon
+            thumb = self._make_thumb(img, 48, 48)
+            pi = QTableWidgetItem()
+            pi.setData(Qt.ItemDataRole.DecorationRole, thumb)
+            pi.setFlags(pi.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.images_table.setItem(i, 0, pi)
+            # Filename
+            ni = QTableWidgetItem(Path(path).name)
+            ni.setFlags(ni.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.images_table.setItem(i, 1, ni)
+            # Size
+            si = QTableWidgetItem(f"{img.width}×{img.height}")
+            si.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            si.setFlags(si.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.images_table.setItem(i, 2, si)
+            self.images_table.setRowHeight(i, 54)
+
+    def _on_image_row_changed(self, current, _previous):
+        row = current.row()
+        if 0 <= row < len(self.loaded_images):
+            img, _ = self.loaded_images[row]
+            self.preview.set_image(img)
+            # Update grid based on current settings
+            self.preview.set_grid(self.rows_spin.value(), self.cols_spin.value())
+
+    def _on_grid_changed(self):
+        self.preview.set_grid(self.rows_spin.value(), self.cols_spin.value())
+
+    def _on_size_changed(self):
+        """Recalculate grid from tile size for the currently selected image."""
+        row = self.images_table.currentRow()
+        if 0 <= row < len(self.loaded_images):
+            img, _ = self.loaded_images[row]
+            tw = max(1, self.tile_w_spin.value())
+            th = max(1, self.tile_h_spin.value())
+            rows = max(1, img.height // th)
+            cols = max(1, img.width // tw)
+            self.preview.set_grid(rows, cols)
+
+    def _get_selected_image_rows(self) -> List[int]:
+        return sorted({idx.row() for idx in self.images_table.selectedIndexes()})
+
+    def _split_by_grid(self):
+        from ..core.image_loader import ImageLoader
+        selected_rows = self._get_selected_image_rows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Select at least one image!")
+            return
+        positions = self.preview.get_selected_positions()
+        if not positions:
+            QMessageBox.warning(self, "Warning", "Select at least one tile in the preview!")
+            return
+        rows = self.rows_spin.value()
+        cols = self.cols_spin.value()
+        row_base = self.row_base_chk.isChecked()
+        try:
+            tiles = []
+            for img_idx in selected_rows:
+                img, path = self.loaded_images[img_idx]
+                stem = Path(path).stem
+                split = ImageLoader.split_into_tiles(img, rows, cols, row_base=row_base)
+                for r, c in positions:
+                    ti = r * cols + c
+                    if ti < len(split):
+                        tiles.append((split[ti], stem))
+            if not tiles:
+                QMessageBox.warning(self, "Warning", "No valid tiles for selected positions!")
+                return
+            self.result_label.setText(f"✓ {len(tiles)} tiles added to material library")
+            self.result_label.setStyleSheet(f"color: {_T.SUCCESS};")
+            self.tiles_created.emit(tiles)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Split failed:\n{e}")
+            self.result_label.setText(f"✗ {e}")
+            self.result_label.setStyleSheet(f"color: {_T.ERROR};")
+
+    def _split_by_size(self):
+        from ..core.image_loader import ImageLoader
+        selected_rows = self._get_selected_image_rows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Warning", "Select at least one image!")
+            return
+        positions = self.preview.get_selected_positions()
+        if not positions:
+            QMessageBox.warning(self, "Warning", "Select at least one tile in the preview!")
+            return
+        tw = self.tile_w_spin.value()
+        th = self.tile_h_spin.value()
+        try:
+            tiles = []
+            for img_idx in selected_rows:
+                img, path = self.loaded_images[img_idx]
+                stem = Path(path).stem
+                split = ImageLoader.split_by_tile_size(img, tw, th)
+                cols = img.width // tw
+                for r, c in positions:
+                    ti = r * cols + c
+                    if ti < len(split):
+                        tiles.append((split[ti], stem))
+            if not tiles:
+                QMessageBox.warning(self, "Warning", "No valid tiles for selected positions!")
+                return
+            self.result_label.setText(f"✓ {len(tiles)} tiles added to material library")
+            self.result_label.setStyleSheet(f"color: {_T.SUCCESS};")
+            self.tiles_created.emit(tiles)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Split failed:\n{e}")
+            self.result_label.setText(f"✗ {e}")
+            self.result_label.setStyleSheet(f"color: {_T.ERROR};")
+
+    @staticmethod
+    def _make_thumb(pil_image: Image.Image, w: int, h: int) -> QPixmap:
+        img = pil_image.copy()
+        img.thumbnail((w, h), Image.Resampling.LANCZOS)
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        data = img.tobytes("raw", "RGBA")
+        qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+        return QPixmap.fromImage(qimg)

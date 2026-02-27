@@ -8,12 +8,12 @@ Allows users to:
 4. Process all images automatically
 """
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QLabel, QSpinBox, QGroupBox, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QComboBox, QProgressBar,
                               QRadioButton, QButtonGroup, QScrollArea, QGridLayout,
-                              QCheckBox, QLineEdit)
-from PyQt6.QtCore import pyqtSignal, Qt, QThread
+                              QCheckBox, QLineEdit, QSplitter)
+from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QImage
 from PIL import Image
 from pathlib import Path
@@ -318,14 +318,139 @@ class BatchProcessorWidget(QWidget):
         layout.addLayout(action_layout)
         
         layout.addStretch()
-        
-        self.setLayout(layout)
-        
+
+        # ── Column 1: controls in a scroll area (320 px — same as Material Library) ──
+        left_widget = QWidget()
+        left_widget.setLayout(layout)
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_widget)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMinimumWidth(240)
+
+        # ── Column 2: tile grid preview ───────────────────────────────────────
+        from .tile_editor import TilePreviewWidget
+        tile_col = QWidget()
+        tile_col_layout = QVBoxLayout(tile_col)
+        tile_col_layout.setContentsMargins(4, 4, 4, 4)
+        tile_lbl = QLabel("Tile Preview")
+        tile_lbl.setStyleSheet("font-size: 11px; color: #9ba8c0;")
+        tile_col_layout.addWidget(tile_lbl)
+        self.batch_tile_preview = TilePreviewWidget()
+        tile_col_layout.addWidget(self.batch_tile_preview)
+
+        # ── Column 3: GIF animation preview ──────────────────────────────────
+        from .preview_widget import PreviewWidget
+        gif_col = QWidget()
+        gif_col_layout = QVBoxLayout(gif_col)
+        gif_col_layout.setContentsMargins(4, 4, 4, 4)
+        anim_lbl = QLabel("GIF Preview  (click to generate)")
+        anim_lbl.setStyleSheet("font-size: 11px; color: #9ba8c0;")
+        gif_col_layout.addWidget(anim_lbl)
+        self._gen_preview_btn = QPushButton("▶  Generate GIF Preview (first image)")
+        self._gen_preview_btn.setEnabled(False)
+        self._gen_preview_btn.clicked.connect(self._generate_gif_preview)
+        gif_col_layout.addWidget(self._gen_preview_btn)
+        self.batch_preview_widget = PreviewWidget()
+        gif_col_layout.addWidget(self.batch_preview_widget)
+
+        # ── 3-column splitter ─────────────────────────────────────────────────
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(tile_col)
+        splitter.addWidget(gif_col)
+        splitter.setSizes([320, 640, 640])
+
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(splitter)
+        self.setLayout(outer)
+
+        # Wire image list selection → tile preview
+        self.image_list.currentRowChanged.connect(self._on_image_list_row_changed)
+        # Wire grid settings → tile preview
+        self.rows_spinbox.valueChanged.connect(self._update_tile_preview_grid)
+        self.cols_spinbox.valueChanged.connect(self._update_tile_preview_grid)
+
         # Initialize
         self.update_position_selector()
         self.update_button_states()
         self.on_split_mode_changed()
     
+    def _on_image_list_row_changed(self, row: int):
+        """Update tile preview when a different image is highlighted."""
+        if 0 <= row < len(self.image_paths):
+            try:
+                img = Image.open(self.image_paths[row])
+                self.batch_tile_preview.set_image(img)
+                self._update_tile_preview_grid()
+                self._gen_preview_btn.setEnabled(self.selected_template is not None)
+            except Exception:
+                pass
+
+    def _update_tile_preview_grid(self):
+        rows = self.rows_spinbox.value()
+        cols = self.cols_spinbox.value()
+        self.batch_tile_preview.set_grid(rows, cols)
+
+    def _generate_gif_preview(self):
+        """Generate a GIF preview for the currently highlighted image."""
+        if not self.image_paths or not self.selected_template:
+            return
+        row = self.image_list.currentRow()
+        img_path = self.image_paths[row] if 0 <= row < len(self.image_paths) else self.image_paths[0]
+        try:
+            from ..core.image_loader import ImageLoader, MaterialManager
+            from ..core.gif_builder import GifBuilder
+            from ..core.template_manager import TemplateManager
+
+            image = ImageLoader.load_image(img_path)
+
+            split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
+            if split_mode == "grid":
+                tiles = ImageLoader.split_into_tiles(
+                    image, self.rows_spinbox.value(), self.cols_spinbox.value())
+            else:
+                tiles = ImageLoader.split_by_tile_size(
+                    image, self.tile_width_spinbox.value(), self.tile_height_spinbox.value())
+
+            if self.selected_positions:
+                cols_ = (self.cols_spinbox.value() if split_mode == "grid"
+                         else max(1, image.width // self.tile_width_spinbox.value()))
+                filtered = []
+                for r, c in self.selected_positions:
+                    ti = r * cols_ + c
+                    if ti < len(tiles):
+                        filtered.append(tiles[ti])
+                if filtered:
+                    tiles = filtered
+
+            if not tiles:
+                return
+
+            mm = MaterialManager()
+            stem = Path(img_path).stem
+            for i, tile in enumerate(tiles):
+                mm.add_material(tile, f"{stem}_tile_{i}")
+
+            gm, settings = TemplateManager.import_composition_template(self.selected_template)
+            gb = GifBuilder()
+            gb.set_output_size(self.output_width_spinbox.value(),
+                               self.output_height_spinbox.value())
+            gb.set_loop(0)
+            if settings.get("transparent_bg"):
+                gb.set_background_color(0, 0, 0, 0)
+            else:
+                gb.set_background_color(255, 255, 255, 255)
+
+            root_id = gm.get_root_group_id()
+            if root_id is None:
+                return
+            frames = gb.get_preview_frames_for_group(root_id, gm, mm)
+            self.batch_preview_widget.set_frames(frames)
+            self.batch_preview_widget.play()
+        except Exception as e:
+            QMessageBox.warning(self, "Preview Failed", f"Could not generate preview:\n{e}")
+
     def add_images(self):
         """Add images to the batch list"""
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -407,7 +532,11 @@ class BatchProcessorWidget(QWidget):
                     self.template_info_label.setText(f"Template info unavailable: {e}")
 
         self.update_button_states()
-    
+        if hasattr(self, '_gen_preview_btn'):
+            self._gen_preview_btn.setEnabled(
+                self.selected_template is not None and bool(self.image_paths)
+            )
+
     def on_split_mode_changed(self):
         """Handle split mode change"""
         is_grid = self.grid_mode_radio.isChecked()
@@ -582,9 +711,11 @@ class BatchProcessorWidget(QWidget):
         """Update button states based on current state"""
         has_images = len(self.image_paths) > 0
         has_template = self.selected_template is not None
-        
+
         self.validate_btn.setEnabled(has_images and has_template)
         self.process_btn.setEnabled(has_images and has_template)
+        if hasattr(self, '_gen_preview_btn'):
+            self._gen_preview_btn.setEnabled(has_images and has_template)
     
     def start_batch_processing(self):
         """Start the batch processing"""

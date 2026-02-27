@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout, QSizePolicy
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage, QMouseEvent, QColor
 from PIL import Image
@@ -64,12 +64,14 @@ class PreviewWidget(QWidget):
         
         layout.addLayout(control_layout)
         
-        # Preview area - Fixed 400x400 size
+        # Preview area — expands to fill available space; image is scaled+centered manually
         self.preview_label = ClickableLabel("No Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setFixedSize(400, 400)  # Fixed size to prevent UI layout issues
-        self.preview_label.setScaledContents(False)  # Don't auto-scale, we'll handle it manually
-        # Default preview canvas; can be customized via set_background_color
+        self.preview_label.setScaledContents(False)
+        self.preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.preview_label.setMinimumSize(80, 80)
         self.preview_label.setStyleSheet(f"""
             QLabel {{ 
                 background-color: {_T.CARD}; 
@@ -81,7 +83,7 @@ class PreviewWidget(QWidget):
             }}
         """)
         self.preview_label.clicked.connect(self.on_preview_clicked)
-        layout.addWidget(self.preview_label)
+        layout.addWidget(self.preview_label, 1)  # stretch=1 → fills remaining height
         
         self.setLayout(layout)
     
@@ -122,45 +124,44 @@ class PreviewWidget(QWidget):
     def show_current_frame(self):
         if not self.frames or self.current_frame_index >= len(self.frames):
             return
-        
+
         pil_image, _ = self.frames[self.current_frame_index]
-        
         pixmap = self.pil_to_pixmap(pil_image)
-        
-        # Calculate scaling to fit within 400x400 while maintaining aspect ratio
-        max_size = 400
-        original_width = pixmap.width()
-        original_height = pixmap.height()
-        
-        # Calculate scale factor to fit within the square
-        scale_x = max_size / original_width
-        scale_y = max_size / original_height
-        scale = min(scale_x, scale_y)  # Use the smaller scale to ensure it fits
-        
-        # For small images, find the largest integer scale that fits within 400x400
+
+        avail_w = max(self.preview_label.width(), 80)
+        avail_h = max(self.preview_label.height(), 80)
+        orig_w, orig_h = pixmap.width(), pixmap.height()
+
+        scale = min(avail_w / orig_w, avail_h / orig_h)
+
+        # For small images prefer the largest integer upscale that still fits
         if scale > 1.0:
-            # Find the largest integer scale that keeps the image within bounds
-            max_integer_scale = int(scale)
-            if max_integer_scale * original_width <= max_size and max_integer_scale * original_height <= max_size:
-                scale = max_integer_scale
+            int_scale = int(scale)
+            if int_scale * orig_w <= avail_w and int_scale * orig_h <= avail_h:
+                scale = int_scale
             else:
                 scale = 1.0
-        
-        # Calculate new dimensions
-        new_width = int(original_width * scale)
-        new_height = int(original_height * scale)
-        
-        # Scale the pixmap while maintaining aspect ratio
+
         scaled_pixmap = pixmap.scaled(
-            new_width, 
-            new_height, 
-            Qt.AspectRatioMode.KeepAspectRatio, 
-            Qt.TransformationMode.SmoothTransformation
+            int(orig_w * scale),
+            int(orig_h * scale),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
-        
-        # Set the scaled pixmap - Qt will center it due to AlignCenter alignment
         self.preview_label.setPixmap(scaled_pixmap)
         self.update_info()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.frames:
+            self.show_current_frame()
+
+    def go_to_frame(self, index: int):
+        """Jump to a specific frame index without changing the timer state."""
+        if not self.frames:
+            return
+        self.current_frame_index = index % len(self.frames)
+        self.show_current_frame()
     
     def pil_to_pixmap(self, pil_image: Image.Image) -> QPixmap:
         """Convert PIL image to QPixmap with transparency support"""

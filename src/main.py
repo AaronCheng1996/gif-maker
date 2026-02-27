@@ -8,15 +8,17 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                               QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
                               QListWidget, QListWidgetItem, QSplitter, QLabel,
                               QGroupBox, QSpinBox, QTabWidget, QScrollArea, QCheckBox,
-                              QComboBox, QStackedWidget, QColorDialog, QInputDialog)
+                              QComboBox, QStackedWidget, QColorDialog, QInputDialog,
+                              QStatusBar, QMenu)
 from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QImage
+from PyQt6.QtGui import QIcon, QPixmap, QImage, QAction, QKeySequence
 
 from PIL import Image
 from collections import Counter
 
 from .core import MaterialManager, GifBuilder, TemplateManager, GroupManager, CompositionGroup, FrameEntry, SubGroupEntry
-from .widgets import AppTheme, PreviewWidget, PreviewPageWidget, TileEditorWidget, BatchProcessorWidget, GifOptimizerWidget, GroupCompositionWidget
+from .widgets import (AppTheme, PreviewWidget, PreviewPageWidget,
+                      TileSplitterPage, BatchProcessorWidget, GifOptimizerWidget, GroupCompositionWidget)
 
 
 class MainWindow(QMainWindow):
@@ -41,32 +43,46 @@ class MainWindow(QMainWindow):
         
         # Template storage: {name: template_dict}
         self.templates = {}
-        
-        self.auto_save_enabled = False
-        self.auto_save_interval = 5 * 60 * 1000  # 5 minutes in milliseconds
+
+        # Recent files (max 8 entries)
+        self.recent_files: List[str] = []
+
+        # Undo / Redo — snapshot-based with debounce
+        self._undo_stack: List[dict] = []
+        self._redo_stack: List[dict] = []
+        self._undo_in_progress = False          # guard against restore → signal loop
+        self._undo_debounce = QTimer()
+        self._undo_debounce.setSingleShot(True)
+        self._undo_debounce.timeout.connect(self._push_undo_snapshot)
+        self._MAX_UNDO = 50
+
+        # Auto-save (enabled by default)
+        self.auto_save_enabled = True
+        self.auto_save_interval = 5 * 60 * 1000  # 5 minutes
         self.auto_save_timer = QTimer()
         self.auto_save_timer.timeout.connect(self.auto_save_template)
-        
+        self.auto_save_timer.start(self.auto_save_interval)
+
         # Auto-save directory
         self.auto_save_dir = Path.home() / ".gif_maker" / "auto_save"
         self.auto_save_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Fixed auto-save filename (always overwrite the same file)
         self.auto_save_file = self.auto_save_dir / "auto_save_latest.json"
-        
+
         # Track last auto-save time to avoid duplicate saves
         self.last_auto_save_content_hash = None
-        
+
         self.init_ui()
         self.setWindowTitle("GIF Maker")
         self.resize(1600, 950)
         # Default preview background color (neutral dark for dark theme)
         self.preview_bg_color = "#2a2e3c"
-        
+
         # Chroma key state
-        self.chroma_key_colors = []  # List of (color_rgb, percentage, display_name) tuples
-        self.chroma_key_colors_all = []  # All analyzed colors
-        self.chroma_key_display_count = 10  # Number of colors to display at once
+        self.chroma_key_colors = []
+        self.chroma_key_colors_all = []
+        self.chroma_key_display_count = 10
     
     def init_ui(self):
         # 創建堆疊 widget 來管理不同的頁面
@@ -86,6 +102,24 @@ class MainWindow(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.main_page)
         
         self.create_menu_bar()
+
+        # Status bar setup
+        self._status_bar = QStatusBar()
+        self.setStatusBar(self._status_bar)
+        self._status_material_label = QLabel("Materials: 0")
+        self._status_group_label = QLabel("Group: —")
+        self._status_autosave_label = QLabel("Auto-save: ON")
+        self._status_bar.addPermanentWidget(self._status_material_label)
+        self._status_bar.addPermanentWidget(self._status_group_label)
+        self._status_bar.addPermanentWidget(self._status_autosave_label)
+        self._status_bar.showMessage("Ready", 3000)
+
+        # Keyboard shortcuts
+        self._setup_shortcuts()
+
+        # Capture the initial (empty) snapshot so Undo can return to it
+        self._capture_initial_snapshot()
+
         # Apply default preview background to both preview areas
         if hasattr(self, 'preview'):
             try:
@@ -98,28 +132,72 @@ class MainWindow(QMainWindow):
             pass
     
     def create_main_page(self) -> QWidget:
-        """創建主頁面"""
-        central_widget = QWidget()
-        main_layout = QHBoxLayout()
-        central_widget.setLayout(main_layout)
-        
-        left_panel = self.create_left_panel()
-        
-        middle_panel = self.create_middle_panel()
-        
-        right_panel = self.create_right_panel()
-        
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(middle_panel)
-        splitter.addWidget(right_panel)
-        # Give more space to middle panel (timeline & layers)
-        # Adjusted sizes: left panel wider for batch processor, right panel for preview
-        splitter.setSizes([400, 800, 400])
-        
-        main_layout.addWidget(splitter)
-        
-        return central_widget
+        """Four full-screen top-level tabs.
+
+        Composer / Tile Splitter share a single Material Library panel that is
+        dynamically reparented (via QSplitter.insertWidget) when switching tabs.
+        Batch Processor and GIF Optimizer have their own independent image lists.
+        """
+        # ── Shared Material Library (single widget, moved between tabs 0 & 1) ─
+        self._material_lib_panel = self.create_material_library_panel()
+
+        # ── Tab 0: Composer — [Material Library | Editor | Preview] ───────────
+        editor_preview_splitter = QSplitter(Qt.Orientation.Horizontal)
+        editor_preview_splitter.addWidget(self.create_middle_panel())
+        editor_preview_splitter.addWidget(self.create_right_panel())
+        editor_preview_splitter.setSizes([800, 400])
+
+        self._composer_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._composer_splitter.addWidget(self._material_lib_panel)   # starts here
+        self._composer_splitter.addWidget(editor_preview_splitter)
+        self._composer_splitter.setSizes([320, 1280])
+
+        # ── Tab 1: Tile Splitter — [Material Library | Image list | Tile preview]
+        self.tile_splitter_page = TileSplitterPage()
+        self.tile_splitter_page.tiles_created.connect(self.on_tiles_created)
+
+        self._tile_outer_splitter = QSplitter(Qt.Orientation.Horizontal)
+        # material lib will be inserted at index 0 when this tab is active;
+        # tile_splitter_page already has its own internal splitter
+        self._tile_outer_splitter.addWidget(self.tile_splitter_page)
+
+        # ── Tab 2: Batch Processor (self-contained, own image list) ───────────
+        self.batch_processor = BatchProcessorWidget()
+        self.batch_processor.batch_complete.connect(self.on_batch_complete)
+        self.batch_processor.set_templates(self.templates)
+
+        # ── Tab 3: GIF Optimizer (self-contained, own image list) ─────────────
+        self.gif_optimizer = GifOptimizerWidget()
+
+        # ── Top-level QTabWidget ───────────────────────────────────────────────
+        self.tool_tabs = QTabWidget()
+        self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        self.tool_tabs.addTab(self._composer_splitter,    "🎬  Composer")
+        self.tool_tabs.addTab(self._tile_outer_splitter,  "✂️  Tile Splitter")
+        self.tool_tabs.addTab(self.batch_processor,       "⚡  Batch Processor")
+        self.tool_tabs.addTab(self.gif_optimizer,         "🔧  GIF Optimizer")
+
+        self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
+
+        wrapper = QWidget()
+        layout = QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.tool_tabs)
+        return wrapper
+
+    def _on_tool_tab_changed(self, index: int):
+        """Dynamically move the shared Material Library into the active tab's splitter."""
+        if index == 0:   # Composer
+            self._composer_splitter.insertWidget(0, self._material_lib_panel)
+            self._material_lib_panel.show()
+            self._composer_splitter.setSizes([320, 1280])
+        elif index == 1:  # Tile Splitter
+            self._tile_outer_splitter.insertWidget(0, self._material_lib_panel)
+            self._material_lib_panel.show()
+            self._tile_outer_splitter.setSizes([320, 1280])
+        else:
+            # Batch / Optimizer — hide the panel (collapses in current splitter)
+            self._material_lib_panel.hide()
     
     def show_main_page(self):
         """顯示主頁面"""
@@ -129,48 +207,18 @@ class MainWindow(QMainWindow):
         """顯示預覽頁面"""
         self.stacked_widget.setCurrentWidget(self.preview_page)
     
-    def create_left_panel(self) -> QWidget:
+    def create_material_library_panel(self) -> QWidget:
+        """Permanent left-side material library panel, always visible across all tool tabs."""
         panel = QWidget()
         layout = QVBoxLayout()
-        
-        title = QLabel("Materials & Tools")
-        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
-        layout.addWidget(title)
-        
-        tabs = QTabWidget()
-        
-        materials_tab = self.create_materials_tab()
-        tabs.addTab(materials_tab, "Materials")
-        
-        self.tile_editor = TileEditorWidget()
-        self.tile_editor.tiles_created.connect(self.on_tiles_created)
-        
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(self.tile_editor)
-        scroll_area.setWidgetResizable(True)
-        tabs.addTab(scroll_area, "Tile Splitter")
-        
-        # Batch Processor tab
-        self.batch_processor = BatchProcessorWidget()
-        self.batch_processor.batch_complete.connect(self.on_batch_complete)
-        
-        batch_scroll_area = QScrollArea()
-        batch_scroll_area.setWidget(self.batch_processor)
-        batch_scroll_area.setWidgetResizable(True)
-        tabs.addTab(batch_scroll_area, "Batch Process")
+        layout.setContentsMargins(4, 4, 4, 4)
 
-        # GIF Optimizer tab (Lossy)
-        self.gif_optimizer = GifOptimizerWidget()
-        optimizer_scroll_area = QScrollArea()
-        optimizer_scroll_area.setWidget(self.gif_optimizer)
-        optimizer_scroll_area.setWidgetResizable(True)
-        tabs.addTab(optimizer_scroll_area, "GIF Optimizer")
-        
-        # Update batch processor templates when templates change
-        self.batch_processor.set_templates(self.templates)
-        
-        layout.addWidget(tabs)
-        
+        title = QLabel("Material Library")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #e4e8f4;")
+        layout.addWidget(title)
+
+        layout.addWidget(self.create_materials_tab())
+
         panel.setLayout(layout)
         return panel
     
@@ -202,7 +250,7 @@ class MainWindow(QMainWindow):
         lib_header_row.addWidget(list_label)
         lib_header_row.addStretch()
         self.material_view_btn = QPushButton("⊞ Grid")
-        self.material_view_btn.setFixedSize(58, 22)
+        self.material_view_btn.setFixedSize(80, 26)
         self.material_view_btn.setToolTip("Switch between list and grid (icon) view")
         self.material_view_btn.setCheckable(True)
         self.material_view_btn.clicked.connect(self._toggle_material_view)
@@ -312,43 +360,29 @@ class MainWindow(QMainWindow):
     def _on_current_group_changed(self, group_id: int):
         self.current_group_id = group_id
         self.update_preview()
+        self._update_status_labels()
 
     def _on_group_entries_changed(self):
         self.update_preview()
+        if not self._undo_in_progress:
+            self._undo_debounce.start(300)
     
     def create_right_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout()
         layout.setSpacing(5)
         
-        # Preview controls
+        # Preview background color button (compact toolbar)
         preview_controls = QHBoxLayout()
-        preview_controls.addWidget(QLabel("Preview Frame:"))
-        
-        self.preview_frame_spinbox = QSpinBox()
-        self.preview_frame_spinbox.setMinimum(1)
-        self.preview_frame_spinbox.setMaximum(1)
-        self.preview_frame_spinbox.setValue(1)
-        self.preview_frame_spinbox.setMaximumWidth(60)
-        self.preview_frame_spinbox.valueChanged.connect(self.update_preview)
-        preview_controls.addWidget(self.preview_frame_spinbox)
-        
-        self.preview_all_checkbox = QCheckBox("Preview All (Animation)")
-        self.preview_all_checkbox.setChecked(True)
-        self.preview_all_checkbox.stateChanged.connect(self.on_preview_mode_changed)
-        preview_controls.addWidget(self.preview_all_checkbox)
-        preview_controls.addStretch()
-
-        # Preview background color (preview-only)
-        self.preview_bg_btn = QPushButton("Preview BG")
+        self.preview_bg_btn = QPushButton("🎨 BG")
         self.preview_bg_btn.setToolTip("Set preview background color (does not affect export)")
+        self.preview_bg_btn.setMaximumWidth(60)
         self.preview_bg_btn.clicked.connect(self.on_choose_preview_bg)
         preview_controls.addWidget(self.preview_bg_btn)
-
+        preview_controls.addStretch()
         self.info_label = QLabel("Frame: 0/0")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_controls.addWidget(self.info_label)
-        
         layout.addLayout(preview_controls)
         
         # Preview (centered horizontally)
@@ -564,25 +598,41 @@ class MainWindow(QMainWindow):
     
     def create_menu_bar(self):
         menubar = self.menuBar()
-        
+
+        # Edit menu — Undo / Redo
+        edit_menu = menubar.addMenu("Edit")
+        self._undo_action = edit_menu.addAction("Undo", self.undo)
+        self._undo_action.setShortcut(QKeySequence("Ctrl+Z"))
+        self._redo_action = edit_menu.addAction("Redo", self.redo)
+        self._redo_action.setShortcut(QKeySequence("Ctrl+Y"))
+
         file_menu = menubar.addMenu("File")
-        
+
         file_menu.addAction("Load Image", self.load_image_material)
         file_menu.addAction("Load GIF", self.load_gif_material)
         file_menu.addSeparator()
+
+        # Recent Files submenu (populated dynamically)
+        self._recent_menu = file_menu.addMenu("Recent Files")
+        self._rebuild_recent_menu()
+        file_menu.addSeparator()
+
         file_menu.addAction("Export GIF", self.export_gif)
+        file_menu.addAction("Export All Groups as GIF", self.batch_export_all_groups)
+        file_menu.addAction("Export Spritesheet (PNG)", self.export_spritesheet)
+        file_menu.addSeparator()
         file_menu.addAction("Export Selected Materials", self.export_selected_materials)
         file_menu.addAction("Export All Materials", self.export_all_materials)
         file_menu.addSeparator()
-        
+
         # Auto-save menu items
         auto_save_menu = file_menu.addMenu("Auto-Save")
         auto_save_menu.addAction("Restore Auto-Save", self.restore_auto_save)
         auto_save_menu.addAction("Toggle Auto-Save", self.toggle_auto_save)
-        
+
         file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
-        
+
         help_menu = menubar.addMenu("Help")
         help_menu.addAction("About", self.show_about)
     
@@ -596,12 +646,11 @@ class MainWindow(QMainWindow):
         
         if file_path:
             try:
-                # Remember the directory
                 self.last_image_dir = str(Path(file_path).parent)
-                
                 self.material_manager.load_from_image(file_path)
                 self.refresh_materials_list()
-                QMessageBox.information(self, "Success", "Image loaded successfully!")
+                self._add_to_recent_files(file_path)
+                self._status(f"Loaded: {Path(file_path).name}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
     
@@ -615,13 +664,11 @@ class MainWindow(QMainWindow):
         
         if file_path:
             try:
-                # Remember the directory
                 self.last_gif_dir = str(Path(file_path).parent)
-                
                 self.material_manager.load_from_gif(file_path)
                 self.refresh_materials_list()
-                QMessageBox.information(self, "Success", 
-                    f"GIF loaded and extracted into {len(self.material_manager)} frames!")
+                self._add_to_recent_files(file_path)
+                self._status(f"GIF loaded — {len(self.material_manager)} frames total")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load GIF:\n{str(e)}")
     
@@ -635,14 +682,12 @@ class MainWindow(QMainWindow):
         
         if file_paths:
             try:
-                # Remember the directory from the first file
                 self.last_image_dir = str(Path(file_paths[0]).parent)
-                
                 for file_path in file_paths:
                     self.material_manager.load_from_image(file_path)
+                    self._add_to_recent_files(file_path)
                 self.refresh_materials_list()
-                QMessageBox.information(self, "Success", 
-                    f"Loaded {len(file_paths)} images!")
+                self._status(f"Loaded {len(file_paths)} image(s)")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load images:\n{str(e)}")
     
@@ -686,6 +731,7 @@ class MainWindow(QMainWindow):
 
     def refresh_materials_list(self):
         self.materials_list.clear()
+        self._update_status_labels()
 
         # Determine sort order
         indices = list(range(len(self.material_manager)))
@@ -797,7 +843,7 @@ class MainWindow(QMainWindow):
         self.group_manager.update_group(idx, group)
         self.refresh_timeline()
         self.update_preview()
-        QMessageBox.information(self, "Success", f"Added {len(material_indices)} frame(s) to group '{group.name}' (now {len(group.entries)} entries).")
+        self._status(f"Added {len(material_indices)} frame(s) to '{group.name}' ({len(group.entries)} entries total)")
     
     def add_materials_as_single_group(self):
         """Create a new CompositionGroup from selected materials and add as SubGroupEntry to current group."""
@@ -850,12 +896,7 @@ class MainWindow(QMainWindow):
         self.group_manager.update_group(self.current_group_id, current)
         self.refresh_timeline()
         self.update_preview()
-        
-        QMessageBox.information(
-            self,
-            "Success",
-            f"Created {len(material_indices)} group(s) (one per material) and added to timeline."
-        )
+        self._status(f"Created {len(material_indices)} group(s) and added to timeline")
     
     def clear_materials(self):
         reply = QMessageBox.question(
@@ -1073,90 +1114,62 @@ class MainWindow(QMainWindow):
             )
             return
         
-        # Set the spinbox values
         self.width_spinbox.setValue(max_width)
         self.height_spinbox.setValue(max_height)
-        
-        # Update preview
         self.update_preview()
-        
-        QMessageBox.information(
-            self,
-            "Success",
-            f"Output size adjusted to {max_width} × {max_height}"
-        )
+        self._status(f"Output size set to {max_width} × {max_height}")
     
     def align_all_left(self):
-        """Align all frame entries in the current group to x = 0."""
         count = self._align_current_group_entries(lambda e, _: setattr(e, 'x', 0))
         if count == 0:
-            QMessageBox.warning(self, "Warning", "No materials found in the selected group!")
+            self._status("No materials in group to align")
             return
-        self.refresh_timeline()
-        self.update_preview()
-        QMessageBox.information(self, "Success", f"Aligned {count} frame(s) to the left")
-    
+        self.refresh_timeline(); self.update_preview()
+        self._status(f"Aligned {count} frame(s) to left")
+
     def align_all_center_horizontal(self):
-        """Center all frame entries in the current group horizontally."""
         out_w = self.width_spinbox.value()
-        def _fn(e, sz):
-            e.x = (out_w - sz[0]) // 2
-        count = self._align_current_group_entries(_fn)
+        count = self._align_current_group_entries(lambda e, sz: setattr(e, 'x', (out_w - sz[0]) // 2))
         if count == 0:
-            QMessageBox.warning(self, "Warning", "No materials found in the selected group!")
+            self._status("No materials in group to align")
             return
-        self.refresh_timeline()
-        self.update_preview()
-        QMessageBox.information(self, "Success", f"Centered {count} frame(s) horizontally")
-    
+        self.refresh_timeline(); self.update_preview()
+        self._status(f"Centered {count} frame(s) horizontally")
+
     def align_all_right(self):
-        """Align all frame entries in the current group to the right."""
         out_w = self.width_spinbox.value()
-        def _fn(e, sz):
-            e.x = out_w - sz[0]
-        count = self._align_current_group_entries(_fn)
+        count = self._align_current_group_entries(lambda e, sz: setattr(e, 'x', out_w - sz[0]))
         if count == 0:
-            QMessageBox.warning(self, "Warning", "No materials found in the selected group!")
+            self._status("No materials in group to align")
             return
-        self.refresh_timeline()
-        self.update_preview()
-        QMessageBox.information(self, "Success", f"Aligned {count} frame(s) to the right")
-    
+        self.refresh_timeline(); self.update_preview()
+        self._status(f"Aligned {count} frame(s) to right")
+
     def align_all_top(self):
-        """Align all frame entries in the current group to y = 0."""
         count = self._align_current_group_entries(lambda e, _: setattr(e, 'y', 0))
         if count == 0:
-            QMessageBox.warning(self, "Warning", "No materials found in the selected group!")
+            self._status("No materials in group to align")
             return
-        self.refresh_timeline()
-        self.update_preview()
-        QMessageBox.information(self, "Success", f"Aligned {count} frame(s) to the top")
-    
+        self.refresh_timeline(); self.update_preview()
+        self._status(f"Aligned {count} frame(s) to top")
+
     def align_all_middle_vertical(self):
-        """Center all frame entries in the current group vertically."""
         out_h = self.height_spinbox.value()
-        def _fn(e, sz):
-            e.y = (out_h - sz[1]) // 2
-        count = self._align_current_group_entries(_fn)
+        count = self._align_current_group_entries(lambda e, sz: setattr(e, 'y', (out_h - sz[1]) // 2))
         if count == 0:
-            QMessageBox.warning(self, "Warning", "No materials found in the selected group!")
+            self._status("No materials in group to align")
             return
-        self.refresh_timeline()
-        self.update_preview()
-        QMessageBox.information(self, "Success", f"Centered {count} frame(s) vertically")
-    
+        self.refresh_timeline(); self.update_preview()
+        self._status(f"Centered {count} frame(s) vertically")
+
     def align_all_bottom(self):
-        """Align all frame entries in the current group to the bottom."""
         out_h = self.height_spinbox.value()
-        def _fn(e, sz):
-            e.y = out_h - sz[1]
-        count = self._align_current_group_entries(_fn)
+        count = self._align_current_group_entries(lambda e, sz: setattr(e, 'y', out_h - sz[1]))
         if count == 0:
-            QMessageBox.warning(self, "Warning", "No materials found in the selected group!")
+            self._status("No materials in group to align")
             return
-        self.refresh_timeline()
-        self.update_preview()
-        QMessageBox.information(self, "Success", f"Aligned {count} frame(s) to the bottom")
+        self.refresh_timeline(); self.update_preview()
+        self._status(f"Aligned {count} frame(s) to bottom")
     
     def refresh_timeline(self):
         """Refresh group composition widget (group-led model)."""
@@ -1211,19 +1224,14 @@ class MainWindow(QMainWindow):
     
     
     def on_preview_mode_changed(self):
-        """Handle preview mode change (group-led: single frame vs full animation)."""
-        if self.preview_all_checkbox.isChecked():
-            self.preview_frame_spinbox.setEnabled(False)
-        else:
-            self.preview_frame_spinbox.setEnabled(True)
+        """Kept for backwards compatibility; preview always shows full animation."""
         self.update_preview()
 
     def update_single_frame_preview(self):
-        """Update preview for a single frame (delegates to update_preview; group-led model)."""
         self.update_preview()
-    
+
     def update_preview(self):
-        """Update preview from the currently selected group."""
+        """Update preview from the currently selected group (always full animation)."""
         if self.current_group_id is None:
             return
         if self.group_manager.get_group(self.current_group_id) is None:
@@ -1245,14 +1253,6 @@ class MainWindow(QMainWindow):
                 self.group_manager,
                 self.material_manager,
             )
-            self.preview_frame_spinbox.setMaximum(max(1, len(frames)))
-            if not self.preview_all_checkbox.isChecked():
-                idx = self.preview_frame_spinbox.value() - 1
-                if 0 <= idx < len(frames):
-                    self.preview.set_frames([frames[idx]])
-                else:
-                    self.preview.set_frames(frames[:1] if frames else [])
-                return
             self.preview.set_frames(frames)
         except Exception as e:
             print(f"ERROR in update_preview: {e}")
@@ -1260,10 +1260,23 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
     
     def quick_save_template(self):
-        """Save current group composition to in-memory template list."""
+        """Save current group composition to in-memory template list (prompts for name)."""
         if len(self.group_manager.groups) == 0:
             QMessageBox.warning(self, "Warning", "No groups to save as template!")
             return
+        suggested = f"Template {len(self.templates) + 1}"
+        name, ok = QInputDialog.getText(self, "Save Template", "Template name:", text=suggested)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if name in self.templates:
+            reply = QMessageBox.question(
+                self, "Overwrite?",
+                f"Template '{name}' already exists. Overwrite?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         try:
             color_count = int(self.color_palette_combo.currentText())
             template = TemplateManager.export_composition_template(
@@ -1271,16 +1284,12 @@ class MainWindow(QMainWindow):
                 self.transparent_bg_checkbox.isChecked(),
                 color_count,
             )
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            name = f"Template {len(self.templates) + 1} ({timestamp})"
             self.templates[name] = template
             self.refresh_template_list()
             info = TemplateManager.get_template_info(template)
-            QMessageBox.information(
-                self, "Saved",
-                f"Saved template '{name}'.\n"
-                f"Groups: {info['group_count']}  |  "
-                f"Materials needed: {info['materials_needed']}",
+            self._status(
+                f"Saved '{name}' — {info['group_count']} group(s), "
+                f"{info['materials_needed']} material(s) needed"
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save template: {str(e)}")
@@ -1443,7 +1452,9 @@ class MainWindow(QMainWindow):
             }
             TemplateManager.save_template_to_file(template, str(self.auto_save_file))
             self.last_auto_save_content_hash = content_hash
-            print(f"Auto-saved: {self.auto_save_file.name}")
+            ts = datetime.now().strftime("%H:%M:%S")
+            if hasattr(self, '_status_autosave_label'):
+                self._status_autosave_label.setText(f"Auto-saved {ts}")
         except Exception as e:
             print(f"Auto-save failed: {e}")
     
@@ -1510,13 +1521,13 @@ class MainWindow(QMainWindow):
     def toggle_auto_save(self):
         """Toggle auto-save on/off"""
         self.auto_save_enabled = not self.auto_save_enabled
-        
         if self.auto_save_enabled:
             self.auto_save_timer.start(self.auto_save_interval)
-            QMessageBox.information(self, "Auto-Save", "Auto-save enabled")
+            self._status("Auto-save enabled")
         else:
             self.auto_save_timer.stop()
-            QMessageBox.information(self, "Auto-Save", "Auto-save disabled")
+            self._status("Auto-save disabled")
+        self._update_status_labels()
     
     def create_color_icon(self, r: int, g: int, b: int, size: int = 16) -> QIcon:
         """Create a color preview icon"""
@@ -1639,26 +1650,325 @@ class MainWindow(QMainWindow):
         """Handle chroma key color selection change"""
         try:
             index = self.chroma_key_combo.currentIndex()
-            
             if index == 0:
-                # "None" selected - disable chroma key
                 self.gif_builder.clear_chroma_key()
             else:
-                # Color selected - apply chroma key
-                color_index = index - 1  # Account for "None" option
+                color_index = index - 1
                 display_colors = self.chroma_key_colors_all[:self.chroma_key_display_count]
                 if 0 <= color_index < len(display_colors):
                     color_rgb, _, _ = display_colors[color_index]
                     r, g, b = color_rgb
                     self.gif_builder.set_chroma_key(r, g, b, threshold=30)
-            
-            # Update preview to show effect
             self.update_preview()
-            
         except Exception as e:
             print(f"Error applying chroma key: {e}")
             import traceback
             traceback.print_exc()
+
+    # ──────────────────────────────────────────────────────────────
+    # Status bar helpers
+    # ──────────────────────────────────────────────────────────────
+
+    def _status(self, msg: str, timeout_ms: int = 5000):
+        """Show a temporary message in the status bar."""
+        if hasattr(self, '_status_bar'):
+            self._status_bar.showMessage(msg, timeout_ms)
+
+    def _update_status_labels(self):
+        """Refresh the permanent status bar labels."""
+        if not hasattr(self, '_status_material_label'):
+            return
+        self._status_material_label.setText(f"Materials: {len(self.material_manager)}")
+        # Current group name
+        grp = None
+        if self.current_group_id is not None:
+            grp = self.group_manager.get_group(self.current_group_id)
+        self._status_group_label.setText(f"Group: {grp.name if grp else '—'}")
+        # Auto-save state (only update text label if not showing "saved HH:MM:SS")
+        autosave_txt = self._status_autosave_label.text()
+        if autosave_txt in ("Auto-save: ON", "Auto-save: OFF"):
+            self._status_autosave_label.setText(
+                "Auto-save: ON" if self.auto_save_enabled else "Auto-save: OFF"
+            )
+
+    # ──────────────────────────────────────────────────────────────
+    # Undo / Redo  (Snapshot + Debounce)
+    # ──────────────────────────────────────────────────────────────
+
+    def _make_snapshot(self) -> dict:
+        """Serialize current GroupManager state into a snapshot dict."""
+        return {
+            "snapshot": TemplateManager.export_composition_template(self.group_manager),
+            "current_group_id": self.current_group_id,
+        }
+
+    def _capture_initial_snapshot(self):
+        """Store the very first snapshot so Undo can return to initial state."""
+        self._undo_stack = [self._make_snapshot()]
+        self._redo_stack = []
+
+    def _push_undo_snapshot(self):
+        """Called by debounce timer: push current state onto undo stack."""
+        if self._undo_in_progress:
+            return
+        snap = self._make_snapshot()
+        self._undo_stack.append(snap)
+        # Keep stack bounded
+        if len(self._undo_stack) > self._MAX_UNDO + 1:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+
+    def _restore_snapshot(self, snap: dict):
+        """Restore GroupManager and UI from a snapshot dict."""
+        self._undo_in_progress = True
+        try:
+            new_gm, _ = TemplateManager.import_composition_template(snap["snapshot"])
+            self.group_manager = new_gm
+            if hasattr(self, "group_composition_widget"):
+                self.group_composition_widget.set_group_manager(self.group_manager)
+            gid = snap.get("current_group_id")
+            if gid is not None and self.group_manager.get_group(gid) is not None:
+                self.current_group_id = gid
+            else:
+                self.current_group_id = self.group_manager.get_root_group_id()
+            self.update_preview()
+            self._update_status_labels()
+        finally:
+            self._undo_in_progress = False
+
+    def undo(self):
+        """Restore the previous composition state (Ctrl+Z)."""
+        # Need at least 2 entries: [initial, current] to undo one step
+        if len(self._undo_stack) < 2:
+            self._status("Nothing to undo")
+            return
+        # Push current state to redo before restoring
+        self._redo_stack.append(self._undo_stack.pop())
+        self._restore_snapshot(self._undo_stack[-1])
+        self._status(f"Undo  ({len(self._undo_stack) - 1} step(s) remain)")
+
+    def redo(self):
+        """Re-apply the next composition state (Ctrl+Y / Ctrl+Shift+Z)."""
+        if not self._redo_stack:
+            self._status("Nothing to redo")
+            return
+        snap = self._redo_stack.pop()
+        self._undo_stack.append(snap)
+        self._restore_snapshot(snap)
+        self._status(f"Redo  ({len(self._redo_stack)} step(s) available)")
+
+    # ──────────────────────────────────────────────────────────────
+    # Keyboard Shortcuts
+    # ──────────────────────────────────────────────────────────────
+
+    def _setup_shortcuts(self):
+        """Register global keyboard shortcuts."""
+        # Del / Backspace — delete selected materials
+        del_action = QAction(self)
+        del_action.setShortcut(QKeySequence(Qt.Key.Key_Delete))
+        del_action.triggered.connect(self._shortcut_delete)
+        self.addAction(del_action)
+
+        backspace_action = QAction(self)
+        backspace_action.setShortcut(QKeySequence(Qt.Key.Key_Backspace))
+        backspace_action.triggered.connect(self._shortcut_delete)
+        self.addAction(backspace_action)
+
+        # Ctrl+E — Export GIF
+        export_action = QAction(self)
+        export_action.setShortcut(QKeySequence("Ctrl+E"))
+        export_action.triggered.connect(self.export_gif)
+        self.addAction(export_action)
+
+        # Ctrl+O — Load Image
+        load_action = QAction(self)
+        load_action.setShortcut(QKeySequence("Ctrl+O"))
+        load_action.triggered.connect(self.load_image_material)
+        self.addAction(load_action)
+
+        # F5 — Refresh preview
+        preview_action = QAction(self)
+        preview_action.setShortcut(QKeySequence(Qt.Key.Key_F5))
+        preview_action.triggered.connect(self.update_preview)
+        self.addAction(preview_action)
+
+        # Ctrl+Shift+Z — alternate Redo (macOS / Linux convention)
+        redo_alt = QAction(self)
+        redo_alt.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        redo_alt.triggered.connect(self.redo)
+        self.addAction(redo_alt)
+
+    def _shortcut_delete(self):
+        """Delete selected materials if the materials list has focus or items selected."""
+        if self.materials_list.hasFocus() and self.materials_list.selectedItems():
+            self.remove_selected_material()
+
+    # ──────────────────────────────────────────────────────────────
+    # Recent Files
+    # ──────────────────────────────────────────────────────────────
+
+    def _add_to_recent_files(self, path: str):
+        path = str(Path(path).resolve())
+        if path in self.recent_files:
+            self.recent_files.remove(path)
+        self.recent_files.insert(0, path)
+        self.recent_files = self.recent_files[:8]
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self):
+        if not hasattr(self, '_recent_menu'):
+            return
+        self._recent_menu.clear()
+        if not self.recent_files:
+            self._recent_menu.addAction("(empty)").setEnabled(False)
+            return
+        for fpath in self.recent_files:
+            label = Path(fpath).name
+            action = self._recent_menu.addAction(label)
+            action.setToolTip(fpath)
+            action.triggered.connect(lambda checked, p=fpath: self._open_recent_file(p))
+        self._recent_menu.addSeparator()
+        self._recent_menu.addAction("Clear Recent Files", lambda: self._clear_recent_files())
+
+    def _clear_recent_files(self):
+        self.recent_files.clear()
+        self._rebuild_recent_menu()
+
+    def _open_recent_file(self, path: str):
+        if not Path(path).exists():
+            QMessageBox.warning(self, "File Not Found", f"File no longer exists:\n{path}")
+            self.recent_files.remove(path)
+            self._rebuild_recent_menu()
+            return
+        ext = Path(path).suffix.lower()
+        try:
+            if ext == ".gif":
+                self.material_manager.load_from_gif(path)
+            else:
+                self.material_manager.load_from_image(path)
+            self.refresh_materials_list()
+            self._add_to_recent_files(path)
+            self._status(f"Loaded: {Path(path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open:\n{str(e)}")
+
+    # ──────────────────────────────────────────────────────────────
+    # Batch Export All Groups
+    # ──────────────────────────────────────────────────────────────
+
+    def batch_export_all_groups(self):
+        """Export each top-level group as a separate GIF file."""
+        groups = self.group_manager.get_all_groups()
+        if not groups:
+            QMessageBox.warning(self, "Warning", "No groups to export!")
+            return
+        export_dir = QFileDialog.getExistingDirectory(
+            self, "Select Export Directory", self.last_export_dir
+        )
+        if not export_dir:
+            return
+        self.last_export_dir = export_dir
+
+        width = self.width_spinbox.value()
+        height = self.height_spinbox.value()
+        loop = self.loop_spinbox.value()
+        color_count = int(self.color_palette_combo.currentText())
+        transparent = self.transparent_bg_checkbox.isChecked()
+
+        self.gif_builder.set_output_size(width, height)
+        self.gif_builder.set_loop(loop)
+        self.gif_builder.set_color_count(color_count)
+        if transparent:
+            self.gif_builder.set_background_color(0, 0, 0, 0)
+        else:
+            self.gif_builder.set_background_color(255, 255, 255, 255)
+
+        success, failed = 0, 0
+        used_names: set = set()
+        for i, group in enumerate(groups):
+            try:
+                group_id = i  # GroupManager uses integer index as ID
+                safe_name = "".join(c for c in group.name if c.isalnum() or c in (' ', '-', '_')).strip() or f"group_{i}"
+                base = safe_name
+                n = 1
+                while safe_name + ".gif" in used_names:
+                    safe_name = f"{base}_{n}"; n += 1
+                used_names.add(safe_name + ".gif")
+                out_path = str(Path(export_dir) / (safe_name + ".gif"))
+                self.gif_builder.build_gif_from_group(
+                    group_id, self.group_manager, self.material_manager, out_path
+                )
+                success += 1
+            except Exception as e:
+                failed += 1
+                print(f"Batch export error for group {i}: {e}")
+
+        msg = f"Exported {success}/{len(groups)} group(s) to:\n{export_dir}"
+        if failed:
+            msg += f"\n({failed} failed — see console for details)"
+        QMessageBox.information(self, "Batch Export Complete", msg)
+        self._status(f"Batch exported {success} group(s)")
+
+    # ──────────────────────────────────────────────────────────────
+    # Spritesheet Export
+    # ──────────────────────────────────────────────────────────────
+
+    def export_spritesheet(self):
+        """Export all frames of the current group as a single PNG spritesheet."""
+        if self.current_group_id is None:
+            QMessageBox.warning(self, "Warning", "No group selected!")
+            return
+        try:
+            self.gif_builder.set_output_size(
+                self.width_spinbox.value(), self.height_spinbox.value()
+            )
+            if self.transparent_bg_checkbox.isChecked():
+                self.gif_builder.set_background_color(0, 0, 0, 0)
+            else:
+                self.gif_builder.set_background_color(255, 255, 255, 255)
+            frames = self.gif_builder.get_preview_frames_for_group(
+                self.current_group_id, self.group_manager, self.material_manager
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to render frames:\n{str(e)}")
+            return
+
+        if not frames:
+            QMessageBox.warning(self, "Warning", "No frames in current group!")
+            return
+
+        # Ask how many columns
+        n_cols, ok = QInputDialog.getInt(
+            self, "Spritesheet Columns",
+            f"Frames: {len(frames)}\nColumns per row:",
+            value=min(len(frames), 8), min=1, max=len(frames)
+        )
+        if not ok:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Spritesheet", self.last_export_dir, "PNG Files (*.png)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".png"):
+            file_path += ".png"
+        self.last_export_dir = str(Path(file_path).parent)
+
+        try:
+            frame_w = self.width_spinbox.value()
+            frame_h = self.height_spinbox.value()
+            n_rows = (len(frames) + n_cols - 1) // n_cols
+            sheet = Image.new("RGBA", (frame_w * n_cols, frame_h * n_rows), (0, 0, 0, 0))
+            for idx, (img, _) in enumerate(frames):
+                col = idx % n_cols
+                row = idx // n_cols
+                frame_img = img.convert("RGBA").resize((frame_w, frame_h), Image.Resampling.LANCZOS)
+                sheet.paste(frame_img, (col * frame_w, row * frame_h))
+            sheet.save(file_path, "PNG")
+            self._status(f"Spritesheet saved ({len(frames)} frames, {n_cols}×{n_rows})")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save spritesheet:\n{str(e)}")
 
 
 def main():
