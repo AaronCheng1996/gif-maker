@@ -1,310 +1,162 @@
-# GIF Maker - Animation Material Editor
+# GIF Maker
 
-A powerful GIF animation editor designed for game developers and animators, allowing you to manage and play materials like a game engine.
+A GIF animation editor for game developers and animators. Compose frame sequences from sprite sheets, apply templates, and export GIFs.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 
+---
+
 ## Architecture
 
-The editor uses a layered architecture for flexible animation composition:
+The editor is built around a group-led composition model. Materials are the raw building blocks; everything else is structured through Composition Groups.
 
 ```
-Materials (素材)
-    ↓
-Material Groups (動畫片段)
-    ↓
-Layer Timeline (圖層合成)
-    ↓
-GIF Output
+Materials
+    |
+Composition Groups  (FrameEntry / SubGroupEntry / LayerBlockEntry)
+    |
+GIF Export
 ```
 
-### Material Groups
+### Composition Groups
 
-Material Groups are reusable animation clips that combine multiple materials with playback settings:
-- **Materials**: A sequence of material indices (e.g., [1, 2, 3, 4])
-- **Frame Duration**: Playback speed for each frame (e.g., 100ms)
-- **Loop Count**: Number of times to repeat the sequence (e.g., 3)
+A `CompositionGroup` holds an ordered list of entries. Three entry types are supported:
 
-**Example**: A walk cycle with frames [1,2,3,4] played at 100ms per frame, looped 3 times, produces 12 total frames.
+- `FrameEntry` — a single material placed at (x, y) with an optional duration
+- `SubGroupEntry` — a reference to another group, played back with a loop count and offset
+- `LayerBlockEntry` — multiple timelines composited frame-by-frame (multi-layer)
 
-**Three Ways to Add Materials:**
-1. **Add to Existing Group**: Select materials and add them to an existing group
-2. **Add as New Group (Merge)**: Create a single new group from selected materials
-3. **Add Each as Group**: Create separate groups for each selected material
+Groups can be nested via `SubGroupEntry`, enabling reusable animation clips inside larger sequences.
 
-### Layer Timeline
+---
 
-The Layer Timeline system enables multi-layer composition:
-- **Multiple Layer Tracks**: Stack multiple animation layers
-- **Per-Frame Placement**: Position materials or groups at specific coordinates
-- **Single Timebase**: One main timeline controls frame duration for all layers
-- **Bottom-to-Top Rendering**: Layers composite from bottom to top
+## Features
 
-### Implemented Features
+### Material Management
 
-1. **Material Management System**
-   - Load single images as materials
-   - Load GIFs and automatically extract frames
-   - Batch load multiple images
-   - Material preview with thumbnails and management (add, remove, clear)
-   - Multi-selection support (Ctrl+click, Shift+click, drag selection)
-   - Export materials as PNG files (selected or all)
-   - **Create Material Groups** from selected materials
+- Load single images (PNG, JPG, BMP)
+- Load GIFs and extract all frames as individual materials
+- Batch-load multiple images at once
+- Thumbnail preview in list view or grid (icon) view — toggle with the button in the library header
+- Sort materials by name or dimensions
+- Multi-select with Ctrl/Shift-click
+- Export selected or all materials as PNG files
+- Tile Splitter: split sprite sheets by grid count or fixed tile size, select which positions to keep, and send tiles directly to the material library
 
-2. **Material Groups**
-   - Create animation clips from material sequences
-   - Configure frame duration and loop count
-   - Preview total frame count and duration
-   - Use groups in layer timeline like regular materials
-   - **Three Ways to Add Materials:**
-     - Add to existing group
-     - Add as new group (merge selected materials)
-     - Add each material as separate group
-   - **Batch Operations:**
-     - Remove multiple materials from a group at once
-     - Multi-selection support (Ctrl+click, Shift+click)
-   - **Group Management in Timeline:**
-     - Expand/collapse groups to view materials
-     - Right-click menu for edit, duplicate, remove
-     - Double-click to toggle expansion
-     - Visual indicators for missing materials
+### Group Composition
 
-3. **Image Splitting Tool (Tile Splitter)**
-   - Split by grid count (e.g., 4x4 grid)
-   - Split by tile size (e.g., 32x32 pixels)
-   - Batch split multiple images with same settings
-   - Pre-select positions to keep before splitting
-   - Position selector grid for easy tile selection
-   - Automatically add selected tiles to material library
-   - Perfect for processing game sprite sheets
+- Visual tree editor (`GroupCompositionWidget`) shows the group hierarchy
+- Add materials to the currently selected group, create a new merged group, or create one group per material
+- Set per-entry duration and x/y offset
+- Nest groups inside other groups via SubGroupEntry with individual loop count and offset
+- Multi-layer composition via LayerBlockEntry (composite several timelines at each frame)
+- Collapse and expand entries inline
 
-4. **Layer Timeline Editor**
-   - Multiple layer tracks for composition
-   - Drag-and-drop frame ordering
-   - Add, delete, duplicate frames
-   - Customize duration for each frame (delay)
-   - Batch set duration for all frames
-   - Display total frame count and total duration
-   - Assign materials or groups to specific layer positions
+### Preview
 
-5. **Sequence Editing Features**
-   - Free frame sequence arrangement
-   - Repeat selected frames functionality
-   - Reverse selected frames functionality
-   - Multi-selection support for batch operations
+- Real-time animated preview of the currently selected group
+- Playback controls: play, pause, stop, previous frame, next frame
+- Toggle between single-frame and full animation preview
+- Full-screen preview page (click preview or use the expand button)
+- Configurable background color (preview-only, does not affect export)
 
-6. **Real-time Preview**
-   - Real-time GIF animation playback preview
-   - Playback controls (play/pause/stop/previous frame/next frame)
-   - Display current frame info and duration
+### GIF Export
 
-7. **GIF Export**
-   - Custom output size
-   - Set loop count (0 = infinite loop)
-   - Transparent background support
-   - Color palette selection (256, 128, 64, 32, 16 colors)
-   - Automatic file size optimization
+- Custom output width and height
+- Loop count (0 = infinite)
+- Transparent background option
+- Color palette: 256, 128, 64, 32, or 16 colors
+- Chroma key (green-screen): analyze the first frame to pick a color to make transparent
 
-8. **Material Export**
-   - Export selected materials as PNG files
-   - Export all materials at once
-   - Automatic filename sanitization
+### Auto Layout
 
-9. **Timeline Template System**
-   - Export current layer timeline as reusable template
-   - Save frame sequences, layer positions, groups, and settings
-   - Import template and apply to different materials
-   - Perfect for creating similar animations with different tile sets
-   - Choose between "Use First N" or "Use Selected" materials when importing
-   - Version 3.0 format with Material Group support
-   - **Smart Material Handling:**
-     - Auto-filter out-of-range materials when applying templates
-     - Display warnings for missing materials
-     - Templates adapt to available material library size
-   - **Simplified Settings:**
-     - Only stores encoding settings (transparent_bg, color_count)
-     - Output size auto-detected from materials
-     - Loop count set per-export, not stored in template
+All operations apply to the currently selected group.
 
-10. **Graphical User Interface (GUI)**
-    - Modern interface based on PyQt6
-    - Three-column layout: Material Management | Layer Timeline | Preview
-    - Tabbed tool panel
-    - Resizable split panels
+- Auto Fit Size: set output dimensions to the largest material in the group
+- Alignment buttons: Left, Center Horizontal, Right, Top, Middle Vertical, Bottom
 
-11. **Auto Layout Features**
-    - **Auto Fit Size**: Automatically calculate and set output size to fit all materials
-    - **6 Alignment Buttons**: Quickly align all frames/materials
-      - Left, Center Horizontal, Right
-      - Top, Middle Vertical, Bottom
-    - **Material Groups Support**: Works seamlessly with both unified and independent offset modes
-    - Batch alignment across all layer tracks and frames
+### Template Manager
 
-12. **Group Offset Modes**
-    - **Unified Mode** (default): Group moves as a single unit, all materials share same position
-    - **Independent Mode**: Each material in group can have individual offset positions
-    - **Visual Indicators**: 🔒 for unified mode, 🔓 for independent mode in timeline
-    - **Flexible Positioning**: Choose mode when creating/editing groups
+- Save the current group composition as a named template
+- Apply a saved template to the current material library
+- Import and export templates as JSON files
+- Templates store frame sequences, offsets, group references, and encoding settings
+
+### Batch Processor
+
+- Select multiple source images and a template
+- Configure tile-split settings (grid or size)
+- Process all images in one pass: split, apply template, export GIF
+- Progress bar and per-file status reporting
+
+### GIF Optimizer
+
+- Reduce GIF file size with lossy compression (requires gifsicle)
+- Adjustable lossy value (0-200); higher value = smaller file at lower quality
+- Batch optimize multiple GIF files in one step
+
+---
 
 ## Quick Start
 
-### Install Dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Run the Program
-
-```bash
-cd src
-python main.py
-```
-
-Or from the root directory:
+Run the application:
 
 ```bash
 python run.py
 ```
 
-### Build as Executable (Windows)
-
-To create a standalone `.exe` file:
+Build a standalone Windows executable:
 
 ```bash
-# Install PyInstaller
 pip install pyinstaller
-
-# Build the executable
 python build_exe.py
 ```
 
-The executable will be created at `dist/GIF-Maker.exe`.
+The executable is created at `dist/GIF-Maker.exe`. See `build_instructions.md` for details.
 
-For detailed instructions, see [build_instructions.md](build_instructions.md).
+---
 
 ## Project Structure
 
 ```
 src/
-├─ main.py                      # Program entry point and main window
-├─ core/                        # Core functionality modules
-│  ├─ __init__.py
-│  ├─ utils.py                 # Common utility functions
-│  ├─ image_loader.py          # Image loading, GIF extraction, splitting
-│  ├─ material_group.py        # Material Group (animation clips)
-│  ├─ group_manager.py         # Group management
-│  ├─ layer_timeline.py        # Layer timeline editor (renamed from multi_timeline)
-│  ├─ sequence_editor.py       # Simple sequence editing
-│  ├─ gif_builder.py           # GIF composition and output
-│  └─ template_manager.py      # Template export/import
-├─ widgets/                     # UI components
-│  ├─ __init__.py
-│  ├─ preview_widget.py        # Preview component
-│  ├─ timeline_widget.py       # Timeline component
-│  ├─ group_editor_dialog.py  # Group creation dialog
-│  └─ tile_editor.py           # Splitting tool component
-├─ ui/                          # UI resources (reserved)
-│  └─ resources/
-└─ assets/                      # Test materials (reserved)
-   └─ samples/
+  main.py                       Application entry point and main window
+  core/
+    image_loader.py             Image loading, GIF extraction, tile splitting
+    material_group.py           MaterialGroup (legacy animation clip)
+    composition_group.py        CompositionGroup, FrameEntry, SubGroupEntry, LayerBlockEntry
+    group_manager.py            Collection of CompositionGroups
+    layer_timeline.py           LayerTimelineEditor (multi-track layer model)
+    gif_builder.py              GIF composition and rendering
+    gif_optimizer.py            Lossy GIF compression via gifsicle
+    template_manager.py         Template serialization and application
+    batch_processor.py          Batch processing pipeline
+  widgets/
+    theme.py                    Global dark theme and color palette
+    group_composition_widget.py Group tree editor (main composition UI)
+    preview_widget.py           Animated preview
+    preview_page_widget.py      Full-screen preview page
+    tile_editor.py              Sprite sheet splitting tool
+    batch_processor_widget.py   Batch processor UI
+    gif_optimizer_widget.py     GIF optimizer UI
+    group_editor_dialog.py      Group creation/edit dialog
+    group_selector_dialog.py    Group picker dialog
+    material_selector_dialog.py Material picker dialog
 ```
+
+---
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License. See `LICENSE` for details.
 
 ## Contact
 
-For questions or suggestions, please contact via Issues.
-
-## Recent Changes
-
-### Version 3.1 - Auto Layout, Group Offset Modes & Critical Fixes
-
-**New Features:**
-- **Auto Layout System** (功能自動排版系統):
-  - Auto Fit Size: Automatically calculate output size to fit all materials and groups
-  - 6 alignment buttons: Left, Center, Right, Top, Middle, Bottom
-  - Works across all layer tracks and frames
-  - Supports both Material Groups and individual materials
-  - Smart calculation handles different material sizes
-
-- **Group Offset Modes** (群組偏移模式):
-  - **Unified Mode** (統一模式): Group moves as single unit (default)
-  - **Independent Mode** (獨立模式): Each material in group has individual offset
-  - **Internal Offsets Storage**: Independent offsets stored within MaterialGroup
-  - **Visual Indicators**: 🔒 (unified) and 🔓 (independent) icons in timeline
-  - Alignment functions respect and preserve group modes
-
-**Critical Bug Fixes:**
-- **Empty Group ZeroDivisionError Fix**: Prevents crash when groups have all materials filtered out
-  - Added safety checks in gif_builder expansion and rendering logic
-  - Gracefully skips empty groups during GIF generation
-  - Common when loading templates with out-of-range material indices
-
-- **Batch Processor Fix**: Corrected method signature handling
-  - Fixed `apply_layer_timeline_template` returning 3 values (was incorrectly receiving 2)
-  - Prevents settings dict being interpreted as GroupManager object
-  - Resolves "all images showing fail" issue in batch processing
-
-**Technical Improvements:**
-- MaterialGroup now supports `material_offsets: Dict[int, Tuple[int, int]]` for independent mode
-- New serialization format for independent offsets (only when `independent_offsets=True`)
-- Backward compatible with templates created before v3.1
-- Enhanced gif_builder rendering logic to apply material-specific offsets
-- Comprehensive test coverage for all new features and fixes
-
-**Tests Added:**
-- 13 integration tests for Auto Layout features
-- 3 unit tests for batch processor and template manager fixes
-- 2 integration tests for empty group handling and independent offsets rendering
-
----
-
-### Version 3.0 - Group System & Architecture Refactoring
-
-**New Features:**
-- **Material Groups**: Create reusable animation clips from material sequences
-  - Three flexible ways to add materials to groups
-  - Batch material removal with multi-selection support
-  - Expandable/collapsible group view in timeline
-  - Right-click context menu for group operations
-  
-- **Group Editor Dialog**: Configure frame duration and loop count for groups
-  
-- **Layer Timeline Integration**: Use groups alongside materials in layer tracks
-  - Visual group expansion in timeline
-  - Double-click to expand/collapse groups
-  - Edit, duplicate, and remove groups from timeline
-
-- **Smart Template System**:
-  - Auto-filter out-of-range materials when applying templates
-  - Clear visual warnings for missing materials
-  - Templates adapt to different material library sizes
-  - Simplified template format (only encoding settings, no output size/loop)
-
-**Architecture Improvements:**
-- Renamed `MultiTimelineEditor` to `LayerTimelineEditor` (more accurate naming)
-- Renamed `Timeline` to `LayerTrack` (clarifies purpose as layer tracks)
-- Renamed `TimelineFrame` to `LayerFrame` (consistent naming)
-- Updated template format to v3.0 with group support
-- Maintained backward compatibility with old template formats
-- Fixed group expansion and rendering (proper loop handling)
-
-**Bug Fixes:**
-- Fixed single-material group duration not being applied correctly
-- Fixed missing group display showing as empty frames
-- Fixed material removal from groups ("Group not found" error)
-- Fixed auto-sizing when applying templates
-- Fixed timeline UserRole data type issues
-- Fixed output size detection in preview (respects user settings)
-- Improved missing material display with color-coded warnings
-
-**Data Flow:**
-```
-Materials → Groups → LayerTimeline → GIF Output
-```
-
----
+Open an issue for questions or suggestions.

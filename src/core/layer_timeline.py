@@ -192,8 +192,3 @@ class LayerTimelineEditor:
         return result
 
 
-# Backward compatibility aliases (deprecated)
-MultiTimelineEditor = LayerTimelineEditor
-Timeline = LayerTrack
-TimelineFrame = LayerFrame
-
