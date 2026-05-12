@@ -39,6 +39,14 @@ def test_paste_center_positions():
     assert out.getpixel((5, 5))[3] > 0
 
 
+def test_resize_image_keep_aspect_is_non_destructive():
+    """resize_image with keep_aspect=True must not modify the original image."""
+    original = Image.new('RGBA', (10, 6), (100, 150, 200, 255))
+    original_size = original.size
+    _ = resize_image(original, (4, 4), keep_aspect=True)
+    assert original.size == original_size, "resize_image should not mutate the input image"
+
+
 def test_validate_image_file(make_temp_image):
     p = make_temp_image(size=(3, 3))
     assert validate_image_file(p) is True

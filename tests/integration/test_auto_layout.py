@@ -7,7 +7,7 @@ from PIL import Image
 from src.core.image_loader import MaterialManager
 from src.core.layer_timeline import LayerTimelineEditor, LayerFrame
 from src.core.group_manager import GroupManager
-from src.core.material_group import MaterialGroup
+from src.core.composition_group import CompositionGroup, FrameEntry
 
 
 class MockMainWindow:
@@ -28,14 +28,15 @@ class MockMainWindow:
                 return image.size
         elif frame.group_index is not None:
             group = self.group_manager.get_group(frame.group_index)
-            if group and len(group.material_indices) > 0:
+            if group:
                 max_w, max_h = 0, 0
-                for mat_idx in group.material_indices:
-                    result = self.material_manager.get_material(mat_idx)
-                    if result:
-                        image, name = result
-                        max_w = max(max_w, image.width)
-                        max_h = max(max_h, image.height)
+                for entry in group.entries:
+                    if isinstance(entry, FrameEntry):
+                        result = self.material_manager.get_material(entry.material_index)
+                        if result:
+                            image, _ = result
+                            max_w = max(max_w, image.width)
+                            max_h = max(max_h, image.height)
                 return (max_w, max_h) if max_w > 0 else None
         return None
     
@@ -159,13 +160,10 @@ def test_auto_fit_size_with_groups():
     window.material_manager.add_material(img2, name="mat2")
     window.material_manager.add_material(img3, name="mat3")
     
-    # Create group with materials [1, 2]
-    group = MaterialGroup(
-        material_indices=[1, 2],
-        frame_duration=100,
-        loop_count=2,
-        name="Test Group"
-    )
+    # Create group referencing materials at indices 1 and 2
+    group = CompositionGroup(name="Test Group", default_duration_ms=100)
+    group.entries.append(FrameEntry(material_index=1))
+    group.entries.append(FrameEntry(material_index=2))
     window.group_manager.add_group(group)
     
     # Add to timeline: one material + one group

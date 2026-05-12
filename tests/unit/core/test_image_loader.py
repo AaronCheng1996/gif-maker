@@ -65,3 +65,11 @@ def test_material_manager_load_from_gif(make_temp_gif):
     assert len(mm) == 2
 
 
+def test_material_manager_get_material_out_of_bounds(rgb_image_small):
+    """get_material returns None for indices outside the valid range."""
+    mm = MaterialManager()
+    mm.add_material(rgb_image_small, name="only")
+    assert mm.get_material(-1) is None
+    assert mm.get_material(1) is None  # only index 0 exists
+
+
