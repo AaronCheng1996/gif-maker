@@ -52,17 +52,19 @@ def _optimize_with_gifsicle(input_path: str, output_path: str, lossy: int, color
 
 
 def _optimize_with_pillow(input_path: str, output_path: str, colors: Optional[int]) -> None:
-    # Fallback: re-save with optimized palette via Pillow. This is not true lossy giflossy,
-    # but provides some size reduction when gifsicle is unavailable.
+    # Fallback: re-save with optimized palette via Pillow. This is not true lossy
+    # compression, but provides some size reduction when gifsicle is unavailable.
     with Image.open(input_path) as im:
         frames = []
         durations = []
         try:
             while True:
-                frame = im.convert("RGBA")
-                if colors:
-                    # Quantize reduces palette size
-                    frame = frame.convert("P", palette=Image.Palette.ADAPTIVE, colors=colors)
+                # Always quantize to palette mode so Pillow writes a valid GIF.
+                # When *colors* is None we still convert (using the default 256).
+                n_colors = colors if colors is not None else 256
+                frame = im.convert("RGBA").convert(
+                    "P", palette=Image.Palette.ADAPTIVE, colors=n_colors
+                )
                 frames.append(frame)
                 durations.append(im.info.get("duration", 100))
                 im.seek(im.tell() + 1)
@@ -130,11 +132,11 @@ def optimize_gif_lossy(
         else:
             _optimize_with_pillow(str(src), str(tmp_out), colors=colors)
 
-        # Atomic replace if overwriting; else move
+        # Atomic replace if overwriting; shutil.move handles cross-drive moves.
         if dst.exists():
             tmp_out.replace(dst)
         else:
-            tmp_out.rename(dst)
+            shutil.move(str(tmp_out), str(dst))
 
     return str(dst)
 

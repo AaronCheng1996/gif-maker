@@ -360,7 +360,10 @@ class GifOptimizerWidget(QWidget):
         if not self.input_files:
             QMessageBox.warning(self, "Warning", "No GIF selected")
             return
-        self.optimize_paths([self.input_files[0]])
+        selected = self.list_widget.currentRow()
+        if selected < 0:
+            selected = 0
+        self.optimize_paths([self.input_files[selected]])
 
     def optimize_batch(self):
         if not self.input_files:
