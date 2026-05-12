@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from pathlib import Path
 from PIL import Image, ImageSequence
 from .utils import ensure_rgba
@@ -8,8 +8,8 @@ class ImageLoader:
     
     @staticmethod
     def load_image(filepath: str) -> Image.Image:
-        img = Image.open(filepath)
-        return ensure_rgba(img)
+        with Image.open(filepath) as img:
+            return ensure_rgba(img.copy())
     
     @staticmethod
     def load_gif_frames(filepath: str) -> List[Tuple[Image.Image, int]]:
@@ -118,7 +118,7 @@ class MaterialManager:
         
         self.add_materials_from_list(tiles, f"{name_prefix}_tile")
     
-    def get_material(self, index: int) -> Tuple[Image.Image, str]:
+    def get_material(self, index: int) -> Optional[Tuple[Image.Image, str]]:
         if 0 <= index < len(self.materials):
             return self.materials[index]
         return None

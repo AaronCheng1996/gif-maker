@@ -16,6 +16,7 @@ from ..core.video_to_gif import (
     VideoConversionError,
     convert_to_gif,
     extract_preview_frames,
+    get_ffmpeg_install_info,
     get_video_info,
     is_ffmpeg_available,
     find_ffmpeg,
@@ -73,6 +74,33 @@ class _SourcePreviewWorker(QThread):
             self.done.emit(frames)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class _ConvertBatchWorker(QThread):
+    """Background thread: convert a list of files to GIF."""
+    progress = pyqtSignal(str)          # status message
+    file_done = pyqtSignal(str, str)    # (src, result_path)
+    file_error = pyqtSignal(str, str)   # (src, error message)
+    finished = pyqtSignal(int, list)    # (success_count, failed_list)
+
+    def __init__(self, paths, kwargs_template: dict, parent=None):
+        super().__init__(parent)
+        self.paths = paths
+        self.kwargs_template = kwargs_template
+
+    def run(self):
+        success = 0
+        failed: list[str] = []
+        for src in self.paths:
+            self.progress.emit(f"Converting: {Path(src).name}…")
+            try:
+                result = convert_to_gif(input_path=src, **self.kwargs_template)
+                success += 1
+                self.file_done.emit(src, result)
+            except VideoConversionError as e:
+                failed.append(f"{Path(src).name}: {e}")
+                self.file_error.emit(src, str(e))
+        self.finished.emit(success, failed)
 
 
 class _ConvertPreviewWorker(QThread):
@@ -323,16 +351,23 @@ class VideoToGifWidget(QWidget):
         self.status_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
         layout.addWidget(self.status_label)
 
-        # ffmpeg status hint + Refresh button
+        # ffmpeg status hint + buttons
         self._ffmpeg_hint = QLabel()
         self._ffmpeg_hint.setWordWrap(True)
         self._ffmpeg_hint.setStyleSheet("font-size: 10px;")
         layout.addWidget(self._ffmpeg_hint)
 
-        refresh_btn = QPushButton("Refresh ffmpeg detection")
+        ffmpeg_btns = QHBoxLayout()
+        self._install_ffmpeg_btn = QPushButton("How to Install FFmpeg…")
+        self._install_ffmpeg_btn.setStyleSheet("font-size: 10px;")
+        self._install_ffmpeg_btn.clicked.connect(self._show_install_dialog)
+        ffmpeg_btns.addWidget(self._install_ffmpeg_btn)
+
+        refresh_btn = QPushButton("Refresh Detection")
         refresh_btn.setStyleSheet("font-size: 10px;")
         refresh_btn.clicked.connect(self._refresh_ffmpeg_status)
-        layout.addWidget(refresh_btn)
+        ffmpeg_btns.addWidget(refresh_btn)
+        layout.addLayout(ffmpeg_btns)
 
         layout.addStretch()
 
@@ -410,17 +445,43 @@ class VideoToGifWidget(QWidget):
     def _apply_ffmpeg_state(self):
         """Update hint label and button states to match current self._ffmpeg_ok."""
         if self._ffmpeg_ok:
-            self._ffmpeg_hint.setText("ffmpeg found on PATH")
+            self._ffmpeg_hint.setText("ffmpeg found — ready to convert.")
             self._ffmpeg_hint.setStyleSheet(f"color: {_T.SUCCESS}; font-size: 10px;")
+            self._install_ffmpeg_btn.setVisible(False)
         else:
+            info = get_ffmpeg_install_info()
             self._ffmpeg_hint.setText(
                 "ffmpeg not found — conversion unavailable.\n"
-                "Install:  winget install Gyan.FFmpeg\n"
-                "Then click Refresh (no restart needed)."
+                f"Recommended: {info['command']}\n"
+                "Click 'How to Install' for details, then 'Refresh'."
             )
             self._ffmpeg_hint.setStyleSheet(f"color: {_T.ERROR}; font-size: 10px;")
+            self._install_ffmpeg_btn.setVisible(True)
         self._convert_single_btn.setEnabled(self._ffmpeg_ok)
         self._convert_all_btn.setEnabled(self._ffmpeg_ok)
+
+    def _show_install_dialog(self):
+        """Display platform-specific FFmpeg installation instructions."""
+        info = get_ffmpeg_install_info()
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Install FFmpeg")
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        cmd_block = f"<pre style='background:#1e2030;padding:6px;'>{info['command']}</pre>" if info['command'] else ""
+        msg.setText(
+            f"<b>Platform:</b> {info['platform']}<br>"
+            f"<b>Method:</b> {info['method']}<br><br>"
+            f"{cmd_block}"
+            f"<br><b>Note:</b> {info['note']}<br><br>"
+            f"After installing, click <i>Refresh Detection</i> in the widget — "
+            "no restart required on Windows."
+        )
+        copy_btn = msg.addButton("Copy Command", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton(QMessageBox.StandardButton.Ok)
+        msg.exec()
+        if msg.clickedButton() == copy_btn and info['command']:
+            from PyQt6.QtWidgets import QApplication
+            QApplication.clipboard().setText(info['command'])
 
     def _refresh_ffmpeg_status(self):
         """Re-detect ffmpeg (reads Windows registry PATH for post-install changes)."""
@@ -633,43 +694,68 @@ class VideoToGifWidget(QWidget):
         self._convert_paths(self.input_files)
 
     def _convert_paths(self, paths: List[str]):
+        """Convert one or more files to GIF in a background thread."""
         overwrite = self.overwrite_checkbox.isChecked()
         lossy = self.lossy_spin.value() if self.lossy_checkbox.isChecked() else 0
 
-        success = 0
-        failed: List[str] = []
-        last_result: Optional[str] = None
+        # Build a kwargs dict per-file (output_path derived at call time)
+        # We pass output_path=None so convert_to_gif derives it automatically,
+        # unless an output dir or overwrite is configured.
+        kwargs_template = dict(
+            output_path=None,   # will be overridden per file below
+            fps=self.fps_spin.value(),
+            width=self.width_spin.value(),
+            start_time=self.start_spin.value(),
+            end_time=self.end_spin.value(),
+            colors=self.colors_spin.value(),
+            dither=self.dither_combo.currentText(),
+            lossy=lossy,
+            overwrite=overwrite,
+        )
 
-        for src in paths:
-            out_path = self._compute_output_path(src)
-            self.status_label.setText(f"Converting: {Path(src).name}…")
-            # Force UI update so the label is visible during long conversions
-            from PyQt6.QtWidgets import QApplication
-            QApplication.processEvents()
-            try:
-                result = convert_to_gif(
-                    input_path=src,
-                    output_path=out_path,
-                    fps=self.fps_spin.value(),
-                    width=self.width_spin.value(),
-                    start_time=self.start_spin.value(),
-                    end_time=self.end_spin.value(),
-                    colors=self.colors_spin.value(),
-                    dither=self.dither_combo.currentText(),
-                    lossy=lossy,
-                    overwrite=overwrite,
-                )
-                success += 1
-                last_result = result
-                self.status_label.setText(f"Done: {Path(result).name}")
-            except VideoConversionError as e:
-                failed.append(f"{Path(src).name}: {e}")
+        # Inject computed output_path per source: wrap in a helper worker
+        class _PathAwareBatchWorker(_ConvertBatchWorker):
+            def run(inner_self):
+                success = 0
+                failed: list[str] = []
+                last_result: Optional[str] = None
+                for src in inner_self.paths:
+                    inner_self.progress.emit(f"Converting: {Path(src).name}…")
+                    kw = dict(inner_self.kwargs_template)
+                    kw["output_path"] = self._compute_output_path(src)
+                    try:
+                        result = convert_to_gif(input_path=src, **kw)
+                        success += 1
+                        last_result = result
+                        inner_self.file_done.emit(src, result)
+                    except VideoConversionError as e:
+                        failed.append(f"{Path(src).name}: {e}")
+                        inner_self.file_error.emit(src, str(e))
+                inner_self.finished.emit(success, failed)
+                if last_result:
+                    inner_self.progress.emit(f"__last__{last_result}")
 
-        # Update output preview with the last saved file
-        if last_result:
-            self._load_gif_into_preview(last_result)
+        worker = _PathAwareBatchWorker(list(paths), kwargs_template, parent=self)
+        worker.progress.connect(self._on_convert_progress)
+        worker.finished.connect(self._on_convert_finished)
+        self._convert_worker = worker
+        self._convert_single_btn.setEnabled(False)
+        self._convert_all_btn.setEnabled(False)
+        self.status_label.setText("Converting…")
+        worker.start()
 
+    def _on_convert_progress(self, msg: str):
+        if msg.startswith("__last__"):
+            self._load_gif_into_preview(msg[len("__last__"):])
+        else:
+            self.status_label.setText(msg)
+
+    def _on_convert_finished(self, success: int, failed: list):
+        self._convert_single_btn.setEnabled(self._ffmpeg_ok)
+        self._convert_all_btn.setEnabled(self._ffmpeg_ok)
         if failed:
+            self.status_label.setText(f"Done with {len(failed)} error(s)")
             QMessageBox.warning(self, "Completed with errors", "\n".join(failed))
         else:
+            self.status_label.setText(f"Converted {success} file(s)")
             QMessageBox.information(self, "Success", f"Converted {success} file(s)")

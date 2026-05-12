@@ -82,8 +82,7 @@ class GroupSelectorDialog(QDialog):
                 group = self.group_manager.get_group(frame.group_index)
                 if group:
                     text = (f"[G{frame.group_index}] {group.name} "
-                           f"({len(group.material_indices)} materials × {group.loop_count} loops = "
-                           f"{group.get_total_frames()} frames) at frame #{frame_idx + 1}")
+                           f"({len(group.entries)} entries) at frame #{frame_idx + 1}")
                     
                     item = QListWidgetItem(text)
                     item.setData(Qt.ItemDataRole.UserRole, frame.group_index)

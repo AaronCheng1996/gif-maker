@@ -10,7 +10,6 @@ Workflow per image
 5. Build GIF with GifBuilder.build_gif_from_group().
 6. Save to output path.
 """
-import copy
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from pathlib import Path
 

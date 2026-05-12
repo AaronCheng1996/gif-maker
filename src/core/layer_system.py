@@ -3,10 +3,13 @@ Layer system for multi-layer GIF composition
 Supports position, crop, and scale adjustments for each layer
 """
 
+import logging
 from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
 from PIL import Image
 from .utils import ensure_rgba
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -96,11 +99,8 @@ class Layer:
                     img.putalpha(alpha)
             
             return img
-        except Exception as e:
-            print(f"ERROR in Layer.apply_to_image: {e}")
-            import traceback
-            traceback.print_exc()
-            # Return original image if transformation fails
+        except (OSError, ValueError, MemoryError) as e:
+            logger.error("Layer.apply_to_image failed: %s", e, exc_info=True)
             return ensure_rgba(image.copy())
 
 
@@ -168,7 +168,7 @@ class LayerCompositor:
     @staticmethod
     def composite_frame(
         layered_frame: LayeredFrame,
-        material_manager,
+        material_manager: "MaterialManager",  # noqa: F821 – avoid circular import
         canvas_size: Tuple[int, int],
         background_color: Tuple[int, int, int, int] = (0, 0, 0, 0)
     ) -> Image.Image:
@@ -205,9 +205,8 @@ class LayerCompositor:
             # Paste onto canvas at specified position
             try:
                 canvas.paste(processed_img, (layer.x, layer.y), processed_img)
-            except Exception as e:
-                # If paste fails (e.g., out of bounds), skip this layer
-                print(f"Warning: Failed to paste layer {layer.name}: {e}")
+            except (ValueError, MemoryError) as e:
+                logger.warning("Failed to paste layer %r: %s", layer.name, e)
                 continue
         
         return canvas

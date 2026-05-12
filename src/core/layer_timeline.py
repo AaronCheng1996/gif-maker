@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 class LayerFrame:
     """A single frame entry pointing to a material (or group) and its offset within the canvas."""
     material_index: Optional[int] = None
-    group_index: Optional[int] = None  # Reference to a MaterialGroup
+    group_index: Optional[int] = None  # Reference to a CompositionGroup (by group_id)
     x: int = 0
     y: int = 0
 

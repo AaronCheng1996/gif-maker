@@ -168,17 +168,17 @@ class PreviewWidget(QWidget):
         if pil_image.mode != 'RGBA':
             pil_image = pil_image.convert('RGBA')
         
-        # Direct conversion - much faster, no checkerboard overhead
         data = pil_image.tobytes('raw', 'RGBA')
-        
+        # Keep `data` alive until after QPixmap.fromImage() copies the pixel data.
         qimage = QImage(
             data,
             pil_image.width,
             pil_image.height,
             QImage.Format.Format_RGBA8888
         )
-        
-        return QPixmap.fromImage(qimage)
+        pixmap = QPixmap.fromImage(qimage)
+        del data  # explicit: qimage no longer needed after fromImage copy
+        return pixmap
     
     def toggle_play(self):
         if self.is_playing:

@@ -10,8 +10,9 @@ def ensure_rgba(image: Image.Image) -> Image.Image:
 
 def resize_image(image: Image.Image, size: Tuple[int, int], keep_aspect: bool = True) -> Image.Image:
     if keep_aspect:
-        image.thumbnail(size, Image.Resampling.LANCZOS)
-        return image
+        result = image.copy()
+        result.thumbnail(size, Image.Resampling.LANCZOS)
+        return result
     else:
         return image.resize(size, Image.Resampling.LANCZOS)
 

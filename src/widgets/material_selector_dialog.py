@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QPushButton, QLabel
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QIcon, QPixmap, QImage
 from PIL import Image
 
 
@@ -40,11 +40,9 @@ class MaterialSelectorDialog(QDialog):
         
         # Populate list
         for i, (img, name) in enumerate(self.material_manager.get_all_materials()):
-            thumbnail = self.create_thumbnail(img, 64, 64)
-            icon_pixmap = thumbnail
-            
+            icon_pixmap = self.create_thumbnail(img, 64, 64)
             item = QListWidgetItem(f"[{i}] {name} ({img.width}x{img.height})")
-            item.setData(Qt.ItemDataRole.DecorationRole, icon_pixmap)
+            item.setIcon(QIcon(icon_pixmap))
             item.setData(Qt.ItemDataRole.UserRole, i)
             item.setSizeHint(QSize(200, 70))
             self.material_list.addItem(item)
@@ -65,16 +63,17 @@ class MaterialSelectorDialog(QDialog):
         self.setLayout(layout)
     
     def create_thumbnail(self, pil_image: Image.Image, width: int, height: int) -> QPixmap:
-        """Create a thumbnail from PIL image"""
+        """Create a thumbnail QPixmap from a PIL image."""
         img_copy = pil_image.copy()
         img_copy.thumbnail((width, height), Image.Resampling.LANCZOS)
-        
         if img_copy.mode != 'RGBA':
             img_copy = img_copy.convert('RGBA')
-        
         data = img_copy.tobytes('raw', 'RGBA')
+        # Keep `data` alive until after QPixmap.fromImage() copies the bytes.
         qimage = QImage(data, img_copy.width, img_copy.height, QImage.Format.Format_RGBA8888)
-        return QPixmap.fromImage(qimage)
+        pixmap = QPixmap.fromImage(qimage)
+        del data
+        return pixmap
     
     def accept(self):
         """Accept the dialog and store selected material index"""

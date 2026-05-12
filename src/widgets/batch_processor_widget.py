@@ -13,13 +13,32 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QListWidget, QListWidgetItem, QComboBox, QProgressBar,
                               QRadioButton, QButtonGroup, QScrollArea, QGridLayout,
                               QCheckBox, QLineEdit, QSplitter)
-from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QImage
+from PyQt6.QtCore import pyqtSignal, Qt, QObject, QThread
+from PyQt6.QtGui import QPixmap, QImage
 from PIL import Image
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
 from .theme import AppTheme as _T
+
+
+class _BatchWorker(QObject):
+    """Runs BatchProcessor.process_batch in a background thread."""
+
+    progress = pyqtSignal(int, int, str)          # current, total, message
+    finished = pyqtSignal(list, list)             # successful, failed
+
+    def __init__(self, processor, kwargs: dict):
+        super().__init__()
+        self._processor = processor
+        self._kwargs = kwargs
+
+    def run(self):
+        try:
+            successful, failed = self._processor.process_batch(**self._kwargs)
+        except Exception as e:
+            successful, failed = [], [("", str(e))]
+        self.finished.emit(successful, failed)
 
 
 class BatchProcessorWidget(QWidget):
@@ -380,7 +399,8 @@ class BatchProcessorWidget(QWidget):
         """Update tile preview when a different image is highlighted."""
         if 0 <= row < len(self.image_paths):
             try:
-                img = Image.open(self.image_paths[row])
+                with Image.open(self.image_paths[row]) as _img:
+                    img = _img.copy()
                 self.batch_tile_preview.set_image(img)
                 self._update_tile_preview_grid()
                 self._gen_preview_btn.setEnabled(self.selected_template is not None)
@@ -718,90 +738,77 @@ class BatchProcessorWidget(QWidget):
             self._gen_preview_btn.setEnabled(has_images and has_template)
     
     def start_batch_processing(self):
-        """Start the batch processing"""
-        # Validate first
+        """Start the batch processing in a background thread."""
         if not self.validate_settings():
             return
-        
-        # Confirm with user
+
         reply = QMessageBox.question(
             self,
             "Confirm Batch Processing",
             f"Process {len(self.image_paths)} image(s) with template '{self.selected_template_name}'?\n\n"
-            f"Each image will be split into tiles and exported as a GIF.",
+            "Each image will be split into tiles and exported as a GIF.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if reply != QMessageBox.StandardButton.Yes:
             return
-        
-        # Disable UI during processing
+
         self.set_ui_enabled(False)
-        
-        # Get output directory
-        if self.same_dir_checkbox.isChecked():
-            output_directory = None
-        else:
-            output_directory = self.output_dir_edit.text().strip()
-        
-        # Process batch
-        try:
-            from ..core.batch_processor import BatchProcessor
-            
-            processor = BatchProcessor()
-            processor.set_progress_callback(self.on_progress)
-            
-            split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
-            
-            # Get settings from UI
-            color_count = int(self.color_palette_combo.currentText())
-            output_width = self.output_width_spinbox.value()
-            output_height = self.output_height_spinbox.value()
-            
-            successful, failed = processor.process_batch(
-                image_paths=self.image_paths,
-                template=self.selected_template,
-                split_mode=split_mode,
-                split_rows=self.rows_spinbox.value(),
-                split_cols=self.cols_spinbox.value(),
-                tile_width=self.tile_width_spinbox.value(),
-                tile_height=self.tile_height_spinbox.value(),
-                selected_positions=self.selected_positions if self.selected_positions else None,
-                output_directory=output_directory,
-                color_count=color_count,
-                output_width=output_width,
-                output_height=output_height
-            )
-            
-            # Show results
-            self.show_results(successful, failed)
-            
-            # Emit completion signal
-            self.batch_complete.emit(len(successful), len(failed))
-            
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Batch Processing Error",
-                f"An error occurred during batch processing:\n{str(e)}"
-            )
-        finally:
-            # Re-enable UI
-            self.set_ui_enabled(True)
-            self.progress_bar.setValue(0)
-            self.progress_label.setText("Ready to process")
-    
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Starting…")
+
+        output_directory = (
+            None if self.same_dir_checkbox.isChecked()
+            else self.output_dir_edit.text().strip() or None
+        )
+
+        from ..core.batch_processor import BatchProcessor
+        processor = BatchProcessor()
+
+        split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
+        kwargs = dict(
+            image_paths=list(self.image_paths),
+            template=self.selected_template,
+            split_mode=split_mode,
+            split_rows=self.rows_spinbox.value(),
+            split_cols=self.cols_spinbox.value(),
+            tile_width=self.tile_width_spinbox.value(),
+            tile_height=self.tile_height_spinbox.value(),
+            selected_positions=self.selected_positions if self.selected_positions else None,
+            output_directory=output_directory,
+            color_count=int(self.color_palette_combo.currentText()),
+            output_width=self.output_width_spinbox.value(),
+            output_height=self.output_height_spinbox.value(),
+        )
+
+        self._worker = _BatchWorker(processor, kwargs)
+        self._thread = QThread(self)
+        self._worker.moveToThread(self._thread)
+
+        processor.set_progress_callback(
+            lambda cur, tot, msg: self._worker.progress.emit(cur, tot, msg)
+        )
+
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self.on_progress)
+        self._worker.finished.connect(self._on_batch_finished)
+        self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._thread.deleteLater)
+
+        self._thread.start()
+
     def on_progress(self, current: int, total: int, message: str):
-        """Handle progress updates"""
+        """Handle thread-safe progress updates (called via signal)."""
         if total > 0:
-            progress = int((current / total) * 100)
-            self.progress_bar.setValue(progress)
-        
+            self.progress_bar.setValue(int(current / total * 100))
         self.progress_label.setText(f"{message} ({current}/{total})")
-        
-        # Process events to update UI
-        from PyQt6.QtWidgets import QApplication
-        QApplication.processEvents()
+
+    def _on_batch_finished(self, successful: list, failed: list):
+        """Called when the background worker finishes."""
+        self.set_ui_enabled(True)
+        self.progress_bar.setValue(100 if successful else 0)
+        self.progress_label.setText("Ready to process")
+        self.show_results(successful, failed)
+        self.batch_complete.emit(len(successful), len(failed))
     
     def show_results(self, successful: List[str], failed: List[Tuple[str, str]]):
         """Show batch processing results"""

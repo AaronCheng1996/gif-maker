@@ -1,6 +1,5 @@
 from typing import List, Tuple
 from PIL import Image
-from copy import deepcopy
 
 
 class Frame:

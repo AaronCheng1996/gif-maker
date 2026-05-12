@@ -193,14 +193,16 @@ class PreviewPageWidget(QWidget):
             pil_image = pil_image.convert('RGBA')
         
         data = pil_image.tobytes('raw', 'RGBA')
+        # Keep `data` alive until after QPixmap.fromImage() copies the pixel data.
         qimage = QImage(
             data,
             pil_image.width,
             pil_image.height,
             QImage.Format.Format_RGBA8888
         )
-        
-        return QPixmap.fromImage(qimage)
+        pixmap = QPixmap.fromImage(qimage)
+        del data
+        return pixmap
     
     def toggle_play(self):
         """切換播放/暫停狀態"""

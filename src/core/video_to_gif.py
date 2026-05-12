@@ -17,6 +17,64 @@ class VideoConversionError(Exception):
     """Raised when video-to-GIF conversion fails."""
 
 
+def get_ffmpeg_install_info() -> dict:
+    """Return platform-specific instructions for installing ffmpeg.
+
+    Returns a dict with keys:
+        platform  – human-readable OS name
+        method    – short description of the recommended method
+        command   – shell command the user can run (empty if not applicable)
+        url       – download/doc URL for manual installation
+        note      – extra context (e.g. winget vs. manual)
+    """
+    platform = sys.platform
+    if platform == "win32":
+        return {
+            "platform": "Windows",
+            "method": "winget (recommended) or manual download",
+            "command": "winget install --id Gyan.FFmpeg -e",
+            "url": "https://www.gyan.dev/ffmpeg/builds/",
+            "note": (
+                "After installation you may need to restart the application "
+                "for PATH changes to take effect."
+            ),
+        }
+    elif platform == "darwin":
+        return {
+            "platform": "macOS",
+            "method": "Homebrew",
+            "command": "brew install ffmpeg",
+            "url": "https://ffmpeg.org/download.html#build-mac",
+            "note": (
+                "Install Homebrew first from https://brew.sh if you don't have it."
+            ),
+        }
+    else:
+        # Linux / other Unix
+        import distro as _distro  # optional dep; fall back to lsb_release
+        try:
+            distro_id = _distro.id().lower()
+        except Exception:
+            distro_id = ""
+
+        if distro_id in ("ubuntu", "debian", "linuxmint", "pop"):
+            cmd = "sudo apt update && sudo apt install -y ffmpeg"
+        elif distro_id in ("fedora", "rhel", "centos", "rocky", "alma"):
+            cmd = "sudo dnf install -y ffmpeg"
+        elif distro_id in ("arch", "manjaro", "endeavouros"):
+            cmd = "sudo pacman -S ffmpeg"
+        else:
+            cmd = "sudo apt install ffmpeg  # or use your distro's package manager"
+
+        return {
+            "platform": "Linux",
+            "method": "system package manager",
+            "command": cmd,
+            "url": "https://ffmpeg.org/download.html#build-linux",
+            "note": "Command may vary depending on your Linux distribution.",
+        }
+
+
 def _windows_registry_path() -> str:
     """Read the current User + System PATH from the Windows registry.
 
@@ -78,6 +136,17 @@ def is_ffmpeg_available() -> bool:
     return find_ffmpeg() is not None
 
 
+def _ffmpeg() -> str:
+    """Return the resolved ffmpeg path, raising VideoConversionError if absent."""
+    exe = find_ffmpeg()
+    if exe is None:
+        raise VideoConversionError(
+            "ffmpeg is not installed or not found on PATH. "
+            "Please install ffmpeg to use video conversion features."
+        )
+    return exe
+
+
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     """Run a subprocess, raising VideoConversionError on failure."""
     try:
@@ -101,9 +170,13 @@ def get_video_info(input_path: str) -> dict:
     Returns a dict with keys: width, height, fps (float), duration (float, seconds).
     Falls back to 0/0.0 for fields that cannot be parsed.
     """
+    exe = find_ffmpeg()
+    if exe is None:
+        return {"width": 0, "height": 0, "fps": 0.0, "duration": 0.0,
+                "error": "ffmpeg not found"}
     try:
         result = subprocess.run(
-            ["ffmpeg", "-i", input_path],
+            [exe, "-i", input_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         stderr = result.stderr.decode(errors="ignore")
@@ -135,7 +208,7 @@ def get_video_info(input_path: str) -> dict:
 def extract_first_frame(input_path: str) -> Image.Image:
     """Extract the first frame of a video/animated file as a PIL Image."""
     result = _run([
-        "ffmpeg", "-i", input_path,
+        _ffmpeg(), "-i", input_path,
         "-frames:v", "1",
         "-f", "image2pipe",
         "-vcodec", "png",
@@ -176,7 +249,7 @@ def extract_preview_frames(
     with tempfile.TemporaryDirectory() as tmpdir:
         pattern = str(Path(tmpdir) / "frame_%05d.png")
         _run([
-            "ffmpeg",
+            _ffmpeg(),
             *input_args, "-i", input_path,
             "-vf", vf,
             "-f", "image2",
@@ -226,8 +299,7 @@ def convert_to_gif(
     Returns:
         Path to the produced GIF file.
     """
-    if not is_ffmpeg_available():
-        raise VideoConversionError("ffmpeg is not available on PATH")
+    ffmpeg_exe = _ffmpeg()  # raises VideoConversionError if not found
 
     src = Path(input_path)
     if not src.exists():
@@ -276,7 +348,7 @@ def convert_to_gif(
 
         # Pass 1: generate per-video palette
         _run([
-            "ffmpeg",
+            ffmpeg_exe,
             *input_args, "-i", str(src),
             "-vf", f"fps={fps}{scale_filter},palettegen=max_colors={colors}:stats_mode=diff",
             "-y", palette_png,
@@ -285,7 +357,7 @@ def convert_to_gif(
         # Pass 2: encode GIF with the generated palette
         # [0:v] prefix is required when there are two inputs to avoid ambiguity
         _run([
-            "ffmpeg",
+            ffmpeg_exe,
             *input_args, "-i", str(src), "-i", palette_png,
             "-filter_complex",
             f"[0:v]fps={fps}{scale_filter}[x];[x][1:v]paletteuse={dither_opts}",

@@ -177,16 +177,16 @@ class TileEditorWidget(QWidget):
         self.update_position_selector()
     
     def create_thumbnail(self, pil_image: Image.Image, width: int, height: int) -> QPixmap:
-        """Create a thumbnail from PIL image"""
+        """Create a thumbnail QPixmap from a PIL image."""
         img_copy = pil_image.copy()
         img_copy.thumbnail((width, height), Image.Resampling.LANCZOS)
-        
         if img_copy.mode != 'RGBA':
             img_copy = img_copy.convert('RGBA')
-        
         data = img_copy.tobytes('raw', 'RGBA')
         qimage = QImage(data, img_copy.width, img_copy.height, QImage.Format.Format_RGBA8888)
-        return QPixmap.fromImage(qimage)
+        pixmap = QPixmap.fromImage(qimage)
+        del data
+        return pixmap
     
     def load_single_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -213,7 +213,8 @@ class TileEditorWidget(QWidget):
     
     def load_image_from_path(self, file_path: str):
         try:
-            image = Image.open(file_path)
+            with Image.open(file_path) as _img:
+                image = _img.copy()
             self.loaded_images.append((image, file_path))
             
             self.update_images_table()
@@ -463,6 +464,8 @@ class TilePreviewWidget(QWidget):
         self._img_y = 0
         self._img_w = 0
         self._img_h = 0
+        # Cache the source QPixmap so PIL→QImage conversion doesn't happen every repaint
+        self._cached_pixmap: Optional[QPixmap] = None
         self.setMinimumSize(200, 200)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
@@ -470,6 +473,7 @@ class TilePreviewWidget(QWidget):
 
     def set_image(self, pil_image: Optional[Image.Image]):
         self._pil_image = pil_image
+        self._cached_pixmap = None  # invalidate cache on new image
         self._select_all()
         self.update()
 
@@ -515,11 +519,14 @@ class TilePreviewWidget(QWidget):
                              "Select an image on the left to preview")
             return
 
-        # Convert PIL → QPixmap and scale to fit
-        img = self._pil_image.convert("RGBA")
-        data = img.tobytes("raw", "RGBA")
-        qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
-        pixmap = QPixmap.fromImage(qimg)
+        # Convert PIL → QPixmap only when the image changes (cached)
+        if self._cached_pixmap is None:
+            img = self._pil_image.convert("RGBA")
+            data = img.tobytes("raw", "RGBA")
+            qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+            self._cached_pixmap = QPixmap.fromImage(qimg)
+            del data
+        pixmap = self._cached_pixmap
 
         w, h = self.width() - 4, self.height() - 4
         scaled = pixmap.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
@@ -735,7 +742,8 @@ class TileSplitterPage(QWidget):
 
     def _load_path(self, path: str):
         try:
-            img = Image.open(path)
+            with Image.open(path) as _img:
+                img = _img.copy()
             self.loaded_images.append((img, path))
             self._refresh_table()
             # Auto-select newly added row
@@ -870,4 +878,6 @@ class TileSplitterPage(QWidget):
             img = img.convert("RGBA")
         data = img.tobytes("raw", "RGBA")
         qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
-        return QPixmap.fromImage(qimg)
+        pixmap = QPixmap.fromImage(qimg)
+        del data
+        return pixmap

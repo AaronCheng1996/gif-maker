@@ -4,6 +4,13 @@ from .gif_builder import GifBuilder
 from .template_manager import TemplateManager
 from .batch_processor import BatchProcessor, BatchProcessingError
 from .group_manager import GroupManager
+from .video_to_gif import (
+    VideoConversionError,
+    find_ffmpeg,
+    is_ffmpeg_available,
+    get_ffmpeg_install_info,
+    get_video_info,
+)
 from .composition_group import (
     CompositionGroup,
     FrameEntry,
@@ -45,5 +52,18 @@ __all__ = [
     'is_layer_block_entry',
     'is_frame_slot',
     'is_group_slot',
+    'slot_to_dict',
+    'slot_from_dict',
+    'entry_to_dict',
+    'entry_from_dict',
+    'group_to_dict',
+    'group_from_dict',
+    'max_material_index',
+    'remap_material_indices',
+    'VideoConversionError',
+    'find_ffmpeg',
+    'is_ffmpeg_available',
+    'get_ffmpeg_install_info',
+    'get_video_info',
 ]
 
