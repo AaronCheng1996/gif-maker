@@ -4,6 +4,7 @@ from .preview_page_widget import PreviewPageWidget
 from .tile_editor import TileEditorWidget, TileSplitterPage
 from .batch_processor_widget import BatchProcessorWidget
 from .gif_optimizer_widget import GifOptimizerWidget
+from .video_to_gif_widget import VideoToGifWidget
 from .group_editor_dialog import GroupEditorDialog
 from .material_selector_dialog import MaterialSelectorDialog
 from .group_selector_dialog import GroupSelectorDialog
@@ -18,6 +19,7 @@ __all__ = [
     'TileSplitterPage',
     'BatchProcessorWidget',
     'GifOptimizerWidget',
+    'VideoToGifWidget',
     'GroupEditorDialog',
     'MaterialSelectorDialog',
     'GroupSelectorDialog',

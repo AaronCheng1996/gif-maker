@@ -18,7 +18,8 @@ from collections import Counter
 
 from .core import MaterialManager, GifBuilder, TemplateManager, GroupManager, CompositionGroup, FrameEntry, SubGroupEntry
 from .widgets import (AppTheme, PreviewWidget, PreviewPageWidget,
-                      TileSplitterPage, BatchProcessorWidget, GifOptimizerWidget, GroupCompositionWidget)
+                      TileSplitterPage, BatchProcessorWidget, GifOptimizerWidget,
+                      GroupCompositionWidget, VideoToGifWidget)
 
 
 class MainWindow(QMainWindow):
@@ -169,6 +170,9 @@ class MainWindow(QMainWindow):
         # ── Tab 3: GIF Optimizer (self-contained, own image list) ─────────────
         self.gif_optimizer = GifOptimizerWidget()
 
+        # ── Tab 4: Video to GIF (self-contained, multi-format input) ──────────
+        self.video_to_gif = VideoToGifWidget()
+
         # ── Top-level QTabWidget ───────────────────────────────────────────────
         self.tool_tabs = QTabWidget()
         self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -176,6 +180,7 @@ class MainWindow(QMainWindow):
         self.tool_tabs.addTab(self._tile_outer_splitter, "✂️ Tile Splitter")
         self.tool_tabs.addTab(self.batch_processor,      "⚡ Batch Processor")
         self.tool_tabs.addTab(self.gif_optimizer,        "🔧 GIF Optimizer")
+        self.tool_tabs.addTab(self.video_to_gif,         "🎥 Video to GIF")
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
