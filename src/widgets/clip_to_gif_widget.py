@@ -533,15 +533,21 @@ def _extract_candidates(
 
 
 class _SmartLoopWorker(QThread):
-    """Find the (start_t, end_t) pair within the current clip whose first and
-    last frames are most visually similar — producing a natural-looking loop.
+    """Find the (start_t, end_t) pair within the current clip that produces the
+    most seamless loop — i.e. the head and tail frames connect smoothly.
 
     Strategy:
-      • Search window = min(clip_duration × 30%, 3 s) at each end.
-      • Extract candidate frames at 3 fps from [start, start+window] and
-        [end-window, end].
-      • Pick the pair (s, e) with the lowest thumbnail MSE, subject to a
-        minimum preserved clip length (40% of original).
+      • Search window = min(clip_duration × 50%, 6 s) at each end.
+      • Extract candidate frames at 6 fps for more choices.
+      • Score each (start_frame, end_frame) pair with a *combined* metric:
+          – Pixel MSE       (60%): overall colour/brightness similarity
+          – Edge MSE        (20%): structural gradient similarity, less
+                                   sensitive to lighting drift
+          – Motion-delta MSE(20%): the frame-to-frame change *leaving* the
+                                   start frame vs *arriving at* the end frame;
+                                   matching motion vectors prevents visible
+                                   "jump" at the loop point
+      • Minimum preserved clip = 30% of the original selection.
       • Emit found(new_start, new_end, similarity_pct).
     """
 
@@ -549,11 +555,12 @@ class _SmartLoopWorker(QThread):
     found    = pyqtSignal(float, float, float)  # (start_t, end_t, similarity_pct)
     error    = pyqtSignal(str)
 
-    _THUMB   = (64, 64)
-    _FPS     = 3.0
-    _MAX_WIN = 3.0   # seconds
-    _WIN_PCT = 0.30  # fraction of clip to search at each end
-    _MIN_PCT = 0.40  # minimum fraction of clip to preserve
+    _THUMB     = (128, 128)  # was 64 — more detail for reliable comparison
+    _FPS       = 6.0         # was 3 — more candidates to choose from
+    _MAX_WIN   = 6.0         # was 3 s — wider search window
+    _WIN_PCT   = 0.50        # was 0.30 — search half the clip at each end
+    _MIN_PCT   = 0.30        # was 0.40 — allow somewhat shorter trimmed clips
+    _MAX_WIDTH = 200         # thumbnail extraction width (pixels)
 
     def __init__(self, path: str, start_t: float, end_t: float, parent=None):
         super().__init__(parent)
@@ -561,6 +568,37 @@ class _SmartLoopWorker(QThread):
         self._start = start_t
         self._end   = end_t
 
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _to_arr(img, thumb):
+        return img.resize(thumb).convert("RGB")
+
+    @staticmethod
+    def _edge_map(arr_np):
+        """Return per-pixel edge magnitude (simple finite-difference gradient)."""
+        import numpy as np
+        gray = arr_np.mean(axis=2)
+        gx = np.abs(np.diff(gray, axis=1, append=gray[:, -1:]))
+        gy = np.abs(np.diff(gray, axis=0, append=gray[-1:, :]))
+        return np.sqrt(gx ** 2 + gy ** 2)
+
+    @staticmethod
+    def _motion_deltas(arrs):
+        """Frame-to-frame difference for each frame in the list."""
+        import numpy as np
+        n = len(arrs)
+        deltas = []
+        for i in range(n):
+            if i + 1 < n:
+                d = arrs[i + 1] - arrs[i]
+            elif i > 0:
+                d = arrs[i] - arrs[i - 1]
+            else:
+                d = np.zeros_like(arrs[i])
+            deltas.append(d)
+        return deltas
+
+    # ------------------------------------------------------------------
     def run(self):
         try:
             import numpy as np
@@ -575,12 +613,14 @@ class _SmartLoopWorker(QThread):
 
             self.progress.emit("Analysing start frames…")
             start_cands = _extract_candidates(
-                self._path, self._start, self._start + window, self._FPS,
+                self._path, self._start, self._start + window,
+                self._FPS, self._MAX_WIDTH,
             )
 
             self.progress.emit("Analysing end frames…")
             end_cands = _extract_candidates(
-                self._path, self._end - window, self._end, self._FPS,
+                self._path, self._end - window, self._end,
+                self._FPS, self._MAX_WIDTH,
             )
 
             if not start_cands or not end_cands:
@@ -591,30 +631,47 @@ class _SmartLoopWorker(QThread):
                 f"Comparing {len(start_cands)} × {len(end_cands)} frame pairs…"
             )
 
-            best_mse   = float("inf")
+            thumb = self._THUMB
+
+            # Pre-compute numpy arrays, edge maps, and motion deltas once
+            s_arrs  = [np.array(img.resize(thumb).convert("RGB"), dtype=np.float32)
+                       for img, _ in start_cands]
+            e_arrs  = [np.array(img.resize(thumb).convert("RGB"), dtype=np.float32)
+                       for img, _ in end_cands]
+            s_times = [t for _, t in start_cands]
+            e_times = [t for _, t in end_cands]
+
+            s_edges  = [self._edge_map(a) for a in s_arrs]
+            e_edges  = [self._edge_map(a) for a in e_arrs]
+
+            # start_deltas[i]: motion *leaving*  frame i (what happens right after)
+            # end_deltas[j]:   motion *arriving* at frame j (what happened just before)
+            s_deltas = self._motion_deltas(s_arrs)
+            e_deltas = self._motion_deltas(e_arrs)
+
+            best_score = float("inf")
             best_s_t   = self._start
             best_e_t   = self._end
-            thumb      = self._THUMB
 
-            for s_img, s_t in start_cands:
-                s_arr = np.array(
-                    s_img.resize(thumb).convert("RGB"), dtype=np.float32
-                )
-                for e_img, e_t in end_cands:
-                    # Ensure we don't shrink the clip too much
+            for i, s_t in enumerate(s_times):
+                for j, e_t in enumerate(e_times):
                     if e_t - s_t < min_span:
                         continue
-                    e_arr = np.array(
-                        e_img.resize(thumb).convert("RGB"), dtype=np.float32
-                    )
-                    mse = float(np.mean((s_arr - e_arr) ** 2))
-                    if mse < best_mse:
-                        best_mse = mse
-                        best_s_t = s_t
-                        best_e_t = e_t
 
-            # Similarity: 0 MSE → 100%, max possible MSE (255²) → 0%
-            similarity = max(0.0, 100.0 * (1.0 - best_mse / (255.0 ** 2)))
+                    pixel_mse  = float(np.mean((s_arrs[i]   - e_arrs[j])   ** 2))
+                    edge_mse   = float(np.mean((s_edges[i]  - e_edges[j])  ** 2))
+                    motion_mse = float(np.mean((s_deltas[i] - e_deltas[j]) ** 2))
+
+                    # Weighted combined score:
+                    #   60% pixel colour · 20% edge structure · 20% motion continuity
+                    score = pixel_mse * 0.6 + edge_mse * 0.2 + motion_mse * 0.2
+
+                    if score < best_score:
+                        best_score = score
+                        best_s_t   = s_t
+                        best_e_t   = e_t
+
+            similarity = max(0.0, 100.0 * (1.0 - best_score / (255.0 ** 2)))
             self.found.emit(best_s_t, best_e_t, similarity)
 
         except Exception as exc:
