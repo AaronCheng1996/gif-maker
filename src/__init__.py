@@ -8,6 +8,8 @@ __author__ = 'Aaron Cheng'
 
 from . import core
 from . import widgets
+from . import i18n
+from . import settings
 
-__all__ = ['core', 'widgets']
+__all__ = ['core', 'widgets', 'i18n', 'settings']
 

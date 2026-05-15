@@ -10,6 +10,7 @@ from .group_editor_dialog import GroupEditorDialog
 from .material_selector_dialog import MaterialSelectorDialog
 from .group_selector_dialog import GroupSelectorDialog
 from .group_composition_widget import GroupCompositionWidget
+from .settings_dialog import SettingsDialog
 
 __all__ = [
     'AppTheme',
@@ -25,5 +26,6 @@ __all__ = [
     'GroupEditorDialog',
     'MaterialSelectorDialog',
     'GroupSelectorDialog',
+    'SettingsDialog',
 ]
 

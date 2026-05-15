@@ -19,7 +19,10 @@ from collections import Counter
 from .core import MaterialManager, GifBuilder, TemplateManager, GroupManager, CompositionGroup, FrameEntry, SubGroupEntry
 from .widgets import (AppTheme, PreviewWidget, PreviewPageWidget,
                       TileSplitterPage, BatchProcessorWidget, GifOptimizerWidget,
-                      GroupCompositionWidget, VideoToGifWidget, ClipToGifWidget)
+                      GroupCompositionWidget, VideoToGifWidget, ClipToGifWidget,
+                      SettingsDialog)
+from .i18n import tr, set_language
+from . import settings as AppSettings
 
 
 class MainWindow(QMainWindow):
@@ -179,12 +182,12 @@ class MainWindow(QMainWindow):
         # ── Top-level QTabWidget ───────────────────────────────────────────────
         self.tool_tabs = QTabWidget()
         self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
-        self.tool_tabs.addTab(self._composer_splitter,   "🎬 Composer")
-        self.tool_tabs.addTab(self._tile_outer_splitter, "✂️ Tile Splitter")
-        self.tool_tabs.addTab(self.batch_processor,      "⚡ Batch Processor")
-        self.tool_tabs.addTab(self.gif_optimizer,        "🔧 GIF Optimizer")
-        self.tool_tabs.addTab(self.video_to_gif,         "🎥 Video to GIF")
-        self.tool_tabs.addTab(self.clip_to_gif,          "🎞️ Clip to GIF")
+        self.tool_tabs.addTab(self._composer_splitter,   tr("🎬 Composer"))
+        self.tool_tabs.addTab(self._tile_outer_splitter, tr("✂️ Tile Splitter"))
+        self.tool_tabs.addTab(self.batch_processor,      tr("⚡ Batch Processor"))
+        self.tool_tabs.addTab(self.gif_optimizer,        tr("🔧 GIF Optimizer"))
+        self.tool_tabs.addTab(self.video_to_gif,         tr("🎥 Video to GIF"))
+        self.tool_tabs.addTab(self.clip_to_gif,          tr("🎞️ Clip to GIF"))
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
@@ -222,8 +225,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(4, 4, 4, 4)
 
-        title = QLabel("Material Library")
-        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #e4e8f4;")
+        title = QLabel(tr("Material Library"))
+        title.setStyleSheet("font-weight: 600; font-size: 14px; color: #e6eaf6; padding: 4px 0;")
         layout.addWidget(title)
 
         layout.addWidget(self.create_materials_tab())
@@ -235,18 +238,18 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
         
-        load_group = QGroupBox("Load Materials")
+        load_group = QGroupBox(tr("Load Materials"))
         load_layout = QVBoxLayout()
         
-        self.load_image_btn = QPushButton("Load Image")
+        self.load_image_btn = QPushButton(tr("Load Image"))
         self.load_image_btn.clicked.connect(self.load_image_material)
         load_layout.addWidget(self.load_image_btn)
-        
-        self.load_gif_btn = QPushButton("Load GIF (Extract Frames)")
+
+        self.load_gif_btn = QPushButton(tr("Load GIF (Extract Frames)"))
         self.load_gif_btn.clicked.connect(self.load_gif_material)
         load_layout.addWidget(self.load_gif_btn)
-        
-        self.load_multiple_btn = QPushButton("Load Multiple Images")
+
+        self.load_multiple_btn = QPushButton(tr("Load Multiple Images"))
         self.load_multiple_btn.clicked.connect(self.load_multiple_materials)
         load_layout.addWidget(self.load_multiple_btn)
         
@@ -254,11 +257,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(load_group)
         
         lib_header_row = QHBoxLayout()
-        list_label = QLabel("Material Library")
-        list_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        list_label = QLabel(tr("Material Library"))
+        list_label.setStyleSheet("font-weight: 600; font-size: 12px; color: #8a95b8;")
         lib_header_row.addWidget(list_label)
         lib_header_row.addStretch()
-        self.material_view_btn = QPushButton("⊞ Grid")
+        self.material_view_btn = QPushButton(tr("⊞ Grid"))
         self.material_view_btn.setFixedSize(80, 26)
         self.material_view_btn.setToolTip("Switch between list and grid (icon) view")
         self.material_view_btn.setCheckable(True)
@@ -270,14 +273,14 @@ class MainWindow(QMainWindow):
 
         # Sorting controls for materials
         sort_row = QHBoxLayout()
-        sort_row.addWidget(QLabel("Sort:"))
+        sort_row.addWidget(QLabel(tr("Sort:")))
         self.material_sort_combo = QComboBox()
         self.material_sort_combo.addItems([
-            "Default",
-            "Name (A→Z)",
-            "Name (Z→A)",
-            "Width (Large→Small)",
-            "Height (Large→Small)",
+            tr("Default"),
+            tr("Name (A→Z)"),
+            tr("Name (Z→A)"),
+            tr("Width (Large→Small)"),
+            tr("Height (Large→Small)"),
         ])
         self.material_sort_combo.currentIndexChanged.connect(self.refresh_materials_list)
         sort_row.addWidget(self.material_sort_combo)
@@ -292,11 +295,11 @@ class MainWindow(QMainWindow):
         
         material_actions = QHBoxLayout()
 
-        self.remove_material_btn = QPushButton("Remove Selected")
+        self.remove_material_btn = QPushButton(tr("Remove Selected"))
         self.remove_material_btn.clicked.connect(self.remove_selected_material)
         material_actions.addWidget(self.remove_material_btn)
 
-        self.clear_materials_btn2 = QPushButton("Clear All")
+        self.clear_materials_btn2 = QPushButton(tr("Clear All"))
         self.clear_materials_btn2.clicked.connect(self.clear_materials)
         material_actions.addWidget(self.clear_materials_btn2)
 
@@ -306,22 +309,22 @@ class MainWindow(QMainWindow):
         group_add_layout = QVBoxLayout()
         group_add_layout.setSpacing(4)
 
-        self.add_to_existing_group_btn = QPushButton("➕ Add to Selected Group")
+        self.add_to_existing_group_btn = QPushButton(tr("➕ Add to Selected Group"))
         self.add_to_existing_group_btn.setToolTip("Add selected materials to the currently selected group")
         self.add_to_existing_group_btn.clicked.connect(self.add_materials_to_existing_group)
         group_add_layout.addWidget(self.add_to_existing_group_btn)
 
-        self.add_as_single_group_btn = QPushButton("📦 Add as New Group")
+        self.add_as_single_group_btn = QPushButton(tr("📦 Add as New Group"))
         self.add_as_single_group_btn.setToolTip("Create a standalone new group from selected materials (not nested into any group)")
         self.add_as_single_group_btn.clicked.connect(self.add_materials_as_standalone_group)
         group_add_layout.addWidget(self.add_as_single_group_btn)
 
-        self.add_to_group_as_subgroup_btn = QPushButton("📦➕ Add to Selected Group as New Group")
+        self.add_to_group_as_subgroup_btn = QPushButton(tr("📦➕ Add to Selected Group as New Group"))
         self.add_to_group_as_subgroup_btn.setToolTip("Create a new group from selected materials and nest it into the currently selected group")
         self.add_to_group_as_subgroup_btn.clicked.connect(self.add_materials_as_single_group)
         group_add_layout.addWidget(self.add_to_group_as_subgroup_btn)
 
-        self.add_each_as_group_btn = QPushButton("📦📦 Add Each as Group")
+        self.add_each_as_group_btn = QPushButton(tr("📦📦 Add Each as Group"))
         self.add_each_as_group_btn.setToolTip("Create a separate group for each selected material and add to timeline")
         self.add_each_as_group_btn.clicked.connect(self.add_materials_as_separate_groups)
         group_add_layout.addWidget(self.add_each_as_group_btn)
@@ -329,14 +332,14 @@ class MainWindow(QMainWindow):
         layout.addLayout(group_add_layout)
         
         # Export materials section
-        export_group = QGroupBox("Export Materials")
+        export_group = QGroupBox(tr("Export Materials"))
         export_layout = QVBoxLayout()
-        
-        self.export_selected_btn = QPushButton("Export Selected Images")
+
+        self.export_selected_btn = QPushButton(tr("Export Selected Images"))
         self.export_selected_btn.clicked.connect(self.export_selected_materials)
         export_layout.addWidget(self.export_selected_btn)
-        
-        self.export_all_btn = QPushButton("Export All Images")
+
+        self.export_all_btn = QPushButton(tr("Export All Images"))
         self.export_all_btn.clicked.connect(self.export_all_materials)
         export_layout.addWidget(self.export_all_btn)
         
@@ -349,8 +352,8 @@ class MainWindow(QMainWindow):
     def create_middle_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout()
-        title = QLabel("Composition (Groups)")
-        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title = QLabel(tr("Composition (Groups)"))
+        title.setStyleSheet("font-weight: 600; font-size: 14px; color: #e6eaf6; padding: 4px 0;")
         layout.addWidget(title)
         self.group_composition_widget = GroupCompositionWidget()
         self.group_composition_widget.set_group_manager(self.group_manager)
@@ -398,7 +401,7 @@ class MainWindow(QMainWindow):
         
         # Preview background color button (compact toolbar)
         preview_controls = QHBoxLayout()
-        self.preview_bg_btn = QPushButton("🎨 BG")
+        self.preview_bg_btn = QPushButton(tr("🎨 BG"))
         self.preview_bg_btn.setToolTip("Set preview background color (does not affect export)")
         self.preview_bg_btn.setMaximumWidth(60)
         self.preview_bg_btn.clicked.connect(self.on_choose_preview_bg)
@@ -421,7 +424,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(preview_container)
         
         # Template management section (more space)
-        template_group = QGroupBox("Template Manager")
+        template_group = QGroupBox(tr("Template Manager"))
         template_layout = QVBoxLayout()
         template_layout.setSpacing(3)
         
@@ -433,29 +436,29 @@ class MainWindow(QMainWindow):
         
         # Template action buttons (2 rows)
         template_row1 = QHBoxLayout()
-        self.save_template_btn = QPushButton("💾 Save")
+        self.save_template_btn = QPushButton(tr("💾 Save"))
         self.save_template_btn.clicked.connect(self.quick_save_template)
         self.save_template_btn.setToolTip("Save current timeline as template")
         template_row1.addWidget(self.save_template_btn)
-        
-        self.apply_template_btn = QPushButton("✓ Apply")
+
+        self.apply_template_btn = QPushButton(tr("✓ Apply"))
         self.apply_template_btn.clicked.connect(self.quick_apply_template)
         self.apply_template_btn.setToolTip("Apply selected template to current materials")
         template_row1.addWidget(self.apply_template_btn)
         template_layout.addLayout(template_row1)
-        
+
         template_row2 = QHBoxLayout()
-        self.import_template_btn = QPushButton("📂 Import")
+        self.import_template_btn = QPushButton(tr("📂 Import"))
         self.import_template_btn.clicked.connect(self.quick_import_template)
         self.import_template_btn.setToolTip("Import template from file")
         template_row2.addWidget(self.import_template_btn)
-        
-        self.export_template_btn = QPushButton("💾 Export")
+
+        self.export_template_btn = QPushButton(tr("💾 Export"))
         self.export_template_btn.clicked.connect(self.quick_export_template)
         self.export_template_btn.setToolTip("Export selected template to file")
         template_row2.addWidget(self.export_template_btn)
-        
-        self.remove_template_btn = QPushButton("🗑 Remove")
+
+        self.remove_template_btn = QPushButton(tr("🗑 Remove"))
         self.remove_template_btn.clicked.connect(self.remove_template)
         self.remove_template_btn.setToolTip("Remove selected template from list")
         template_row2.addWidget(self.remove_template_btn)
@@ -465,13 +468,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(template_group, stretch=1)  # Allow template section to expand
         
         # Compact settings section
-        settings_group = QGroupBox("Settings")
+        settings_group = QGroupBox(tr("Settings"))
         settings_layout = QVBoxLayout()
         settings_layout.setSpacing(3)
         
         # Size (more compact) — with Auto checkbox
         size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("Size:"))
+        size_layout.addWidget(QLabel(tr("Size:")))
         self.width_spinbox = QSpinBox()
         self.width_spinbox.setMinimum(1)
         self.width_spinbox.setMaximum(4096)
@@ -483,7 +486,7 @@ class MainWindow(QMainWindow):
         self.height_spinbox.setMaximum(4096)
         self.height_spinbox.setValue(400)
         size_layout.addWidget(self.height_spinbox)
-        self.auto_size_checkbox = QCheckBox("Auto")
+        self.auto_size_checkbox = QCheckBox(tr("Auto"))
         self.auto_size_checkbox.setToolTip(
             "Auto-fit output size to materials whenever the selected group changes"
         )
@@ -494,7 +497,7 @@ class MainWindow(QMainWindow):
         
         # Loop (compact)
         loop_layout = QHBoxLayout()
-        loop_layout.addWidget(QLabel("Loop:"))
+        loop_layout.addWidget(QLabel(tr("Loop:")))
         self.loop_spinbox = QSpinBox()
         self.loop_spinbox.setMinimum(0)
         self.loop_spinbox.setMaximum(1000)
@@ -505,13 +508,13 @@ class MainWindow(QMainWindow):
         settings_layout.addLayout(loop_layout)
         
         # Transparent BG
-        self.transparent_bg_checkbox = QCheckBox("Transparent BG")
+        self.transparent_bg_checkbox = QCheckBox(tr("Transparent BG"))
         self.transparent_bg_checkbox.stateChanged.connect(self.on_transparent_bg_changed)
         settings_layout.addWidget(self.transparent_bg_checkbox)
         
         # Color palette selection
         color_layout = QHBoxLayout()
-        color_layout.addWidget(QLabel("Colors:"))
+        color_layout.addWidget(QLabel(tr("Colors:")))
         self.color_palette_combo = QComboBox()
         self.color_palette_combo.addItems(["256", "128", "64", "32", "16"])
         self.color_palette_combo.setCurrentText("256")
@@ -522,9 +525,9 @@ class MainWindow(QMainWindow):
         
         # Chroma key (green screen) selection
         chroma_layout = QHBoxLayout()
-        chroma_layout.addWidget(QLabel("Chroma Key:"))
+        chroma_layout.addWidget(QLabel(tr("Chroma Key:")))
         self.chroma_key_combo = QComboBox()
-        self.chroma_key_combo.addItem("None (Disabled)")
+        self.chroma_key_combo.addItem(tr("None (Disabled)"))
         self.chroma_key_combo.setToolTip("Select a color to make transparent (green screen effect)")
         self.chroma_key_combo.currentIndexChanged.connect(self.on_chroma_key_changed)
         self.chroma_key_combo.setMinimumWidth(150)
@@ -551,56 +554,55 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_group, stretch=0)
         
         # Auto Layout section
-        auto_layout_group = QGroupBox("Auto Layout")
+        auto_layout_group = QGroupBox(tr("Auto Layout"))
         auto_layout_layout = QVBoxLayout()
         auto_layout_layout.setSpacing(3)
         
         # Auto fit size button
-        self.auto_fit_size_btn = QPushButton("🔧 Auto Fit Size")
+        self.auto_fit_size_btn = QPushButton(tr("🔧 Auto Fit Size"))
         self.auto_fit_size_btn.clicked.connect(self.auto_fit_output_size)
         self.auto_fit_size_btn.setToolTip("Automatically adjust output size to fit all materials")
         auto_layout_layout.addWidget(self.auto_fit_size_btn)
         
         # Horizontal alignment buttons
-        h_align_label = QLabel("Horizontal:")
-        h_align_label.setStyleSheet("font-size: 10px; color: #9ba8c0;")
+        h_align_label = QLabel(tr("Horizontal:"))
+        h_align_label.setStyleSheet("font-size: 10px; color: #8a95b8;")
         auto_layout_layout.addWidget(h_align_label)
-        
+
         h_align_layout = QHBoxLayout()
-        self.align_left_btn = QPushButton("⬅ Left")
+        self.align_left_btn = QPushButton(tr("⬅ Left"))
         self.align_left_btn.clicked.connect(self.align_all_left)
         self.align_left_btn.setToolTip("Align all materials to the left")
         h_align_layout.addWidget(self.align_left_btn)
-        
-        self.align_center_h_btn = QPushButton("↔ Center")
+
+        self.align_center_h_btn = QPushButton(tr("↔ Center"))
         self.align_center_h_btn.clicked.connect(self.align_all_center_horizontal)
         self.align_center_h_btn.setToolTip("Center all materials horizontally")
         h_align_layout.addWidget(self.align_center_h_btn)
-        
-        self.align_right_btn = QPushButton("➡ Right")
+
+        self.align_right_btn = QPushButton(tr("➡ Right"))
         self.align_right_btn.clicked.connect(self.align_all_right)
         self.align_right_btn.setToolTip("Align all materials to the right")
         h_align_layout.addWidget(self.align_right_btn)
-        
+
         auto_layout_layout.addLayout(h_align_layout)
-        
-        # Vertical alignment buttons
-        v_align_label = QLabel("Vertical:")
-        v_align_label.setStyleSheet("font-size: 10px; color: #9ba8c0;")
+
+        v_align_label = QLabel(tr("Vertical:"))
+        v_align_label.setStyleSheet("font-size: 10px; color: #8a95b8;")
         auto_layout_layout.addWidget(v_align_label)
-        
+
         v_align_layout = QHBoxLayout()
-        self.align_top_btn = QPushButton("⬆ Top")
+        self.align_top_btn = QPushButton(tr("⬆ Top"))
         self.align_top_btn.clicked.connect(self.align_all_top)
         self.align_top_btn.setToolTip("Align all materials to the top")
         v_align_layout.addWidget(self.align_top_btn)
-        
-        self.align_middle_btn = QPushButton("↕ Middle")
+
+        self.align_middle_btn = QPushButton(tr("↕ Middle"))
         self.align_middle_btn.clicked.connect(self.align_all_middle_vertical)
         self.align_middle_btn.setToolTip("Center all materials vertically")
         v_align_layout.addWidget(self.align_middle_btn)
-        
-        self.align_bottom_btn = QPushButton("⬇ Bottom")
+
+        self.align_bottom_btn = QPushButton(tr("⬇ Bottom"))
         self.align_bottom_btn.clicked.connect(self.align_all_bottom)
         self.align_bottom_btn.setToolTip("Align all materials to the bottom")
         v_align_layout.addWidget(self.align_bottom_btn)
@@ -611,15 +613,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(auto_layout_group, stretch=0)
         
         # Action buttons (compact)
-        self.update_preview_btn = QPushButton("🔄 Preview")
+        self.update_preview_btn = QPushButton(tr("🔄 Preview"))
         self.update_preview_btn.clicked.connect(self.update_preview)
         layout.addWidget(self.update_preview_btn)
-        
-        self.export_gif_btn = QPushButton("💾 Export GIF")
+
+        self.export_gif_btn = QPushButton(tr("💾 Export GIF"))
         self.export_gif_btn.clicked.connect(self.export_gif)
         self.export_gif_btn.setStyleSheet(
-            "font-weight: bold; font-size: 13px; background-color: #2d6a3f; "
-            "color: #d4f5db; border: 1px solid #3d8a52; border-radius: 4px; padding: 5px 14px;"
+            "font-weight: 600; font-size: 13px; background-color: #1f6b40; "
+            "color: #c8f0d8; border: 1px solid #2d8a54; border-radius: 4px; padding: 6px 14px;"
         )
         layout.addWidget(self.export_gif_btn)
         
@@ -630,41 +632,49 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         # Edit menu — Undo / Redo
-        edit_menu = menubar.addMenu("Edit")
-        self._undo_action = edit_menu.addAction("Undo", self.undo)
+        edit_menu = menubar.addMenu(tr("Edit"))
+        self._undo_action = edit_menu.addAction(tr("Undo"), self.undo)
         self._undo_action.setShortcut(QKeySequence("Ctrl+Z"))
-        self._redo_action = edit_menu.addAction("Redo", self.redo)
+        self._redo_action = edit_menu.addAction(tr("Redo"), self.redo)
         self._redo_action.setShortcut(QKeySequence("Ctrl+Y"))
 
-        file_menu = menubar.addMenu("File")
+        file_menu = menubar.addMenu(tr("File"))
 
-        file_menu.addAction("Load Image", self.load_image_material)
-        file_menu.addAction("Load GIF", self.load_gif_material)
+        file_menu.addAction(tr("Load Image"), self.load_image_material)
+        file_menu.addAction(tr("Load GIF"), self.load_gif_material)
         file_menu.addSeparator()
 
         # Recent Files submenu (populated dynamically)
-        self._recent_menu = file_menu.addMenu("Recent Files")
+        self._recent_menu = file_menu.addMenu(tr("Recent Files"))
         self._rebuild_recent_menu()
         file_menu.addSeparator()
 
-        file_menu.addAction("Export GIF", self.export_gif)
-        file_menu.addAction("Export All Groups as GIF", self.batch_export_all_groups)
-        file_menu.addAction("Export Spritesheet (PNG)", self.export_spritesheet)
+        file_menu.addAction(tr("Export GIF"), self.export_gif)
+        file_menu.addAction(tr("Export All Groups as GIF"), self.batch_export_all_groups)
+        file_menu.addAction(tr("Export Spritesheet (PNG)"), self.export_spritesheet)
         file_menu.addSeparator()
-        file_menu.addAction("Export Selected Materials", self.export_selected_materials)
-        file_menu.addAction("Export All Materials", self.export_all_materials)
+        file_menu.addAction(tr("Export Selected Materials"), self.export_selected_materials)
+        file_menu.addAction(tr("Export All Materials"), self.export_all_materials)
         file_menu.addSeparator()
 
         # Auto-save menu items
-        auto_save_menu = file_menu.addMenu("Auto-Save")
-        auto_save_menu.addAction("Restore Auto-Save", self.restore_auto_save)
-        auto_save_menu.addAction("Toggle Auto-Save", self.toggle_auto_save)
+        auto_save_menu = file_menu.addMenu(tr("Auto-Save"))
+        auto_save_menu.addAction(tr("Restore Auto-Save"), self.restore_auto_save)
+        auto_save_menu.addAction(tr("Toggle Auto-Save"), self.toggle_auto_save)
 
         file_menu.addSeparator()
-        file_menu.addAction("Exit", self.close)
+        file_menu.addAction(tr("Exit"), self.close)
 
-        help_menu = menubar.addMenu("Help")
-        help_menu.addAction("About", self.show_about)
+        # Settings menu
+        settings_menu = menubar.addMenu(tr("Settings"))
+        settings_menu.addAction(tr("Application Settings"), self._open_settings_dialog)
+
+        help_menu = menubar.addMenu(tr("Help"))
+        help_menu.addAction(tr("About"), self.show_about)
+
+    def _open_settings_dialog(self):
+        dlg = SettingsDialog(self)
+        dlg.exec()
     
     def load_image_material(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -756,7 +766,7 @@ class MainWindow(QMainWindow):
     
     def _toggle_material_view(self, checked: bool):
         self._material_icon_mode = checked
-        self.material_view_btn.setText("☰ List" if checked else "⊞ Grid")
+        self.material_view_btn.setText(tr("☰ List") if checked else tr("⊞ Grid"))
         self.refresh_materials_list()
 
     def refresh_materials_list(self):
@@ -1668,7 +1678,7 @@ class MainWindow(QMainWindow):
         
         self.chroma_key_combo.blockSignals(True)
         self.chroma_key_combo.clear()
-        self.chroma_key_combo.addItem("None (Disabled)")
+        self.chroma_key_combo.addItem(tr("None (Disabled)"))
         
         # Add colors up to display count
         display_colors = self.chroma_key_colors_all[:self.chroma_key_display_count]
@@ -2021,6 +2031,9 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    AppSettings.load()
+    set_language(AppSettings.get("language", "en"))
+
     app = QApplication(sys.argv)
     AppTheme.apply(app)
     window = MainWindow()
