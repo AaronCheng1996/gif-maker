@@ -36,9 +36,10 @@
   - 說明外部工具依賴：FFmpeg（video/clip to gif）、gifsicle（optimizer），以及未安裝時的行為。
   > 完成於 2026-07-08：README.md / README.zh.md 補齊 Project Structure 缺漏模組（並核對實際路徑，如 `video_to_gif.py` 實為 `core/video_to_gif.py`），新增 Video to GIF、Clip to GIF、Settings and Language 功能說明段落，並新增「External Tool Dependencies」章節說明 FFmpeg/gifsicle 偵測方式與未安裝時的實際行為（附程式碼位置佐證）。161 個測試全數通過。
 
-- [ ] **P0-3 拆分 `src/main.py`（2046 行）**
+- [x] **P0-3 拆分 `src/main.py`（2046 行）**
   - 將各分頁的組裝邏輯抽出（例如 `src/widgets/composer_tab.py` 或 `src/app/` 模組），`main.py` 只保留應用程式進入點與 MainWindow 骨架。
   - 純重構、不改變行為；重構後全部測試需通過，手動確認六個分頁仍可正常載入。
+  > 完成於 2026-07-08：新增 `src/main_window/` package，依職責拆成 7 個 mixin（materials_panel_mixin、composer_panel_mixin、template_mixin、menu_mixin、export_mixin、undo_mixin、status_mixin），`MainWindow` 改為多重繼承組合這些 mixin。`src/main.py` 從 2046 行降到 254 行，只保留 `__init__`/`init_ui`/`create_main_page`/`_on_tool_tab_changed`/`closeEvent`/`main()`。純搬移程式碼，無行為變更。161 個測試全數通過；並以無頭方式（無 `.show()`）實例化 `MainWindow`、逐一切換全部 6 個分頁，確認素材庫面板在 Composer/Tile Splitter 分頁間正確 reparent、其餘分頁正確隱藏，行為與重構前一致。
 
 ## Phase 1 — Godot 風格 Canvas 編輯器（核心方向）
 
@@ -97,3 +98,4 @@
 
 - 2026-07-08：完成 P0-1（開發環境與測試健壯性），161 個測試全數通過。
 - 2026-07-08：完成 P0-2（README 與程式碼同步），161 個測試全數通過。
+- 2026-07-08：完成 P0-3（拆分 src/main.py），新增 src/main_window/ 7 個 mixin，main.py 2046→254 行，161 個測試全數通過。
