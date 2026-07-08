@@ -161,6 +161,21 @@ The executable is created at `dist/GIF-Maker.exe`. See `build_instructions.md` f
 
 ---
 
+## Batch CLI (no GUI)
+
+For scripting/automation pipelines, `src/cli.py` reuses the same `BatchProcessor` as the
+Batch Processor tab — no PyQt6 import required:
+
+```bash
+python -m src.cli --images sheet1.png sheet2.png --template my_template.json --output-dir out/
+```
+
+Run `python -m src.cli --help` for all options (split mode/grid size, tile positions, color
+count, output size overrides). Exit code is `0` on full success, `1` for bad arguments/missing
+files, `2` if one or more images failed to process.
+
+---
+
 ## Testing
 
 Install dev dependencies and run the test suite:
@@ -183,9 +198,18 @@ python -m pytest --cov=src --cov-report=term-missing
 
 ```
 src/
-  main.py                       Application entry point and main window
+  main.py                       Application entry point and MainWindow shell (tabs, init)
+  cli.py                        Headless batch CLI (python -m src.cli) — no PyQt6 required
   i18n.py                       Minimal i18n module (English / Traditional Chinese), tr()
   settings.py                   Persistent app settings, stored as JSON in ~/.gif_maker/settings.json
+  main_window/                  MainWindow logic, split into mixins by responsibility
+    materials_panel_mixin.py    Material library panel: load/list/export, drag source for canvas drop
+    composer_panel_mixin.py     Composer middle/right panels, Canvas<->Tree sync, chroma key, auto layout
+    template_mixin.py           Template save/apply/import/export, thumbnails, auto-save
+    menu_mixin.py                Menu bar, shortcuts, recent files
+    export_mixin.py             GIF/APNG/WebP export, batch export, spritesheet export
+    undo_mixin.py                Snapshot-based undo/redo
+    status_mixin.py              Status bar helpers
   core/
     utils.py                    Small PIL helpers: ensure_rgba, resize_image, create_background, paste_center, validate_image_file
     image_loader.py             Image loading, GIF extraction, tile splitting
@@ -195,13 +219,14 @@ src/
     sequence_editor.py          SequenceEditor / Frame — simple ordered frame sequence with per-frame duration
     layer_system.py             Layer / LayeredFrame / LayerCompositor — per-layer position, crop, scale, opacity
     layer_timeline.py           LayerTimelineEditor (multi-track layer model)
-    gif_builder.py              GIF composition and rendering
+    gif_builder.py              GIF/APNG/WebP composition and rendering
     gif_optimizer.py            Lossy GIF compression via gifsicle (falls back to Pillow re-save if gifsicle is absent)
     video_to_gif.py             FFmpeg-based video/animated-image → GIF conversion, ffmpeg detection & install-instructions helper
     template_manager.py         Template serialization and application
-    batch_processor.py          Batch processing pipeline
+    batch_processor.py          Batch processing pipeline (reused by cli.py)
   widgets/
     theme.py                    Global dark theme and color palette
+    canvas_editor.py             Godot-style Composer canvas: zoom/pan, drag-to-move, snap, onion skin, timeline
     group_composition_widget.py Group tree editor (main composition UI)
     preview_widget.py           Animated preview
     preview_page_widget.py      Full-screen preview page

@@ -100,8 +100,11 @@
   - Template Manager 儲存範本時同時產生第一幀縮圖，選擇範本時顯示預覽。
   > 完成於 2026-07-08：新增 `self.template_thumbnails: Dict[str, QIcon]`（僅存於記憶體，不寫進匯出的 JSON 範本檔，避免動到既有檔案格式與相容性）。`_make_group_thumbnail()` 重用 `gif_builder.get_preview_frames_for_group()` 取第一幀、`create_thumbnail()`（沿用 P0 就有的素材縮圖方法）產生小圖示。`quick_save_template()` 存檔時用目前的 `group_manager` root group 產生縮圖；`quick_import_template()` 匯入時先用 `TemplateManager.import_composition_template()` 建立暫時的 `GroupManager` 來渲染縮圖（材質索引對不上時安全地回傳 `None`，不會撞例外）。`refresh_template_list()` 把縮圖設成每個 `QListWidgetItem` 的 icon；`remove_template()` 一併清掉對應的縮圖快取。UI 新增一個 72×72 的預覽 `QLabel`，放在範本清單旁邊，選取清單項目（`currentItemChanged`）時放大顯示該範本的縮圖。新增 1 個 `MainWindow` 整合測試（存檔後縮圖產生、清單項目有 icon、選取後預覽 label 有 pixmap、移除後縮圖快取清除）。217→218 個測試全數通過，並以無頭方式驗證存檔→清單→預覽→移除全流程正確。
 
-- [ ] **P2-4 CLI 批次模式**
+- [x] **P2-4 CLI 批次模式**
   - 新增 `python -m src.cli`（或 `run.py --batch`）：不開 GUI，以參數指定來源圖片、範本 JSON、輸出目錄，重用 `batch_processor.py` 邏輯，方便整合自動化管線。
+  > 完成於 2026-07-08：新增 `src/cli.py`，用 `argparse` 提供 `--images`（多檔）、`--template`、`--output-dir`、`--split-mode`/`--split-rows`/`--split-cols`/`--tile-width`/`--tile-height`、`--color-count`、`--output-width`/`--output-height`、`--positions`（如 `0,0 1,2`）等參數，直接呼叫既有的 `BatchProcessor.process_batch()`（`src/core/batch_processor.py` 本來就是純 Python、不依賴 PyQt6），逐筆印出進度、結束時印出成功/失敗統計。結束代碼：全部成功 `0`、參數或檔案錯誤 `1`、部分圖片處理失敗 `2`。**順手修正一個既有架構問題**：`src/__init__.py` 原本無條件 `from . import widgets`，會讓 `import src`（CLI 用得到）在沒裝 PyQt6 的環境直接炸掉，與「不開 GUI」的目標矛盾；改成 `try/except ImportError`，PyQt6 不存在時 `src.widgets = None` 但 `import src` 仍可成功，對現有（已裝 PyQt6）環境完全無影響。以真實跑 `python -m src.cli` 產生 GIF 檔案 + subprocess 端到端驗證成功／失敗情境；新增 11 個測試（`tests/unit/core/test_cli.py`，涵蓋成功處理單/多圖、找不到範本/圖片/positions 格式錯誤各回傳對應代碼、範本需求 tile 數超過可用時回傳 2、不指定 output-dir 時輸出至來源旁）。README.md / README.zh.md 新增「Batch CLI」章節，並補齊 Project Structure 中缺漏的 `cli.py`、`main_window/` package、`widgets/canvas_editor.py`（P0-3/P1 建立後一直沒同步進文件，一併修正）。218→229 個測試全數通過。
+  >
+  > **Phase 2（進階功能）至此全部完成。整份優化計畫（Phase 0-2，共 14 項）全數完成。**
 
 ---
 
@@ -122,3 +125,4 @@
 - 2026-07-08：確認 P2-1（Undo/Redo）已由既有的快照式機制滿足（含 P1-3/P1-6 新功能），無需重寫，212 個測試維持全數通過。
 - 2026-07-08：完成 P2-2（APNG / WebP 匯出），GifBuilder 新增兩個匯出方法，匯出面板可切換 GIF/APNG/WebP，217 個測試全數通過。
 - 2026-07-08：完成 P2-3（Template 縮圖預覽），範本清單顯示縮圖、選取後放大預覽，218 個測試全數通過。
+- 2026-07-08：完成 P2-4（CLI 批次模式），新增 src/cli.py 並修正 src/__init__.py 讓其可在無 PyQt6 環境下匯入，229 個測試全數通過。**整份優化計畫（Phase 0-2）全部完成。**

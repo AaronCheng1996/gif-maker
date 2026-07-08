@@ -160,6 +160,18 @@ python build_exe.py
 
 ---
 
+## 批次處理 CLI（無需 GUI）
+
+適合自動化腳本／CI 管線使用，`src/cli.py` 重用與批次處理分頁相同的 `BatchProcessor`，不需要 import PyQt6：
+
+```bash
+python -m src.cli --images sheet1.png sheet2.png --template my_template.json --output-dir out/
+```
+
+執行 `python -m src.cli --help` 查看所有參數（切割模式/格數、指定 tile 位置、色彩數、輸出尺寸覆寫等）。結束代碼：全部成功為 `0`、參數錯誤或找不到檔案為 `1`、有圖片處理失敗為 `2`。
+
+---
+
 ## 測試
 
 安裝開發相依套件並執行測試：
@@ -182,9 +194,18 @@ python -m pytest --cov=src --cov-report=term-missing
 
 ```
 src/
-  main.py                       應用程式進入點與主視窗
+  main.py                       應用程式進入點與 MainWindow 骨架（分頁、初始化）
+  cli.py                        無 GUI 的批次處理 CLI（python -m src.cli），不需要 PyQt6
   i18n.py                       輕量 i18n 模組（英文／繁體中文），提供 tr()
   settings.py                   持久化應用程式設定，以 JSON 儲存於 ~/.gif_maker/settings.json
+  main_window/                  MainWindow 邏輯，依職責拆成多個 mixin
+    materials_panel_mixin.py    素材庫面板：載入/列表/匯出，也是拖放到 Canvas 的來源
+    composer_panel_mixin.py     Composer 中/右面板、Canvas 與樹狀編輯器同步、去背色、自動排版
+    template_mixin.py           範本存/套用/匯入/匯出、縮圖、自動儲存
+    menu_mixin.py                選單列、快捷鍵、最近檔案
+    export_mixin.py             GIF/APNG/WebP 匯出、批次匯出、精靈圖匯出
+    undo_mixin.py                快照式 Undo/Redo
+    status_mixin.py              狀態列輔助函式
   core/
     utils.py                    PIL 輔助函式：ensure_rgba、resize_image、create_background、paste_center、validate_image_file
     image_loader.py             圖片載入、GIF 解幀、切割工具
@@ -194,13 +215,14 @@ src/
     sequence_editor.py          SequenceEditor／Frame —— 簡單的有序影格序列，各幀可設定獨立持續時間
     layer_system.py             Layer／LayeredFrame／LayerCompositor —— 每個圖層的位置、裁切、縮放、透明度
     layer_timeline.py           多軌圖層時間軸模型
-    gif_builder.py              GIF 合成與渲染
+    gif_builder.py              GIF／APNG／WebP 合成與渲染
     gif_optimizer.py            gifsicle 有損 GIF 壓縮（若找不到 gifsicle 會改用 Pillow 重新儲存）
     video_to_gif.py             以 ffmpeg 進行影片／動態圖片轉 GIF、ffmpeg 偵測與安裝說明輔助函式
     template_manager.py         範本序列化與套用
-    batch_processor.py          批次處理流程
+    batch_processor.py          批次處理流程（cli.py 也重用此模組）
   widgets/
     theme.py                    全域深色主題與色盤
+    canvas_editor.py             Godot 風格的 Composer 畫布：縮放/平移、拖曳移動、吸附、Onion Skin、時間軸
     group_composition_widget.py 群組樹狀編輯器（主要合成介面）
     preview_widget.py           動畫預覽
     preview_page_widget.py      全螢幕預覽頁面
