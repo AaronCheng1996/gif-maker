@@ -37,6 +37,8 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
 
         # Template storage: {name: template_dict}
         self.templates = {}
+        # Template preview thumbnails: {name: QIcon}, kept in memory only (not persisted)
+        self.template_thumbnails = {}
 
         # Recent files (max 8 entries)
         self.recent_files: List[str] = []

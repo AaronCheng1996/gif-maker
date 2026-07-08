@@ -186,3 +186,34 @@ def test_export_gif_supports_apng_and_webp_formats(qapp, tmp_path, monkeypatch):
         window.export_gif()
         assert Path(out_path).exists(), f"{fmt} export did not produce a file"
 
+
+def test_saving_template_generates_thumbnail_and_shows_in_list(qapp, monkeypatch):
+    """Saving a template should produce a QIcon thumbnail, list it with that icon,
+    and show it in the larger preview label once selected."""
+    from PIL import Image
+    from PyQt6.QtWidgets import QInputDialog, QMessageBox
+    from src.core.composition_group import FrameEntry
+
+    window = MainWindow()
+    window.material_manager.add_material(Image.new("RGBA", (10, 10), (255, 0, 0, 255)), "a")
+    root = window.group_manager.get_group(window.current_group_id)
+    root.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=100))
+    window.group_manager.update_group(window.current_group_id, root)
+
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("MyTemplate", True)))
+    window.quick_save_template()
+
+    assert "MyTemplate" in window.templates
+    thumb = window.template_thumbnails.get("MyTemplate")
+    assert thumb is not None and not thumb.isNull()
+    assert window.template_list.count() == 1
+    assert not window.template_list.item(0).icon().isNull()
+
+    window.template_list.setCurrentRow(0)
+    preview_pixmap = window.template_preview_label.pixmap()
+    assert preview_pixmap is not None and not preview_pixmap.isNull()
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    window.remove_template()
+    assert "MyTemplate" not in window.template_thumbnails
+

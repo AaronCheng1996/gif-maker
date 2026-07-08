@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                               QGroupBox, QListWidget, QSpinBox, QCheckBox, QComboBox,
                               QColorDialog, QMessageBox, QTabWidget)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
 
 from PIL import Image
@@ -160,11 +160,23 @@ class ComposerPanelMixin:
         template_layout = QVBoxLayout()
         template_layout.setSpacing(3)
 
-        # Template list (larger for easier management)
+        # Template list (larger for easier management) + selected-template preview
+        template_list_row = QHBoxLayout()
         self.template_list = QListWidget()
         self.template_list.setMinimumHeight(120)  # More visible space
         self.template_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        template_layout.addWidget(self.template_list)
+        self.template_list.setIconSize(QSize(40, 40))
+        self.template_list.currentItemChanged.connect(self._on_template_selection_changed)
+        template_list_row.addWidget(self.template_list, stretch=1)
+
+        self.template_preview_label = QLabel()
+        self.template_preview_label.setFixedSize(72, 72)
+        self.template_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.template_preview_label.setStyleSheet(
+            "background-color: #1a1c26; border: 1px solid #2e3148; border-radius: 4px;"
+        )
+        template_list_row.addWidget(self.template_preview_label)
+        template_layout.addLayout(template_list_row)
 
         # Template action buttons (2 rows)
         template_row1 = QHBoxLayout()

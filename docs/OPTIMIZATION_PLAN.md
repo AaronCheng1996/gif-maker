@@ -96,8 +96,9 @@
   - 依格式顯示對應選項（例如 WebP quality）。
   > 完成於 2026-07-08：`GifBuilder` 新增 `build_apng_from_group()` / `build_webp_from_group(quality=80)`，重用既有的 `get_preview_frames_for_group()` 取得已合成的 RGBA 幀（不像 GIF 匯出需要調色盤量化，APNG/WebP 原生支援全彩，新增 `_prepare_frame_for_alpha_format()` 只處理「Transparent BG」設定對應的透明／實色背景合成，其餘沿用 Pillow `save_all=True` 動畫存檔）。UI：Composer 右側面板新增「Format:」下拉選單（GIF/APNG/WebP）與僅 WebP 顯示的「Quality:」spinbox（`_on_export_format_changed()` 控制顯示/隱藏）；`export_gif()` 依格式分派到對應的 builder 方法、副檔名與檔案篩選器（.gif/.png/.webp）。新增 3 個 `GifBuilder` 測試（APNG/WebP 皆正確產生動畫檔、空素材時丟例外、實色背景會攤平材質自身的透明度）與 2 個 `MainWindow` 整合測試（Quality 控制項依格式顯示/隱藏、三種格式皆能透過 `export_gif()` 正確匯出檔案）。215→217 個測試全數通過，並以無頭方式驗證三種格式皆能實際匯出成功且 quality 控制項正確切換。
 
-- [ ] **P2-3 Template 縮圖預覽**
+- [x] **P2-3 Template 縮圖預覽**
   - Template Manager 儲存範本時同時產生第一幀縮圖，選擇範本時顯示預覽。
+  > 完成於 2026-07-08：新增 `self.template_thumbnails: Dict[str, QIcon]`（僅存於記憶體，不寫進匯出的 JSON 範本檔，避免動到既有檔案格式與相容性）。`_make_group_thumbnail()` 重用 `gif_builder.get_preview_frames_for_group()` 取第一幀、`create_thumbnail()`（沿用 P0 就有的素材縮圖方法）產生小圖示。`quick_save_template()` 存檔時用目前的 `group_manager` root group 產生縮圖；`quick_import_template()` 匯入時先用 `TemplateManager.import_composition_template()` 建立暫時的 `GroupManager` 來渲染縮圖（材質索引對不上時安全地回傳 `None`，不會撞例外）。`refresh_template_list()` 把縮圖設成每個 `QListWidgetItem` 的 icon；`remove_template()` 一併清掉對應的縮圖快取。UI 新增一個 72×72 的預覽 `QLabel`，放在範本清單旁邊，選取清單項目（`currentItemChanged`）時放大顯示該範本的縮圖。新增 1 個 `MainWindow` 整合測試（存檔後縮圖產生、清單項目有 icon、選取後預覽 label 有 pixmap、移除後縮圖快取清除）。217→218 個測試全數通過，並以無頭方式驗證存檔→清單→預覽→移除全流程正確。
 
 - [ ] **P2-4 CLI 批次模式**
   - 新增 `python -m src.cli`（或 `run.py --batch`）：不開 GUI，以參數指定來源圖片、範本 JSON、輸出目錄，重用 `batch_processor.py` 邏輯，方便整合自動化管線。
@@ -120,3 +121,4 @@
 - 2026-07-08：完成 P1-7（時間軸整合），Canvas 加入 frame scrubber 與播放功能，212 個測試全數通過。**Phase 1 全部完成。**
 - 2026-07-08：確認 P2-1（Undo/Redo）已由既有的快照式機制滿足（含 P1-3/P1-6 新功能），無需重寫，212 個測試維持全數通過。
 - 2026-07-08：完成 P2-2（APNG / WebP 匯出），GifBuilder 新增兩個匯出方法，匯出面板可切換 GIF/APNG/WebP，217 個測試全數通過。
+- 2026-07-08：完成 P2-3（Template 縮圖預覽），範本清單顯示縮圖、選取後放大預覽，218 個測試全數通過。

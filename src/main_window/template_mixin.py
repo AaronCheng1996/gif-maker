@@ -1,13 +1,30 @@
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QInputDialog, QListWidgetItem
+from PyQt6.QtCore import QSize
+from PyQt6.QtGui import QIcon
 
 from ..core import TemplateManager
 
 
 class TemplateMixin:
     """Template save/apply/import/export, template list rendering, and auto-save."""
+
+    def _make_group_thumbnail(self, group_manager, group_id, material_manager, size: int = 48) -> Optional[QIcon]:
+        """Render the first frame of the given group as a small QIcon, or None if unavailable."""
+        if group_id is None:
+            return None
+        try:
+            frames = self.gif_builder.get_preview_frames_for_group(group_id, group_manager, material_manager)
+            if not frames:
+                return None
+            img, _duration = frames[0]
+            pixmap = self.create_thumbnail(img, size, size)
+            return QIcon(pixmap)
+        except Exception:
+            return None
 
     def quick_save_template(self):
         """Save current group composition to in-memory template list (prompts for name)."""
@@ -35,6 +52,9 @@ class TemplateMixin:
                 color_count,
             )
             self.templates[name] = template
+            self.template_thumbnails[name] = self._make_group_thumbnail(
+                self.group_manager, self.group_manager.get_root_group_id(), self.material_manager
+            )
             self.refresh_template_list()
             info = TemplateManager.get_template_info(template)
             self._status(
@@ -88,6 +108,13 @@ class TemplateMixin:
                 suffix += 1
                 unique_name = f"{name} ({suffix})"
             self.templates[unique_name] = template
+            try:
+                temp_gm, _settings = TemplateManager.import_composition_template(template)
+                self.template_thumbnails[unique_name] = self._make_group_thumbnail(
+                    temp_gm, temp_gm.get_root_group_id(), self.material_manager
+                )
+            except Exception:
+                self.template_thumbnails[unique_name] = None
             self.refresh_template_list()
             QMessageBox.information(self, "Imported", f"Imported template '{unique_name}'.")
         except Exception as e:
@@ -140,6 +167,7 @@ class TemplateMixin:
 
         if reply == QMessageBox.StandardButton.Yes:
             del self.templates[template_name]
+            self.template_thumbnails.pop(template_name, None)
             self.refresh_template_list()
 
     def refresh_template_list(self):
@@ -155,9 +183,28 @@ class TemplateMixin:
             except Exception:
                 subtitle = "invalid"
             item = QListWidgetItem(f"{name} - {subtitle}")
+            icon = self.template_thumbnails.get(name)
+            if icon is not None:
+                item.setIcon(icon)
             self.template_list.addItem(item)
         if hasattr(self, "batch_processor"):
             self.batch_processor.set_templates(self.templates)
+        if hasattr(self, "template_preview_label"):
+            self._on_template_selection_changed(self.template_list.currentItem(), None)
+
+    def _on_template_selection_changed(self, current, _previous=None):
+        """Update the larger preview label to match the selected template's thumbnail."""
+        if not hasattr(self, 'template_preview_label'):
+            return
+        if current is None:
+            self.template_preview_label.clear()
+            return
+        name = current.text().split(" - ")[0]
+        icon = self.template_thumbnails.get(name)
+        if icon is not None:
+            self.template_preview_label.setPixmap(icon.pixmap(QSize(64, 64)))
+        else:
+            self.template_preview_label.clear()
 
     def auto_save_template(self):
         """Automatically save current composition as a template."""
