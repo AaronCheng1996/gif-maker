@@ -123,3 +123,26 @@ def test_dragging_canvas_item_updates_model_and_refreshes_tree(qapp):
     assert root.entries[0].y == 44
     assert window.canvas_editor.selected_entry_index() == 0
 
+
+def test_dropping_material_on_canvas_adds_centered_frame_entry(qapp):
+    """Dragging a material from the library and dropping it on the canvas should
+    add a new FrameEntry to the current group, centered on the drop point."""
+    from PIL import Image
+
+    window = MainWindow()
+    window.material_manager.add_material(Image.new("RGBA", (20, 10), (255, 0, 0, 255)), "a")
+
+    root = window.group_manager.get_group(window.current_group_id)
+    assert len(root.entries) == 0
+
+    window.canvas_editor.material_dropped.emit(0, 100, 50)
+
+    assert len(root.entries) == 1
+    new_entry = root.entries[0]
+    assert new_entry.material_index == 0
+    # Centered: drop point minus half the material's width/height.
+    assert new_entry.x == 100 - 10
+    assert new_entry.y == 50 - 5
+    # Canvas should reflect the new entry too.
+    assert len(window.canvas_editor._material_items) == 1
+

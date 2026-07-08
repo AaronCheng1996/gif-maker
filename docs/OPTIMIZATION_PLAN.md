@@ -73,9 +73,10 @@
   > 完成於 2026-07-08：**設計澄清**——P1-2 建立的 Canvas 是把目前群組的所有 `FrameEntry` **同時**疊加顯示（方便一次檢視/對齊整組動畫的所有幀），但實際 GIF 播放時每個 entry 是**依序**各自顯示一幀；`entry_index` 在扁平群組中剛好就等於 GIF 播放的 frame index，因此「前一幀/下一幀」直接對應到「entry_index − 1 / + 1」，Onion Skin 直接以「目前選取的 entry」為基準對相鄰 entry 加疊色，語意與原始需求一致，不需另外引入「播放頭（playhead）」概念。
   > 實作：`_MaterialPixmapItem.paint()` 在 `onion_tint` 不為 `None` 時，用 `painter.setOpacity(onion_alpha)` 疊加半透明色塊（紅／綠）於素材之上，距離選取項越遠透明度線性衰減；`CanvasEditorWidget._update_onion_skin()` 依 `entry_index - selected_index` 計算每個 item 的疊色（範圍內：紅=之前、綠=之後；超出範圍或就是選取本身：不疊色），選取變更或 `set_entries()` 重繪時自動重算。新增內建工具列（Prev ◀ / Next ▶ 按鈕、Onion Skin 開關、Opacity% 與 Range 兩個 spinbox），Prev/Next 依 `entry_index` 順序移動選取（含 clamp，不循環），沿用既有 `select_entry()`，因此自動與 P1-3 的樹狀編輯器雙向同步接軌。新增 9 個測試（預設關閉不疊色、鄰近項目紅/綠疊色、範圍擴大時遠端更淡、關閉後清除、UI 雙向同步、上一個/下一個/clamp 邊界/無選取時選第一個）。補上 `Prev`/`Next`/`Onion Skin`/`Opacity:`/`Range:` 繁體中文翻譯。192→201 個測試全數通過，並以無頭方式驗證 `MainWindow` 端到端：開啟 Onion Skin 後選取項目、疊色正確、Next 移動選取正確。
 
-- [ ] **P1-6 素材庫拖放新增**
+- [x] **P1-6 素材庫拖放新增**
   - 從素材庫（material library）直接拖放圖片到 Canvas 上，於放開位置新增 FrameEntry 至目前群組。
   - 拖曳過程顯示半透明預覽。
+  > 完成於 2026-07-08：新增 `MaterialListWidget`（`src/main_window/materials_panel_mixin.py`，繼承 `QListWidget`，覆寫 `mimeData()` 把被拖曳項目的素材索引編碼進自訂 MIME type `application/x-gifmaker-material-index`），素材庫列表 `setDragEnabled(True)`。半透明拖曳預覽直接沿用 Qt `QListWidget` 內建的拖曳縮圖機制，不需額外實作。Canvas 端：`_CanvasGraphicsView.setAcceptDrops(True)`，覆寫 `dragEnterEvent`/`dragMoveEvent`/`dropEvent`，辨識到自訂 MIME type 時解析素材索引、換算成 scene 座標，發出 `material_dropped(material_index, x, y)`（`CanvasEditorWidget` 轉發同名 signal）；`MainWindow._on_canvas_material_dropped` 接收後，以「放開點置中」（扣除素材寬高的一半）新增 `FrameEntry` 到目前群組並觸發 `refresh_timeline()`/`update_preview()`/`_refresh_canvas()`。新增 4 個測試（2 個 canvas 單元測試：drop 發出正確 signal、無效資料被忽略；1 個 MainWindow 整合測試：drop 後正確置中新增 entry 且 canvas 同步；並以無頭方式驗證 `materials_list.dragEnabled()`、`canvas view.acceptDrops()` 與實際 `mimeData()` 內容）。201→204 個測試全數通過。
 
 - [ ] **P1-7 時間軸整合**
   - Canvas 下方加入 frame scrubber（時間軸滑桿）：顯示總幀數、目前幀，可拖動跳轉。
@@ -110,3 +111,4 @@
 - 2026-07-08：完成 P1-3（拖曳移動與雙向同步），Canvas 拖曳寫回模型、與樹狀編輯器雙向選取同步，180 個測試全數通過。
 - 2026-07-08：完成 P1-4（精確操作工具），方向鍵微調、Snap to grid、多選框選、對齊按鈕遵循選取，192 個測試全數通過。
 - 2026-07-08：完成 P1-5（Onion Skin 疊影），以 entry_index 作為 frame index 實作紅/綠疊色與上一個/下一個導覽，201 個測試全數通過。
+- 2026-07-08：完成 P1-6（素材庫拖放新增），從素材庫拖曳圖片到 Canvas 放開即新增置中的 FrameEntry，204 個測試全數通過。

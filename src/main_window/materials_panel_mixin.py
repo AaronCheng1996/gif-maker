@@ -11,6 +11,20 @@ from PIL import Image
 
 from ..i18n import tr
 from ..core import FrameEntry, CompositionGroup, SubGroupEntry
+from ..widgets.canvas_editor import MATERIAL_INDEX_MIME_TYPE
+
+
+class MaterialListWidget(QListWidget):
+    """QListWidget that exposes the dragged item's material index as custom MIME
+    data, so drop targets (e.g. the Canvas tab) know which material was dropped."""
+
+    def mimeData(self, items):
+        data = super().mimeData(items)
+        if items:
+            material_index = items[0].data(Qt.ItemDataRole.UserRole)
+            if material_index is not None:
+                data.setData(MATERIAL_INDEX_MIME_TYPE, str(material_index).encode("utf-8"))
+        return data
 
 
 class MaterialsPanelMixin:
@@ -84,10 +98,11 @@ class MaterialsPanelMixin:
         sort_row.addStretch()
         layout.addLayout(sort_row)
 
-        self.materials_list = QListWidget()
+        self.materials_list = MaterialListWidget()
         self.materials_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.materials_list.setIconSize(QSize(64, 64))
         self.materials_list.setViewMode(QListWidget.ViewMode.ListMode)
+        self.materials_list.setDragEnabled(True)
         layout.addWidget(self.materials_list)
 
         material_actions = QHBoxLayout()

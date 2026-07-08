@@ -22,6 +22,7 @@ from ..i18n import tr
 
 MIN_ZOOM = 0.05
 MAX_ZOOM = 20.0
+MATERIAL_INDEX_MIME_TYPE = "application/x-gifmaker-material-index"
 _CHECKER_TILE = 8  # px per checker square, in scene units
 _CHECKER_LIGHT = QColor("#33374a")
 _CHECKER_DARK = QColor("#262a38")
@@ -107,6 +108,7 @@ class _CanvasGraphicsView(QGraphicsView):
     zoom_changed = pyqtSignal(float)
     mouse_scene_pos_changed = pyqtSignal(QPointF)
     item_interaction_finished = pyqtSignal()  # any left-button release (click or drag end)
+    material_dropped = pyqtSignal(int, float, float)  # material_index, scene_x, scene_y
 
     def __init__(self, scene: QGraphicsScene, parent=None):
         super().__init__(scene, parent)
@@ -115,6 +117,7 @@ class _CanvasGraphicsView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         # RubberBandDrag only activates when the press lands on empty scene
         # space; clicking a movable/selectable item still selects+drags it.
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
@@ -214,12 +217,40 @@ class _CanvasGraphicsView(QGraphicsView):
                 self.setCursor(Qt.CursorShape.ArrowCursor)
         super().keyReleaseEvent(event)
 
+    # ── Drag-and-drop from the Material Library ─────────────────────────
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(MATERIAL_INDEX_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(MATERIAL_INDEX_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        mime = event.mimeData()
+        if not mime.hasFormat(MATERIAL_INDEX_MIME_TYPE):
+            super().dropEvent(event)
+            return
+        try:
+            material_index = int(bytes(mime.data(MATERIAL_INDEX_MIME_TYPE)).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            event.ignore()
+            return
+        scene_pos = self.mapToScene(event.position().toPoint())
+        self.material_dropped.emit(material_index, scene_pos.x(), scene_pos.y())
+        event.acceptProposedAction()
+
 
 class CanvasEditorWidget(QWidget):
     """Godot-style scene canvas: zoomable/pannable view of the GIF output bounds."""
 
     entry_selected = pyqtSignal(int)  # entry index, or -1 when nothing is selected
     entries_edited = pyqtSignal()     # fired once after a drag actually changes an offset
+    material_dropped = pyqtSignal(int, float, float)  # material_index, scene_x, scene_y
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -249,6 +280,7 @@ class CanvasEditorWidget(QWidget):
         self.view.zoom_changed.connect(self._on_zoom_changed)
         self.view.mouse_scene_pos_changed.connect(self._on_mouse_scene_pos_changed)
         self.view.item_interaction_finished.connect(self._on_item_interaction_finished)
+        self.view.material_dropped.connect(self.material_dropped)
 
         self.set_output_size(self._output_width, self._output_height)
 

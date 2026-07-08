@@ -2,11 +2,11 @@ import pytest
 from PIL import Image
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QPointF, Qt, QMimeData
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtCore import QEvent
 
-from src.widgets.canvas_editor import CanvasEditorWidget, MIN_ZOOM, MAX_ZOOM
+from src.widgets.canvas_editor import CanvasEditorWidget, MIN_ZOOM, MAX_ZOOM, MATERIAL_INDEX_MIME_TYPE
 from src.core.image_loader import MaterialManager
 from src.core.composition_group import FrameEntry, SubGroupEntry
 
@@ -411,3 +411,53 @@ def test_select_next_entry_with_no_selection_selects_first(canvas, material_mana
     _make_five_entry_scene(canvas, material_manager)
     canvas.select_next_entry()
     assert canvas.selected_entry_index() == 0
+
+
+class _FakeDropEvent:
+    """Minimal duck-typed stand-in for QDropEvent — dropEvent() only needs
+    mimeData()/position()/acceptProposedAction()/ignore()."""
+
+    def __init__(self, mime_data: QMimeData, position: QPointF):
+        self._mime = mime_data
+        self._position = position
+        self.accepted = False
+        self.ignored = False
+
+    def mimeData(self):
+        return self._mime
+
+    def position(self):
+        return self._position
+
+    def acceptProposedAction(self):
+        self.accepted = True
+
+    def ignore(self):
+        self.ignored = True
+
+
+def test_drop_emits_material_dropped_with_scene_coordinates(canvas):
+    mime = QMimeData()
+    mime.setData(MATERIAL_INDEX_MIME_TYPE, b"3")
+    event = _FakeDropEvent(mime, QPointF(10, 20))
+
+    received = []
+    canvas.material_dropped.connect(lambda idx, x, y: received.append((idx, x, y)))
+    canvas.view.dropEvent(event)
+
+    assert event.accepted is True
+    assert len(received) == 1
+    assert received[0][0] == 3
+
+
+def test_drop_with_invalid_material_index_is_ignored(canvas):
+    mime = QMimeData()
+    mime.setData(MATERIAL_INDEX_MIME_TYPE, b"not-a-number")
+    event = _FakeDropEvent(mime, QPointF(0, 0))
+
+    received = []
+    canvas.material_dropped.connect(lambda *a: received.append(a))
+    canvas.view.dropEvent(event)
+
+    assert received == []
+    assert event.ignored is True

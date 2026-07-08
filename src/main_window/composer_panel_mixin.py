@@ -34,6 +34,7 @@ class ComposerPanelMixin:
         self.canvas_editor = CanvasEditorWidget()
         self.canvas_editor.entry_selected.connect(self._on_canvas_entry_selected)
         self.canvas_editor.entries_edited.connect(self._on_canvas_entries_edited)
+        self.canvas_editor.material_dropped.connect(self._on_canvas_material_dropped)
         self.group_composition_widget.frame_entry_selected.connect(self._on_tree_entry_selected)
 
         self.middle_view_tabs = QTabWidget()
@@ -87,6 +88,27 @@ class ComposerPanelMixin:
             self.canvas_editor.select_entry(entry_idx)
         else:
             self.canvas_editor.select_entry(None)
+
+    def _on_canvas_material_dropped(self, material_index: int, x: float, y: float):
+        """A material was dragged from the library and dropped onto the canvas:
+        add it as a new FrameEntry, centered on the drop point."""
+        group = self._get_current_group()
+        if group is None:
+            return
+        mat = self.material_manager.get_material(material_index)
+        if mat is None:
+            return
+        img, _name = mat
+        drop_x = int(round(x - img.width / 2))
+        drop_y = int(round(y - img.height / 2))
+        group.entries.append(FrameEntry(material_index=material_index, x=drop_x, y=drop_y))
+        self.group_manager.update_group(self.current_group_id, group)
+        self.refresh_timeline()
+        self.update_preview()
+        self._refresh_canvas()
+        if not self._undo_in_progress:
+            self._undo_debounce.start(300)
+        self._status(f"Added frame from material library drop ({drop_x}, {drop_y})")
 
     def _refresh_canvas(self):
         """Sync the Canvas tab with the current group's entries and output size."""
