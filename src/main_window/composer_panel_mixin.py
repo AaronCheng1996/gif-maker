@@ -32,6 +32,9 @@ class ComposerPanelMixin:
         self.group_composition_widget.entries_changed.connect(self._on_group_entries_changed)
 
         self.canvas_editor = CanvasEditorWidget()
+        self.canvas_editor.entry_selected.connect(self._on_canvas_entry_selected)
+        self.canvas_editor.entries_edited.connect(self._on_canvas_entries_edited)
+        self.group_composition_widget.frame_entry_selected.connect(self._on_tree_entry_selected)
 
         self.middle_view_tabs = QTabWidget()
         self.middle_view_tabs.addTab(self.group_composition_widget, tr("🌳 Tree"))
@@ -63,6 +66,27 @@ class ComposerPanelMixin:
         self._refresh_canvas()
         if not self._undo_in_progress:
             self._undo_debounce.start(300)
+
+    def _on_canvas_entries_edited(self):
+        """A canvas drag finished and changed an entry's x/y offset."""
+        self.refresh_timeline()
+        self.update_preview()
+        self._refresh_canvas()
+        if not self._undo_in_progress:
+            self._undo_debounce.start(300)
+
+    def _on_canvas_entry_selected(self, entry_idx: int):
+        """Canvas selection -> mirror onto the tree (Tree <-> Canvas sync)."""
+        self.group_composition_widget.set_selected_entry(
+            self.current_group_id, entry_idx if entry_idx >= 0 else None
+        )
+
+    def _on_tree_entry_selected(self, parent_gid: int, entry_idx: int):
+        """Tree selection -> mirror onto the canvas, only when it's for the group Canvas shows."""
+        if parent_gid == self.current_group_id:
+            self.canvas_editor.select_entry(entry_idx)
+        else:
+            self.canvas_editor.select_entry(None)
 
     def _refresh_canvas(self):
         """Sync the Canvas tab with the current group's entries and output size."""

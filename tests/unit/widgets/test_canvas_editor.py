@@ -152,3 +152,69 @@ def test_selecting_item_emits_entry_selected(canvas, material_manager, qapp):
     canvas.scene.clearSelection()
     assert received[-1] == -1
     assert canvas.selected_entry_index() is None
+
+
+def test_select_entry_programmatically_selects_matching_item(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=0, y=0), FrameEntry(material_index=1, x=5, y=5)]
+    canvas.set_entries(entries, material_manager)
+
+    canvas.select_entry(1)
+    assert canvas.selected_entry_index() == 1
+    assert canvas._material_items[0].isSelected() is False
+    assert canvas._material_items[1].isSelected() is True
+
+    canvas.select_entry(None)
+    assert canvas.selected_entry_index() is None
+
+
+def test_dragging_item_writes_offset_back_to_live_entry(canvas, material_manager):
+    """Moving an item (simulating a drag) should mutate the FrameEntry in place."""
+    entries = [FrameEntry(material_index=0, x=0, y=0)]
+    canvas.set_entries(entries, material_manager)
+
+    item = canvas._material_items[0]
+    item.setPos(42, -17)
+
+    assert entries[0].x == 42
+    assert entries[0].y == -17
+
+
+def test_entries_edited_fires_once_after_drag_finishes(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=0, y=0)]
+    canvas.set_entries(entries, material_manager)
+
+    received = []
+    canvas.entries_edited.connect(lambda: received.append(True))
+
+    item = canvas._material_items[0]
+    item.setPos(10, 10)   # simulates in-progress drag movement
+    item.setPos(20, 20)
+    assert received == []  # not yet — only on interaction-finished (mouse release)
+
+    canvas.view.item_interaction_finished.emit()
+    assert len(received) == 1
+    assert entries[0].x == 20 and entries[0].y == 20
+
+    # A release with no pending change should not fire again.
+    canvas.view.item_interaction_finished.emit()
+    assert len(received) == 1
+
+
+def test_set_entries_preserves_selection_for_same_group_rerender(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=0, y=0), FrameEntry(material_index=1, x=5, y=5)]
+    canvas.set_entries(entries, material_manager)
+    canvas.select_entry(1)
+
+    # Re-render with the *same* entries list (as _refresh_canvas does after a drag).
+    canvas.set_entries(entries, material_manager)
+    assert canvas.selected_entry_index() == 1
+
+
+def test_set_entries_clears_selection_when_switching_groups(canvas, material_manager):
+    entries_a = [FrameEntry(material_index=0, x=0, y=0), FrameEntry(material_index=1, x=5, y=5)]
+    canvas.set_entries(entries_a, material_manager)
+    canvas.select_entry(1)
+
+    entries_b = [FrameEntry(material_index=0, x=1, y=1)]
+    canvas.set_entries(entries_b, material_manager)
+    assert canvas.selected_entry_index() is None

@@ -56,9 +56,10 @@
   - 將 CanvasWidget 以新分頁或 Composer 內的切換視圖接入主視窗（先求可用，佈局後續調整）。
   > 完成於 2026-07-08：`CanvasEditorWidget.set_entries()` 只渲染 `FrameEntry`（略過 `SubGroupEntry`/`LayerBlockEntry`，符合此階段範圍），依 entry 順序疊 zValue。新增 `_MaterialPixmapItem`：可選取、選取時繪製橘色（`#ff9d3d`）外框並蓋掉 Qt 預設虛線選取框，外框寬度用 cosmetic pen 保持縮放時視覺粗細一致。點空白處取消選取沿用 Qt `QGraphicsScene` 內建行為，無需額外程式碼。已接入 `MainWindow`：`create_middle_panel` 改為 `QTabWidget`（🌳 Tree / 🖼 Canvas 分頁），新增 `_refresh_canvas()` 在群組切換、entries 變更、輸出寬高變更時同步 canvas。新增 4 個測試（渲染位置/尺寸、略過非 FrameEntry、清空重繪、選取事件發射 `entry_selected` signal），並以無頭方式驗證 `MainWindow` 端到端整合（新增 entry 後 canvas 同步、調整寬度 spinbox 後 canvas 輸出範圍同步）。171→175 個測試全數通過。與樹狀編輯器的**雙向同步**（canvas 選取 → 樹上跟隨）留給 P1-3。
 
-- [ ] **P1-3 拖曳移動與雙向同步**
+- [x] **P1-3 拖曳移動與雙向同步**
   - 在 Canvas 上拖曳素材即時更新對應 entry 的 x/y offset。
   - 與現有 `GroupCompositionWidget` 樹狀編輯器雙向同步：樹上選取 → canvas 高亮；canvas 選取/移動 → 樹上跟隨與數值更新。
+  > 完成於 2026-07-08：`_MaterialPixmapItem` 加上 `ItemIsMovable`，`itemChange(ItemPositionHasChanged)` 即時把新位置寫回**同一個** live `FrameEntry` 物件（`CanvasEditorWidget.set_entries()` 保留 entries 清單的參照，而非複製，`GroupManager.get_group()` 本來就回傳參照，所以直接 mutate 即為真正更新模型，不需要 `update_group()`）。為避免拖曳時每個像素都觸發整棵樹重建 + 完整 GIF 預覽重算（效能考量），改成 `_CanvasGraphicsView.item_interaction_finished` 只在放開滑鼠左鍵時發一次，`CanvasEditorWidget.entries_edited` 只在該次拖曳確實改到座標時才發出，`MainWindow._on_canvas_entries_edited` 收到才呼叫 `refresh_timeline()`/`update_preview()`/`_refresh_canvas()`（一次拖曳只重建一次，不會每個像素都重建）。雙向同步：`GroupCompositionWidget` 新增 `frame_entry_selected(parent_gid, entry_idx)` signal 與 `set_selected_entry()`（FrameEntry row 改用 `_ClickableHeader`，選取時顯示藍色外框，沿用群組選取同色）；`CanvasEditorWidget` 新增 `select_entry()`；`MainWindow` 互相轉發兩個 signal，且只在 `parent_gid == current_group_id` 時才轉發到 canvas（canvas 只顯示目前群組），避免跨群組時索引誤選。`set_entries()` 重繪時只有「同一份 entries 清單物件」（同群組的拖曳後重繪）才保留選取，切換群組時正確清除選取。新增 9 個測試（拖曳寫回模型、`entries_edited` 只在放開時發一次且無變化不重複發、`select_entry`、同群組重繪保留選取、切換群組清除選取），並以無頭方式驗證 `MainWindow` 端到端：拖曳→模型更新→選取保留、樹→canvas、canvas→樹 雙向同步皆正確。180 個測試全數通過。
 
 - [ ] **P1-4 精確操作工具**
   - 方向鍵微調（1px；Shift+方向鍵 10px）。
@@ -103,3 +104,4 @@
 - 2026-07-08：完成 P0-3（拆分 src/main.py），新增 src/main_window/ 7 個 mixin，main.py 2046→254 行，161 個測試全數通過。
 - 2026-07-08：完成 P1-1（CanvasWidget 骨架），新增 src/widgets/canvas_editor.py + 10 個單元測試，171 個測試全數通過。尚未接入主視窗。
 - 2026-07-08：完成 P1-2（素材渲染與點選），Canvas 接入 MainWindow（Tree/Canvas 分頁切換），175 個測試全數通過。
+- 2026-07-08：完成 P1-3（拖曳移動與雙向同步），Canvas 拖曳寫回模型、與樹狀編輯器雙向選取同步，180 個測試全數通過。

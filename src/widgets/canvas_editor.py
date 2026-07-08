@@ -2,9 +2,10 @@
 
 CanvasEditorWidget hosts a zoomable/pannable QGraphicsView showing the GIF
 output bounds as a bordered rectangle with a transparency checkerboard fill.
-It renders each FrameEntry of the current group as a selectable pixmap item
-positioned at its x/y offset (P1-2). Selecting an item on the canvas does not
-yet sync back to the group tree editor — that lands in P1-3.
+It renders each FrameEntry of the current group as a selectable, draggable
+pixmap item positioned at its x/y offset. Dragging an item writes the new
+offset straight back into the live FrameEntry (P1-3); the entries_edited
+signal fires once a drag ends so the caller can refresh the preview/tree.
 """
 from typing import List, Optional
 
@@ -54,7 +55,10 @@ class _MaterialPixmapItem(QGraphicsPixmapItem):
     def __init__(self, pixmap: QPixmap, entry_index: int):
         super().__init__(pixmap)
         self.entry_index = entry_index
+        self.on_position_changed = None  # callback(entry_index, x, y), set by CanvasEditorWidget
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
 
     def paint(self, painter, option, widget=None):
         # Suppress Qt's default dashed selection rectangle; we draw our own outline.
@@ -67,12 +71,18 @@ class _MaterialPixmapItem(QGraphicsPixmapItem):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(self.boundingRect())
 
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self.on_position_changed:
+            self.on_position_changed(self.entry_index, value.x(), value.y())
+        return super().itemChange(change, value)
+
 
 class _CanvasGraphicsView(QGraphicsView):
     """QGraphicsView with cursor-anchored wheel zoom and middle/space-drag panning."""
 
     zoom_changed = pyqtSignal(float)
     mouse_scene_pos_changed = pyqtSignal(QPointF)
+    item_interaction_finished = pyqtSignal()  # any left-button release (click or drag end)
 
     def __init__(self, scene: QGraphicsScene, parent=None):
         super().__init__(scene, parent)
@@ -153,6 +163,8 @@ class _CanvasGraphicsView(QGraphicsView):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.item_interaction_finished.emit()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
@@ -173,6 +185,7 @@ class CanvasEditorWidget(QWidget):
     """Godot-style scene canvas: zoomable/pannable view of the GIF output bounds."""
 
     entry_selected = pyqtSignal(int)  # entry index, or -1 when nothing is selected
+    entries_edited = pyqtSignal()     # fired once after a drag actually changes an offset
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -180,6 +193,8 @@ class CanvasEditorWidget(QWidget):
         self._output_width = 400
         self._output_height = 400
         self._material_items: List[_MaterialPixmapItem] = []
+        self._entries: Optional[list] = None
+        self._drag_dirty = False
 
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QBrush(QColor(_T.BG)))
@@ -194,6 +209,7 @@ class CanvasEditorWidget(QWidget):
         self.view = _CanvasGraphicsView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
         self.view.mouse_scene_pos_changed.connect(self._on_mouse_scene_pos_changed)
+        self.view.item_interaction_finished.connect(self._on_item_interaction_finished)
 
         self.set_output_size(self._output_width, self._output_height)
 
@@ -263,7 +279,17 @@ class CanvasEditorWidget(QWidget):
     def set_entries(self, entries: list, material_manager) -> None:
         """Render the given group's entries as pixmap items positioned at their
         x/y offsets. Only FrameEntry items are rendered — SubGroupEntry and
-        LayerBlockEntry are out of scope until later phases."""
+        LayerBlockEntry are out of scope until later phases.
+
+        Keeps a reference to `entries` (the live list, not a copy) so that
+        drag-to-move can write x/y offsets straight back into the model."""
+        # Only carry the selection over when re-rendering the *same* group's
+        # entries (e.g. after a drag-end refresh) — a different entries list
+        # means a different group, so any prior index would be coincidental.
+        same_group = entries is self._entries
+        previously_selected = self.selected_entry_index() if same_group else None
+        self._entries = entries
+        self._drag_dirty = False
         self._clear_material_items()
         for idx, entry in enumerate(entries):
             if not is_frame_entry(entry):
@@ -273,10 +299,13 @@ class CanvasEditorWidget(QWidget):
                 continue
             img, _name = mat
             item = _MaterialPixmapItem(_pil_to_qpixmap(img), idx)
+            item.on_position_changed = self._mark_item_moved
             item.setPos(entry.x, entry.y)
             item.setZValue(idx)
             self.scene.addItem(item)
             self._material_items.append(item)
+        if previously_selected is not None:
+            self.select_entry(previously_selected)
 
     def _clear_material_items(self) -> None:
         for item in self._material_items:
@@ -290,6 +319,30 @@ class CanvasEditorWidget(QWidget):
             return None
         return selected[0].entry_index
 
+    def select_entry(self, entry_index: Optional[int]) -> None:
+        """Programmatically select the item matching entry_index (or clear if None).
+
+        Used to mirror a selection made in the group tree editor onto the canvas."""
+        for item in self._material_items:
+            item.setSelected(item.entry_index == entry_index)
+
     def _on_scene_selection_changed(self) -> None:
         idx = self.selected_entry_index()
         self.entry_selected.emit(idx if idx is not None else -1)
+
+    # ── Drag-to-move ─────────────────────────────────────────────────────
+    def _mark_item_moved(self, entry_index: int, x: float, y: float) -> None:
+        """Write a dragged item's new position straight back into its FrameEntry."""
+        if self._entries is None or not (0 <= entry_index < len(self._entries)):
+            return
+        entry = self._entries[entry_index]
+        if is_frame_entry(entry):
+            entry.x = int(round(x))
+            entry.y = int(round(y))
+            self._drag_dirty = True
+
+    def _on_item_interaction_finished(self) -> None:
+        """After any left-button release, notify listeners once if a drag changed an offset."""
+        if self._drag_dirty:
+            self._drag_dirty = False
+            self.entries_edited.emit()

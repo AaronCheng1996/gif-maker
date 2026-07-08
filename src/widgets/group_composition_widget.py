@@ -125,6 +125,7 @@ class GroupCompositionWidget(QWidget):
 
     current_group_changed = pyqtSignal(int)
     entries_changed = pyqtSignal()
+    frame_entry_selected = pyqtSignal(int, int)  # (parent_group_id, entry_idx)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -134,6 +135,7 @@ class GroupCompositionWidget(QWidget):
         self._get_sel_mat: Optional[Callable] = None
         self._collapsed: set = set()
         self._building = False
+        self._selected_entry: Optional[tuple] = None  # (parent_group_id, entry_idx)
         self._init_ui()
 
     # ── Public setters ────────────────────────────────────────────────────────
@@ -157,6 +159,16 @@ class GroupCompositionWidget(QWidget):
 
     def set_current_group_id(self, gid: Optional[int]):
         self._current_gid = gid
+        self.refresh()
+
+    def set_selected_entry(self, parent_gid: Optional[int], entry_idx: Optional[int]):
+        """Highlight the given FrameEntry row without emitting frame_entry_selected.
+
+        Used to mirror a selection made elsewhere (e.g. the Canvas tab) onto the tree."""
+        new_sel = (parent_gid, entry_idx) if parent_gid is not None and entry_idx is not None else None
+        if new_sel == self._selected_entry:
+            return
+        self._selected_entry = new_sel
         self.refresh()
 
     def refresh_groups_list(self):
@@ -514,10 +526,15 @@ class GroupCompositionWidget(QWidget):
         self, entry: FrameEntry, parent_gid: int, entry_idx: int,
         group_default_dur: int,
     ) -> QWidget:
-        row = QFrame()
+        is_row_selected = self._selected_entry == (parent_gid, entry_idx)
+        row = _ClickableHeader()
+        border = f"2px solid {_T.GRP_BORDER_SEL}" if is_row_selected else f"1px solid {_T.FRAME_ROW_BORDER}"
         row.setStyleSheet(
             f"QFrame {{ background: {_T.FRAME_ROW_BG}; "
-            f"border: 1px solid {_T.FRAME_ROW_BORDER}; border-radius: 3px; }}"
+            f"border: {border}; border-radius: 3px; }}"
+        )
+        row.clicked.connect(
+            lambda pg=parent_gid, ei=entry_idx: self._cmd_select_entry(pg, ei)
         )
         hl = QHBoxLayout(row)
         hl.setContentsMargins(4, 4, 4, 4)
@@ -906,6 +923,11 @@ class GroupCompositionWidget(QWidget):
     def _cmd_select(self, gid: int):
         self._current_gid = gid
         self.current_group_changed.emit(gid)
+        self.refresh()
+
+    def _cmd_select_entry(self, parent_gid: int, entry_idx: int):
+        self._selected_entry = (parent_gid, entry_idx)
+        self.frame_entry_selected.emit(parent_gid, entry_idx)
         self.refresh()
 
     def _cmd_clone_group(self, gid: int, parent_gid: int, entry_idx: int):
