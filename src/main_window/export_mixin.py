@@ -8,8 +8,14 @@ from PIL import Image
 class ExportMixin:
     """GIF export for the current group, batch export of all groups, and spritesheet export."""
 
+    _EXPORT_FORMAT_INFO = {
+        "GIF":  {"ext": "gif",  "filter": "GIF Files (*.gif)"},
+        "APNG": {"ext": "png",  "filter": "APNG Files (*.png)"},
+        "WebP": {"ext": "webp", "filter": "WebP Files (*.webp)"},
+    }
+
     def export_gif(self):
-        """Export GIF from the currently selected group."""
+        """Export the currently selected group as GIF, APNG, or animated WebP."""
         if self.current_group_id is None:
             QMessageBox.warning(self, "Warning", "No group selected to export!")
             return
@@ -17,15 +23,18 @@ class ExportMixin:
             QMessageBox.warning(self, "Warning", "Selected group not found!")
             return
 
-        default_path = "output.gif"
+        fmt = self.export_format_combo.currentText() if hasattr(self, 'export_format_combo') else "GIF"
+        info = self._EXPORT_FORMAT_INFO.get(fmt, self._EXPORT_FORMAT_INFO["GIF"])
+
+        default_path = f"output.{info['ext']}"
         if self.last_export_dir:
-            default_path = str(Path(self.last_export_dir) / "output.gif")
+            default_path = str(Path(self.last_export_dir) / f"output.{info['ext']}")
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save GIF",
             default_path,
-            "GIF Files (*.gif)"
+            info["filter"],
         )
 
         if file_path:
@@ -42,15 +51,24 @@ class ExportMixin:
                     self.gif_builder.set_background_color(0, 0, 0, 0)
                 else:
                     self.gif_builder.set_background_color(255, 255, 255, 255)
-                self.gif_builder.build_gif_from_group(
-                    self.current_group_id,
-                    self.group_manager,
-                    self.material_manager,
-                    file_path,
-                )
-                QMessageBox.information(self, "Success", "GIF exported successfully.")
+
+                if fmt == "APNG":
+                    self.gif_builder.build_apng_from_group(
+                        self.current_group_id, self.group_manager, self.material_manager, file_path,
+                    )
+                elif fmt == "WebP":
+                    quality = self.webp_quality_spinbox.value() if hasattr(self, 'webp_quality_spinbox') else 80
+                    self.gif_builder.build_webp_from_group(
+                        self.current_group_id, self.group_manager, self.material_manager, file_path,
+                        quality=quality,
+                    )
+                else:
+                    self.gif_builder.build_gif_from_group(
+                        self.current_group_id, self.group_manager, self.material_manager, file_path,
+                    )
+                QMessageBox.information(self, "Success", f"{fmt} exported successfully.")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export GIF:\n{str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to export {fmt}:\n{str(e)}")
 
     # ──────────────────────────────────────────────────────────────
     # Batch Export All Groups

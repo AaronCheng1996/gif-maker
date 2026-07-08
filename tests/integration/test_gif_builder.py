@@ -146,3 +146,73 @@ def test_build_gif_from_group_subgroup_xy_offset(tmp_gif_path):
     assert info["size"] == (30, 30)
 
 
+def test_build_apng_and_webp_from_group(tmp_path):
+    from src.core.composition_group import CompositionGroup, FrameEntry
+
+    mm = MaterialManager()
+    mm.add_material(Image.new("RGBA", (10, 10), (255, 0, 0, 255)), name="a")
+    mm.add_material(Image.new("RGBA", (10, 10), (0, 255, 0, 255)), name="b")
+
+    group_mgr = GroupManager()
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=80))
+    root.entries.append(FrameEntry(material_index=1, x=0, y=0, duration_ms=120))
+    gid = group_mgr.add_group(root)
+
+    gb = GifBuilder()
+    gb.set_output_size(10, 10)
+    gb.set_background_color(0, 0, 0, 0)  # transparent
+    gb.set_loop(0)
+
+    apng_path = tmp_path / "out.png"
+    webp_path = tmp_path / "out.webp"
+    gb.build_apng_from_group(gid, group_mgr, mm, str(apng_path))
+    gb.build_webp_from_group(gid, group_mgr, mm, str(webp_path), quality=70)
+
+    assert apng_path.exists()
+    assert webp_path.exists()
+    assert getattr(Image.open(apng_path), "n_frames", 1) == 2
+    assert getattr(Image.open(webp_path), "n_frames", 1) == 2
+
+
+def test_build_apng_from_group_raises_on_empty_materials(tmp_path):
+    from src.core.composition_group import CompositionGroup
+
+    mm = MaterialManager()
+    group_mgr = GroupManager()
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    gid = group_mgr.add_group(root)
+
+    gb = GifBuilder()
+    gb.set_output_size(10, 10)
+
+    import pytest
+    with pytest.raises(ValueError):
+        gb.build_apng_from_group(gid, group_mgr, mm, str(tmp_path / "out.png"))
+
+
+def test_build_webp_from_group_respects_solid_background(tmp_path):
+    """A solid (non-transparent) background should flatten the material's own
+    alpha channel to fully opaque, unlike the transparent-background case."""
+    from src.core.composition_group import CompositionGroup, FrameEntry
+
+    mm = MaterialManager()
+    mm.add_material(Image.new("RGBA", (10, 10), (255, 0, 0, 128)), name="a")
+
+    group_mgr = GroupManager()
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=100))
+    gid = group_mgr.add_group(root)
+
+    gb = GifBuilder()
+    gb.set_output_size(10, 10)
+    gb.set_background_color(0, 0, 255, 255)  # solid blue, opaque
+
+    out = tmp_path / "solid.webp"
+    gb.build_webp_from_group(gid, group_mgr, mm, str(out))
+
+    img = Image.open(out).convert("RGBA")
+    _, _, _, a = img.getpixel((5, 5))
+    assert a == 255
+
+

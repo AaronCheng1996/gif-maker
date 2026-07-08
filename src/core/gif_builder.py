@@ -855,3 +855,82 @@ class GifBuilder:
             durations.append(duration)
 
         self.save_gif(frames, durations, output_path)
+
+    def _prepare_frame_for_alpha_format(self, img: Image.Image) -> Image.Image:
+        """Prepare an RGBA composited frame for a truecolor animated format (APNG/WebP).
+
+        Unlike GIF, these formats support full RGBA directly, so no palette
+        quantization is needed — only the transparent-vs-solid background
+        choice (matching the "Transparent BG" setting) is applied."""
+        img = img.convert("RGBA")
+        if self.background_color[3] == 0:
+            return img
+        bg = Image.new("RGBA", img.size, self.background_color)
+        bg.alpha_composite(img)
+        return bg
+
+    def build_apng_from_group(
+        self,
+        group_id: int,
+        group_manager: "GroupManager",
+        material_manager: MaterialManager,
+        output_path: str,
+    ):
+        """Export the given group as an animated PNG (APNG)."""
+        group = group_manager.get_group(group_id)
+        if group is None:
+            raise ValueError("Group not found")
+        if len(material_manager) == 0:
+            raise ValueError("Material list is empty, cannot generate APNG")
+
+        frames_with_durations = self.get_preview_frames_for_group(
+            group_id, group_manager, material_manager
+        )
+        if not frames_with_durations:
+            raise ValueError("No frames to export after expanding group")
+
+        frames = [self._prepare_frame_for_alpha_format(img) for img, _ in frames_with_durations]
+        durations = [d for _, d in frames_with_durations]
+
+        frames[0].save(
+            output_path,
+            format="PNG",
+            save_all=True,
+            append_images=frames[1:],
+            duration=durations,
+            loop=self.loop,
+        )
+
+    def build_webp_from_group(
+        self,
+        group_id: int,
+        group_manager: "GroupManager",
+        material_manager: MaterialManager,
+        output_path: str,
+        quality: int = 80,
+    ):
+        """Export the given group as an animated WebP."""
+        group = group_manager.get_group(group_id)
+        if group is None:
+            raise ValueError("Group not found")
+        if len(material_manager) == 0:
+            raise ValueError("Material list is empty, cannot generate WebP")
+
+        frames_with_durations = self.get_preview_frames_for_group(
+            group_id, group_manager, material_manager
+        )
+        if not frames_with_durations:
+            raise ValueError("No frames to export after expanding group")
+
+        frames = [self._prepare_frame_for_alpha_format(img) for img, _ in frames_with_durations]
+        durations = [d for _, d in frames_with_durations]
+
+        frames[0].save(
+            output_path,
+            format="WEBP",
+            save_all=True,
+            append_images=frames[1:],
+            duration=durations,
+            loop=self.loop,
+            quality=max(1, min(100, int(quality))),
+        )

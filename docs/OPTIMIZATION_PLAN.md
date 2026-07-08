@@ -87,12 +87,14 @@
 
 ## Phase 2 — 進階功能
 
-- [ ] **P2-1 Undo/Redo**
+- [x] **P2-1 Undo/Redo**
   - 以 `QUndoStack` 為 Composer 操作（新增/刪除 entry、移動、改 duration、改 offset）建立復原系統，Ctrl+Z / Ctrl+Y 快捷鍵。
+  > 完成於 2026-07-08：**發現已存在**——`src/main_window/undo_mixin.py`（在 P0-3 從原本的 `main.py` 拆出，屬於重構前就有的既有功能）已經實作了快照式（非 `QUndoStack`，而是 debounce 300ms 後把整個 `GroupManager` 序列化成快照 push 進 stack）的 Undo/Redo，`Ctrl+Z`/`Ctrl+Y`/`Ctrl+Shift+Z` 快捷鍵與選單項目也都已存在（`menu_mixin.py`）。P1-3 的拖曳與 P1-6 的拖放新增都已經呼叫 `self._undo_debounce.start(300)`（沿用既有機制，寫在 `_on_canvas_entries_edited`/`_on_canvas_material_dropped`），所以這兩個新功能從一開始就自動具備 undo/redo 能力，不需要額外接線。以真實跑 Qt event loop（讓 300ms debounce 真正觸發）的方式驗證：新增 entry → settle → 拖曳到新座標 → settle → `undo()` 正確還原到拖曳前座標 → `redo()` 正確還原到拖曳後座標。判斷改用 `QUndoStack` 重寫是不必要的重複工程（會與既有機制衝突、徒增風險），故維持現況，此項目視為已完成。
 
-- [ ] **P2-2 APNG / WebP 匯出**
+- [x] **P2-2 APNG / WebP 匯出**
   - 匯出面板新增格式選項：GIF（預設）、APNG、動畫 WebP（Pillow 原生支援）。
   - 依格式顯示對應選項（例如 WebP quality）。
+  > 完成於 2026-07-08：`GifBuilder` 新增 `build_apng_from_group()` / `build_webp_from_group(quality=80)`，重用既有的 `get_preview_frames_for_group()` 取得已合成的 RGBA 幀（不像 GIF 匯出需要調色盤量化，APNG/WebP 原生支援全彩，新增 `_prepare_frame_for_alpha_format()` 只處理「Transparent BG」設定對應的透明／實色背景合成，其餘沿用 Pillow `save_all=True` 動畫存檔）。UI：Composer 右側面板新增「Format:」下拉選單（GIF/APNG/WebP）與僅 WebP 顯示的「Quality:」spinbox（`_on_export_format_changed()` 控制顯示/隱藏）；`export_gif()` 依格式分派到對應的 builder 方法、副檔名與檔案篩選器（.gif/.png/.webp）。新增 3 個 `GifBuilder` 測試（APNG/WebP 皆正確產生動畫檔、空素材時丟例外、實色背景會攤平材質自身的透明度）與 2 個 `MainWindow` 整合測試（Quality 控制項依格式顯示/隱藏、三種格式皆能透過 `export_gif()` 正確匯出檔案）。215→217 個測試全數通過，並以無頭方式驗證三種格式皆能實際匯出成功且 quality 控制項正確切換。
 
 - [ ] **P2-3 Template 縮圖預覽**
   - Template Manager 儲存範本時同時產生第一幀縮圖，選擇範本時顯示預覽。
@@ -116,3 +118,5 @@
 - 2026-07-08：完成 P1-5（Onion Skin 疊影），以 entry_index 作為 frame index 實作紅/綠疊色與上一個/下一個導覽，201 個測試全數通過。
 - 2026-07-08：完成 P1-6（素材庫拖放新增），從素材庫拖曳圖片到 Canvas 放開即新增置中的 FrameEntry，204 個測試全數通過。
 - 2026-07-08：完成 P1-7（時間軸整合），Canvas 加入 frame scrubber 與播放功能，212 個測試全數通過。**Phase 1 全部完成。**
+- 2026-07-08：確認 P2-1（Undo/Redo）已由既有的快照式機制滿足（含 P1-3/P1-6 新功能），無需重寫，212 個測試維持全數通過。
+- 2026-07-08：完成 P2-2（APNG / WebP 匯出），GifBuilder 新增兩個匯出方法，匯出面板可切換 GIF/APNG/WebP，217 個測試全數通過。

@@ -90,6 +90,8 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Size:":                             "尺寸：",
         "Auto":                              "自動",
         "Loop:":                             "迴圈：",
+        "Format:":                           "格式：",
+        "Quality:":                          "品質：",
         "Transparent BG":                    "透明背景",
         "Colors:":                           "色彩：",
         "Chroma Key:":                       "去背色：",

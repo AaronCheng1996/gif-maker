@@ -62,6 +62,12 @@ class ComposerPanelMixin:
         if not manual:
             self.auto_fit_output_size()
 
+    def _on_export_format_changed(self, fmt: str):
+        """Only WebP has a quality setting; GIF/APNG hide those controls."""
+        is_webp = (fmt == "WebP")
+        self.webp_quality_label.setVisible(is_webp)
+        self.webp_quality_spinbox.setVisible(is_webp)
+
     def _on_group_entries_changed(self):
         self.update_preview()
         self._refresh_canvas()
@@ -234,6 +240,24 @@ class ComposerPanelMixin:
         loop_layout.addWidget(self.loop_spinbox)
         loop_layout.addStretch()
         settings_layout.addLayout(loop_layout)
+
+        # Export format (GIF / APNG / WebP)
+        format_layout = QHBoxLayout()
+        format_layout.addWidget(QLabel(tr("Format:")))
+        self.export_format_combo = QComboBox()
+        self.export_format_combo.addItems(["GIF", "APNG", "WebP"])
+        self.export_format_combo.currentTextChanged.connect(self._on_export_format_changed)
+        format_layout.addWidget(self.export_format_combo)
+
+        self.webp_quality_label = QLabel(tr("Quality:"))
+        format_layout.addWidget(self.webp_quality_label)
+        self.webp_quality_spinbox = QSpinBox()
+        self.webp_quality_spinbox.setRange(1, 100)
+        self.webp_quality_spinbox.setValue(80)
+        format_layout.addWidget(self.webp_quality_spinbox)
+        format_layout.addStretch()
+        settings_layout.addLayout(format_layout)
+        self._on_export_format_changed(self.export_format_combo.currentText())
 
         # Transparent BG
         self.transparent_bg_checkbox = QCheckBox(tr("Transparent BG"))

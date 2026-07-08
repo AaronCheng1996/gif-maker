@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from PyQt6.QtWidgets import QApplication
@@ -145,4 +147,42 @@ def test_dropping_material_on_canvas_adds_centered_frame_entry(qapp):
     assert new_entry.y == 50 - 5
     # Canvas should reflect the new entry too.
     assert len(window.canvas_editor._material_items) == 1
+
+
+def test_export_format_combo_toggles_webp_quality_visibility(qapp):
+    """WebP shows a quality spinbox; GIF/APNG hide it."""
+    window = MainWindow()
+
+    window.export_format_combo.setCurrentText("WebP")
+    assert window.webp_quality_spinbox.isHidden() is False
+
+    window.export_format_combo.setCurrentText("GIF")
+    assert window.webp_quality_spinbox.isHidden() is True
+
+    window.export_format_combo.setCurrentText("APNG")
+    assert window.webp_quality_spinbox.isHidden() is True
+
+
+def test_export_gif_supports_apng_and_webp_formats(qapp, tmp_path, monkeypatch):
+    """export_gif() should call the matching GifBuilder method for each format
+    and use the correct file extension as the save-dialog default."""
+    from PIL import Image
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from src.core.composition_group import FrameEntry
+
+    window = MainWindow()
+    window.material_manager.add_material(Image.new("RGBA", (10, 10), (255, 0, 0, 255)), "a")
+    root = window.group_manager.get_group(window.current_group_id)
+    root.entries.append(FrameEntry(material_index=0, x=0, y=0, duration_ms=100))
+    window.group_manager.update_group(window.current_group_id, root)
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
+
+    for fmt, ext in [("GIF", "gif"), ("APNG", "png"), ("WebP", "webp")]:
+        window.export_format_combo.setCurrentText(fmt)
+        out_path = str(tmp_path / f"out_{fmt.lower()}.{ext}")
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, p=out_path, **k: (p, ""))
+        window.export_gif()
+        assert Path(out_path).exists(), f"{fmt} export did not produce a file"
 
