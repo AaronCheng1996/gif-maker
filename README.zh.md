@@ -124,6 +124,24 @@ python build_exe.py
 
 ---
 
+## 測試
+
+安裝開發相依套件並執行測試：
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+如需覆蓋率報告：
+
+```bash
+pip install pytest-cov
+python -m pytest --cov=src --cov-report=term-missing
+```
+
+---
+
 ## 專案結構
 
 ```

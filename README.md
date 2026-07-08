@@ -123,6 +123,24 @@ The executable is created at `dist/GIF-Maker.exe`. See `build_instructions.md` f
 
 ---
 
+## Testing
+
+Install dev dependencies and run the test suite:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+For a coverage report:
+
+```bash
+pip install pytest-cov
+python -m pytest --cov=src --cov-report=term-missing
+```
+
+---
+
 ## Project Structure
 
 ```

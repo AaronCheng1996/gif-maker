@@ -25,9 +25,10 @@
 
 ## Phase 0 — 基礎整備
 
-- [ ] **P0-1 開發環境與測試健壯性**
+- [x] **P0-1 開發環境與測試健壯性**
   - `pytest.ini` 目前硬編碼 `--cov=src --cov-report=term-missing`，在沒裝 `pytest-cov` 的環境會直接無法執行任何測試。將 coverage 選項移出 `pytest.ini`（改記載於 `build_instructions.md` 或 Makefile-style 指令說明），確保乾淨環境 `python -m pytest` 可以直接跑。
   - 安裝 `requirements.txt` + `requirements-dev.txt`，執行全部測試（約 161 個），修復任何因環境造成的失敗。
+  > 完成於 2026-07-08：`pytest.ini` 移除 `--cov` 選項改為純 `-q`，README.md / README.zh.md 新增「Testing」章節說明基本測試與可選的 coverage 指令；乾淨環境安裝相依套件後 `python -m pytest` 161 個測試全數通過。
 
 - [ ] **P0-2 README 與程式碼同步**
   - `README.md` / `README.zh.md` 的 Project Structure 缺少後期新增模組：`video_to_gif.py`、`clip_to_gif_widget.py`、`video_to_gif_widget.py`、`i18n.py`、`settings.py`、`settings_dialog.py`、`layer_system.py`、`sequence_editor.py`、`utils.py`。
@@ -92,3 +93,5 @@
 ## 進度記錄
 
 （每次執行後由排程任務在此追加一行：日期、完成項目、commit hash）
+
+- 2026-07-08：完成 P0-1（開發環境與測試健壯性），161 個測試全數通過。
