@@ -67,9 +67,11 @@
   - 多選（框選/Ctrl+點選）與現有對齊按鈕（靠左、置中、靠右…）作用於多選物件。
   > 完成於 2026-07-08：`_CanvasGraphicsView.keyPressEvent` 新增方向鍵處理（有選取時：一般 1px，Shift+方向鍵 10px），移動後立即發出 `item_interaction_finished`（重用 P1-3 的節流機制，只在按鍵當下 flush 一次）。Snap to grid：`CanvasEditorWidget` 內建 `Snap` checkbox + 格距 QSpinBox（自帶 UI，不需 MainWindow 額外接線），`_MaterialPixmapItem.itemChange` 攔截 `ItemPositionChange` 套用 `snap_fn`（拖曳與方向鍵微調皆會被吸附，行為一致）；新增 `set_snap_enabled/is_snap_enabled/set_snap_size/snap_size` 對外 API。多選：`_CanvasGraphicsView` 的 `dragMode` 從 `NoDrag` 改成 `RubberBandDrag`（點在素材上仍是選取/拖曳，點空白處拖曳才會框選，Qt 內建行為，Ctrl+點選多選也是原生支援）；新增 `selected_entry_indices()`（複數版本）。`ComposerPanelMixin._align_current_group_entries` 改為：canvas 上有選取時只對齊選取的 entries，否則維持原本「全部對齊」的預設行為；六個 `align_all_*` 方法都補上 `self._refresh_canvas()`（先前這裡漏了同步 canvas，一併修正）。新增 9 個 canvas 單元測試（方向鍵微調/Shift微調/無選取時不動作/發出 entries_edited、snap 開關與吸附/停用時精確定位、snap UI 雙向同步、`selected_entry_indices` 排序、RubberBandDrag 模式）與 3 個 `MainWindow` 整合測試（對齊按鈕遵循 canvas 選取、canvas↔樹雙向選取同步、拖曳更新模型且保留選取）。180→192 個測試全數通過，另以無頭方式確認 6 個分頁仍可正常切換。
 
-- [ ] **P1-5 Onion Skin 疊影**
+- [x] **P1-5 Onion Skin 疊影**
   - 在 Canvas 上以半透明方式疊加前一幀（紅色調）與後一幀（綠色調），透明度與前後幀數可調，可一鍵開關。
   - 逐幀切換時（前一幀/下一幀按鈕）canvas 即時更新。
+  > 完成於 2026-07-08：**設計澄清**——P1-2 建立的 Canvas 是把目前群組的所有 `FrameEntry` **同時**疊加顯示（方便一次檢視/對齊整組動畫的所有幀），但實際 GIF 播放時每個 entry 是**依序**各自顯示一幀；`entry_index` 在扁平群組中剛好就等於 GIF 播放的 frame index，因此「前一幀/下一幀」直接對應到「entry_index − 1 / + 1」，Onion Skin 直接以「目前選取的 entry」為基準對相鄰 entry 加疊色，語意與原始需求一致，不需另外引入「播放頭（playhead）」概念。
+  > 實作：`_MaterialPixmapItem.paint()` 在 `onion_tint` 不為 `None` 時，用 `painter.setOpacity(onion_alpha)` 疊加半透明色塊（紅／綠）於素材之上，距離選取項越遠透明度線性衰減；`CanvasEditorWidget._update_onion_skin()` 依 `entry_index - selected_index` 計算每個 item 的疊色（範圍內：紅=之前、綠=之後；超出範圍或就是選取本身：不疊色），選取變更或 `set_entries()` 重繪時自動重算。新增內建工具列（Prev ◀ / Next ▶ 按鈕、Onion Skin 開關、Opacity% 與 Range 兩個 spinbox），Prev/Next 依 `entry_index` 順序移動選取（含 clamp，不循環），沿用既有 `select_entry()`，因此自動與 P1-3 的樹狀編輯器雙向同步接軌。新增 9 個測試（預設關閉不疊色、鄰近項目紅/綠疊色、範圍擴大時遠端更淡、關閉後清除、UI 雙向同步、上一個/下一個/clamp 邊界/無選取時選第一個）。補上 `Prev`/`Next`/`Onion Skin`/`Opacity:`/`Range:` 繁體中文翻譯。192→201 個測試全數通過，並以無頭方式驗證 `MainWindow` 端到端：開啟 Onion Skin 後選取項目、疊色正確、Next 移動選取正確。
 
 - [ ] **P1-6 素材庫拖放新增**
   - 從素材庫（material library）直接拖放圖片到 Canvas 上，於放開位置新增 FrameEntry 至目前群組。
@@ -107,3 +109,4 @@
 - 2026-07-08：完成 P1-2（素材渲染與點選），Canvas 接入 MainWindow（Tree/Canvas 分頁切換），175 個測試全數通過。
 - 2026-07-08：完成 P1-3（拖曳移動與雙向同步），Canvas 拖曳寫回模型、與樹狀編輯器雙向選取同步，180 個測試全數通過。
 - 2026-07-08：完成 P1-4（精確操作工具），方向鍵微調、Snap to grid、多選框選、對齊按鈕遵循選取，192 個測試全數通過。
+- 2026-07-08：完成 P1-5（Onion Skin 疊影），以 entry_index 作為 frame index 實作紅/綠疊色與上一個/下一個導覽，201 個測試全數通過。

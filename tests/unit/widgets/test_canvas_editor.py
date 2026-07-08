@@ -312,3 +312,102 @@ def test_selected_entry_indices_returns_all_selected_sorted(canvas, material_man
 def test_view_uses_rubber_band_drag_mode(canvas):
     from PyQt6.QtWidgets import QGraphicsView
     assert canvas.view.dragMode() == QGraphicsView.DragMode.RubberBandDrag
+
+
+def _make_five_entry_scene(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=i * 10, y=0) for i in range(5)]
+    canvas.set_entries(entries, material_manager)
+    return entries
+
+
+def test_onion_skin_disabled_by_default_no_tint(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.select_entry(2)
+    assert all(item.onion_tint is None for item in canvas._material_items)
+
+
+def test_onion_skin_tints_neighbors_red_and_green(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.set_onion_skin_enabled(True)
+    canvas.set_onion_skin_range(1)
+    canvas.select_entry(2)
+
+    by_index = {item.entry_index: item for item in canvas._material_items}
+    assert by_index[2].onion_tint is None       # selected — no tint
+    assert by_index[1].onion_tint is not None   # previous — red
+    assert by_index[1].onion_tint.red() > by_index[1].onion_tint.green()
+    assert by_index[3].onion_tint is not None   # next — green
+    assert by_index[3].onion_tint.green() > by_index[3].onion_tint.red()
+    assert by_index[0].onion_tint is None       # out of range
+    assert by_index[4].onion_tint is None       # out of range
+
+
+def test_onion_skin_range_extends_tinting_and_fades_with_distance(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.set_onion_skin_enabled(True)
+    canvas.set_onion_skin_range(2)
+    canvas.select_entry(2)
+
+    by_index = {item.entry_index: item for item in canvas._material_items}
+    assert by_index[0].onion_tint is not None
+    assert by_index[4].onion_tint is not None
+    # The farther neighbor should be more faded (lower alpha) than the closer one.
+    assert by_index[0].onion_alpha < by_index[1].onion_alpha
+    assert by_index[4].onion_alpha < by_index[3].onion_alpha
+
+
+def test_onion_skin_clears_when_disabled(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.set_onion_skin_enabled(True)
+    canvas.select_entry(2)
+    assert any(item.onion_tint is not None for item in canvas._material_items)
+
+    canvas.set_onion_skin_enabled(False)
+    assert all(item.onion_tint is None for item in canvas._material_items)
+
+
+def test_onion_skin_checkbox_and_spinboxes_reflect_programmatic_changes(canvas):
+    canvas.set_onion_skin_enabled(True)
+    assert canvas.onion_checkbox.isChecked() is True
+
+    canvas.set_onion_skin_opacity(0.5)
+    assert canvas.onion_opacity_spinbox.value() == 50
+    assert canvas.onion_skin_opacity() == pytest.approx(0.5)
+
+    canvas.set_onion_skin_range(3)
+    assert canvas.onion_range_spinbox.value() == 3
+    assert canvas.onion_skin_range() == 3
+
+
+def test_select_next_and_previous_entry_step_through_order(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.select_entry(0)
+
+    canvas.select_next_entry()
+    assert canvas.selected_entry_index() == 1
+
+    canvas.select_next_entry()
+    assert canvas.selected_entry_index() == 2
+
+    canvas.select_previous_entry()
+    assert canvas.selected_entry_index() == 1
+
+
+def test_select_next_entry_clamps_at_last_index(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.select_entry(4)
+    canvas.select_next_entry()
+    assert canvas.selected_entry_index() == 4  # clamped, no wraparound
+
+
+def test_select_previous_entry_clamps_at_first_index(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.select_entry(0)
+    canvas.select_previous_entry()
+    assert canvas.selected_entry_index() == 0  # clamped, no wraparound
+
+
+def test_select_next_entry_with_no_selection_selects_first(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.select_next_entry()
+    assert canvas.selected_entry_index() == 0

@@ -9,7 +9,7 @@ signal fires once a drag ends so the caller can refresh the preview/tree.
 """
 from typing import List, Optional
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                               QGraphicsView, QGraphicsScene, QGraphicsRectItem,
                               QGraphicsPixmapItem, QGraphicsItem, QStyle,
                               QCheckBox, QSpinBox)
@@ -26,6 +26,8 @@ _CHECKER_TILE = 8  # px per checker square, in scene units
 _CHECKER_LIGHT = QColor("#33374a")
 _CHECKER_DARK = QColor("#262a38")
 _SELECTION_COLOR = QColor("#ff9d3d")  # Godot-style orange selection outline
+_ONION_RED = QColor(220, 70, 70)     # tint for entries before the selected one
+_ONION_GREEN = QColor(80, 200, 120)  # tint for entries after the selected one
 _ARROW_KEYS = {
     Qt.Key.Key_Left: (-1, 0),
     Qt.Key.Key_Right: (1, 0),
@@ -65,6 +67,8 @@ class _MaterialPixmapItem(QGraphicsPixmapItem):
         self.entry_index = entry_index
         self.on_position_changed = None  # callback(entry_index, x, y), set by CanvasEditorWidget
         self.snap_fn = None  # callback(QPointF) -> QPointF, set by CanvasEditorWidget
+        self.onion_tint: Optional[QColor] = None  # set by CanvasEditorWidget for onion-skin frames
+        self.onion_alpha: float = 1.0
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
@@ -72,7 +76,16 @@ class _MaterialPixmapItem(QGraphicsPixmapItem):
     def paint(self, painter, option, widget=None):
         # Suppress Qt's default dashed selection rectangle; we draw our own outline.
         option.state &= ~QStyle.StateFlag.State_Selected
-        super().paint(painter, option, widget)
+        if self.onion_tint is not None:
+            painter.save()
+            painter.setOpacity(self.onion_alpha)
+            super().paint(painter, option, widget)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.onion_tint)
+            painter.drawRect(self.boundingRect())
+            painter.restore()
+        else:
+            super().paint(painter, option, widget)
         if self.isSelected():
             pen = QPen(_SELECTION_COLOR, 2)
             pen.setCosmetic(True)  # constant on-screen width regardless of zoom
@@ -218,6 +231,9 @@ class CanvasEditorWidget(QWidget):
         self._drag_dirty = False
         self._snap_enabled = False
         self._snap_size = 10
+        self._onion_enabled = False
+        self._onion_opacity = 0.35
+        self._onion_range = 1
 
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QBrush(QColor(_T.BG)))
@@ -239,6 +255,51 @@ class CanvasEditorWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        onion_bar = QHBoxLayout()
+        onion_bar.setContentsMargins(6, 4, 6, 4)
+        self.prev_frame_btn = QPushButton("◀ " + tr("Prev"))
+        self.prev_frame_btn.setToolTip("Select the previous frame entry")
+        self.prev_frame_btn.clicked.connect(self.select_previous_entry)
+        onion_bar.addWidget(self.prev_frame_btn)
+
+        self.next_frame_btn = QPushButton(tr("Next") + " ▶")
+        self.next_frame_btn.setToolTip("Select the next frame entry")
+        self.next_frame_btn.clicked.connect(self.select_next_entry)
+        onion_bar.addWidget(self.next_frame_btn)
+
+        onion_bar.addSpacing(12)
+
+        self.onion_checkbox = QCheckBox(tr("Onion Skin"))
+        self.onion_checkbox.setToolTip(
+            "Tint the frames before (red) and after (green) the selected one"
+        )
+        self.onion_checkbox.toggled.connect(self.set_onion_skin_enabled)
+        onion_bar.addWidget(self.onion_checkbox)
+
+        onion_bar.addWidget(QLabel(tr("Opacity:")))
+        self.onion_opacity_spinbox = QSpinBox()
+        self.onion_opacity_spinbox.setRange(5, 100)
+        self.onion_opacity_spinbox.setValue(int(round(self._onion_opacity * 100)))
+        self.onion_opacity_spinbox.setSuffix("%")
+        self.onion_opacity_spinbox.valueChanged.connect(
+            lambda v: self.set_onion_skin_opacity(v / 100.0)
+        )
+        onion_bar.addWidget(self.onion_opacity_spinbox)
+
+        onion_bar.addWidget(QLabel(tr("Range:")))
+        self.onion_range_spinbox = QSpinBox()
+        self.onion_range_spinbox.setRange(1, 10)
+        self.onion_range_spinbox.setValue(self._onion_range)
+        self.onion_range_spinbox.valueChanged.connect(self.set_onion_skin_range)
+        onion_bar.addWidget(self.onion_range_spinbox)
+
+        onion_bar.addStretch()
+        onion_widget = QWidget()
+        onion_widget.setLayout(onion_bar)
+        onion_widget.setStyleSheet(f"background-color: {_T.PANEL}; border-bottom: 1px solid {_T.BORDER};")
+        layout.addWidget(onion_widget)
+
         layout.addWidget(self.view, stretch=1)
 
         status_bar = QHBoxLayout()
@@ -343,6 +404,7 @@ class CanvasEditorWidget(QWidget):
             self._material_items.append(item)
         if previously_selected is not None:
             self.select_entry(previously_selected)
+        self._update_onion_skin()
 
     def _clear_material_items(self) -> None:
         for item in self._material_items:
@@ -370,6 +432,81 @@ class CanvasEditorWidget(QWidget):
     def _on_scene_selection_changed(self) -> None:
         idx = self.selected_entry_index()
         self.entry_selected.emit(idx if idx is not None else -1)
+        self._update_onion_skin()
+
+    # ── Onion skin ───────────────────────────────────────────────────────
+    def is_onion_skin_enabled(self) -> bool:
+        return self._onion_enabled
+
+    def set_onion_skin_enabled(self, enabled: bool) -> None:
+        self._onion_enabled = bool(enabled)
+        if self.onion_checkbox.isChecked() != self._onion_enabled:
+            self.onion_checkbox.setChecked(self._onion_enabled)
+        self._update_onion_skin()
+
+    def onion_skin_opacity(self) -> float:
+        return self._onion_opacity
+
+    def set_onion_skin_opacity(self, opacity: float) -> None:
+        self._onion_opacity = max(0.0, min(1.0, float(opacity)))
+        pct = int(round(self._onion_opacity * 100))
+        if self.onion_opacity_spinbox.value() != pct:
+            self.onion_opacity_spinbox.setValue(pct)
+        self._update_onion_skin()
+
+    def onion_skin_range(self) -> int:
+        return self._onion_range
+
+    def set_onion_skin_range(self, n: int) -> None:
+        self._onion_range = max(1, int(n))
+        if self.onion_range_spinbox.value() != self._onion_range:
+            self.onion_range_spinbox.setValue(self._onion_range)
+        self._update_onion_skin()
+
+    def _update_onion_skin(self) -> None:
+        """Tint entries within onion_skin_range() of the selected one: red
+        before it, green after — faded further out. No-op when disabled or
+        nothing is selected."""
+        selected_idx = self.selected_entry_index()
+        if not self._onion_enabled or selected_idx is None:
+            for item in self._material_items:
+                item.onion_tint = None
+            self.scene.update()
+            return
+        n = self._onion_range
+        for item in self._material_items:
+            delta = item.entry_index - selected_idx
+            if delta == 0:
+                item.onion_tint = None
+            elif -n <= delta < 0:
+                item.onion_tint = _ONION_RED
+                item.onion_alpha = self._onion_opacity * (1.0 - (abs(delta) - 1) / n)
+            elif 0 < delta <= n:
+                item.onion_tint = _ONION_GREEN
+                item.onion_alpha = self._onion_opacity * (1.0 - (delta - 1) / n)
+            else:
+                item.onion_tint = None
+        self.scene.update()
+
+    # ── Frame navigation (steps through FrameEntry order) ───────────────
+    def select_previous_entry(self) -> None:
+        self._step_selection(-1)
+
+    def select_next_entry(self) -> None:
+        self._step_selection(1)
+
+    def _step_selection(self, step: int) -> None:
+        if not self._material_items:
+            return
+        indices = sorted(item.entry_index for item in self._material_items)
+        current = self.selected_entry_index()
+        if current is None or current not in indices:
+            new_idx = indices[0] if step > 0 else indices[-1]
+        else:
+            pos = indices.index(current) + step
+            pos = max(0, min(len(indices) - 1, pos))
+            new_idx = indices[pos]
+        self.select_entry(new_idx)
 
     # ── Snap-to-grid ─────────────────────────────────────────────────────
     def is_snap_enabled(self) -> bool:
