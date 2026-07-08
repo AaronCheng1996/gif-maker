@@ -1,9 +1,12 @@
 import pytest
+from PIL import Image
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QPointF
 
 from src.widgets.canvas_editor import CanvasEditorWidget, MIN_ZOOM, MAX_ZOOM
+from src.core.image_loader import MaterialManager
+from src.core.composition_group import FrameEntry, SubGroupEntry
 
 
 @pytest.fixture(scope="module")
@@ -92,3 +95,60 @@ def test_coordinate_transform_scales_with_zoom(canvas):
 def test_mouse_scene_pos_changed_updates_coords_label(canvas):
     canvas.view.mouse_scene_pos_changed.emit(QPointF(12, 34))
     assert canvas.coords_label.text() == "x: 12, y: 34"
+
+
+@pytest.fixture()
+def material_manager():
+    mm = MaterialManager()
+    mm.add_material(Image.new("RGBA", (10, 20), (255, 0, 0, 255)), "red")
+    mm.add_material(Image.new("RGBA", (30, 5), (0, 255, 0, 255)), "green")
+    return mm
+
+
+def test_set_entries_renders_frame_entries_at_their_offsets(canvas, material_manager):
+    entries = [
+        FrameEntry(material_index=0, x=10, y=20),
+        FrameEntry(material_index=1, x=-5, y=0),
+    ]
+    canvas.set_entries(entries, material_manager)
+    assert len(canvas._material_items) == 2
+    assert canvas._material_items[0].pos().x() == 10
+    assert canvas._material_items[0].pos().y() == 20
+    assert canvas._material_items[1].pos().x() == -5
+    assert canvas._material_items[0].pixmap().size().width() == 10
+    assert canvas._material_items[0].pixmap().size().height() == 20
+
+
+def test_set_entries_skips_non_frame_entries(canvas, material_manager):
+    entries = [
+        FrameEntry(material_index=0, x=0, y=0),
+        SubGroupEntry(group_id=0),
+    ]
+    canvas.set_entries(entries, material_manager)
+    assert len(canvas._material_items) == 1
+    assert canvas._material_items[0].entry_index == 0
+
+
+def test_set_entries_clears_previous_items(canvas, material_manager):
+    canvas.set_entries([FrameEntry(material_index=0, x=0, y=0)], material_manager)
+    assert len(canvas._material_items) == 1
+    canvas.set_entries([], material_manager)
+    assert len(canvas._material_items) == 0
+    # Output rect must survive clearing material items.
+    assert canvas.output_rect_item in canvas.scene.items()
+
+
+def test_selecting_item_emits_entry_selected(canvas, material_manager, qapp):
+    entries = [FrameEntry(material_index=0, x=0, y=0), FrameEntry(material_index=1, x=5, y=5)]
+    canvas.set_entries(entries, material_manager)
+
+    received = []
+    canvas.entry_selected.connect(received.append)
+
+    canvas._material_items[1].setSelected(True)
+    assert received[-1] == 1
+    assert canvas.selected_entry_index() == 1
+
+    canvas.scene.clearSelection()
+    assert received[-1] == -1
+    assert canvas.selected_entry_index() is None

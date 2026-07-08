@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                               QGroupBox, QListWidget, QSpinBox, QCheckBox, QComboBox,
-                              QColorDialog, QMessageBox)
+                              QColorDialog, QMessageBox, QTabWidget)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
 
@@ -11,7 +11,7 @@ from PIL import Image
 
 from ..i18n import tr
 from ..core import FrameEntry, CompositionGroup
-from ..widgets import GroupCompositionWidget, PreviewWidget
+from ..widgets import GroupCompositionWidget, PreviewWidget, CanvasEditorWidget
 
 
 class ComposerPanelMixin:
@@ -30,8 +30,16 @@ class ComposerPanelMixin:
         self.group_composition_widget.set_get_selected_material_indices(self._get_selected_material_indices)
         self.group_composition_widget.current_group_changed.connect(self._on_current_group_changed)
         self.group_composition_widget.entries_changed.connect(self._on_group_entries_changed)
-        layout.addWidget(self.group_composition_widget, stretch=1)
+
+        self.canvas_editor = CanvasEditorWidget()
+
+        self.middle_view_tabs = QTabWidget()
+        self.middle_view_tabs.addTab(self.group_composition_widget, tr("🌳 Tree"))
+        self.middle_view_tabs.addTab(self.canvas_editor, tr("🖼 Canvas"))
+        layout.addWidget(self.middle_view_tabs, stretch=1)
         panel.setLayout(layout)
+
+        self._refresh_canvas()
         return panel
 
     def _on_current_group_changed(self, group_id: int):
@@ -40,6 +48,7 @@ class ComposerPanelMixin:
             self.auto_fit_output_size()
         self.update_preview()
         self._update_status_labels()
+        self._refresh_canvas()
 
     def _on_auto_size_toggled(self, state: int):
         """Enable/disable size spinboxes based on Auto checkbox; auto-fit immediately when enabled."""
@@ -51,8 +60,19 @@ class ComposerPanelMixin:
 
     def _on_group_entries_changed(self):
         self.update_preview()
+        self._refresh_canvas()
         if not self._undo_in_progress:
             self._undo_debounce.start(300)
+
+    def _refresh_canvas(self):
+        """Sync the Canvas tab with the current group's entries and output size."""
+        if not hasattr(self, 'canvas_editor'):
+            return
+        if hasattr(self, 'width_spinbox') and hasattr(self, 'height_spinbox'):
+            self.canvas_editor.set_output_size(self.width_spinbox.value(), self.height_spinbox.value())
+        group = self._get_current_group()
+        entries = group.entries if group else []
+        self.canvas_editor.set_entries(entries, self.material_manager)
 
     def create_right_panel(self) -> QWidget:
         panel = QWidget()
@@ -139,12 +159,14 @@ class ComposerPanelMixin:
         self.width_spinbox.setMinimum(1)
         self.width_spinbox.setMaximum(4096)
         self.width_spinbox.setValue(400)
+        self.width_spinbox.valueChanged.connect(self._refresh_canvas)
         size_layout.addWidget(self.width_spinbox)
         size_layout.addWidget(QLabel("×"))
         self.height_spinbox = QSpinBox()
         self.height_spinbox.setMinimum(1)
         self.height_spinbox.setMaximum(4096)
         self.height_spinbox.setValue(400)
+        self.height_spinbox.valueChanged.connect(self._refresh_canvas)
         size_layout.addWidget(self.height_spinbox)
         self.auto_size_checkbox = QCheckBox(tr("Auto"))
         self.auto_size_checkbox.setToolTip(

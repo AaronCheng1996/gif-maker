@@ -50,10 +50,11 @@
   - 先以獨立 widget + 單元測試（scene 內容、座標轉換）交付，尚不需要接入主視窗。
   > 完成於 2026-07-08：新增 `src/widgets/canvas_editor.py`（`CanvasEditorWidget` + 內部 `_CanvasGraphicsView`）。滾輪以游標為錨點縮放（`AnchorUnderMouse`，限制在 5%–2000%）、中鍵或按住空白鍵+左鍵拖曳平移（手動調整捲軸，不影響未來的框選/點選邏輯）、輸出邊界矩形以棋盤格 brush 填色代表透明背景、矩形外的 scene 背景維持深色主題底色、底部狀態列顯示縮放百分比與滑鼠場景座標。已加入 `src/widgets/__init__.py` 匯出，**尚未接入主視窗**（下一步 P1-2 才會顯示素材並接上 Composer）。新增 `tests/unit/widgets/test_canvas_editor.py`（10 個測試，涵蓋輸出尺寸/scene 內容、縮放與夾限、座標轉換往返與縮放比例、滑鼠座標標籤更新）。全專案 161→171 個測試全數通過。
 
-- [ ] **P1-2 素材渲染與點選**
+- [x] **P1-2 素材渲染與點選**
   - Canvas 顯示目前選取群組「目前幀」的所有 FrameEntry：每個 entry 渲染為 `QGraphicsPixmapItem`，位置對應其 x/y offset。
   - 點擊物件可選取，選取時顯示高亮外框（類似 Godot 的橘色選取框）；點空白處取消選取。
   - 將 CanvasWidget 以新分頁或 Composer 內的切換視圖接入主視窗（先求可用，佈局後續調整）。
+  > 完成於 2026-07-08：`CanvasEditorWidget.set_entries()` 只渲染 `FrameEntry`（略過 `SubGroupEntry`/`LayerBlockEntry`，符合此階段範圍），依 entry 順序疊 zValue。新增 `_MaterialPixmapItem`：可選取、選取時繪製橘色（`#ff9d3d`）外框並蓋掉 Qt 預設虛線選取框，外框寬度用 cosmetic pen 保持縮放時視覺粗細一致。點空白處取消選取沿用 Qt `QGraphicsScene` 內建行為，無需額外程式碼。已接入 `MainWindow`：`create_middle_panel` 改為 `QTabWidget`（🌳 Tree / 🖼 Canvas 分頁），新增 `_refresh_canvas()` 在群組切換、entries 變更、輸出寬高變更時同步 canvas。新增 4 個測試（渲染位置/尺寸、略過非 FrameEntry、清空重繪、選取事件發射 `entry_selected` signal），並以無頭方式驗證 `MainWindow` 端到端整合（新增 entry 後 canvas 同步、調整寬度 spinbox 後 canvas 輸出範圍同步）。171→175 個測試全數通過。與樹狀編輯器的**雙向同步**（canvas 選取 → 樹上跟隨）留給 P1-3。
 
 - [ ] **P1-3 拖曳移動與雙向同步**
   - 在 Canvas 上拖曳素材即時更新對應 entry 的 x/y offset。
@@ -101,3 +102,4 @@
 - 2026-07-08：完成 P0-2（README 與程式碼同步），161 個測試全數通過。
 - 2026-07-08：完成 P0-3（拆分 src/main.py），新增 src/main_window/ 7 個 mixin，main.py 2046→254 行，161 個測試全數通過。
 - 2026-07-08：完成 P1-1（CanvasWidget 骨架），新增 src/widgets/canvas_editor.py + 10 個單元測試，171 個測試全數通過。尚未接入主視窗。
+- 2026-07-08：完成 P1-2（素材渲染與點選），Canvas 接入 MainWindow（Tree/Canvas 分頁切換），175 個測試全數通過。

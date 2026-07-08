@@ -2,24 +2,27 @@
 
 CanvasEditorWidget hosts a zoomable/pannable QGraphicsView showing the GIF
 output bounds as a bordered rectangle with a transparency checkerboard fill.
-This is the P1-1 skeleton: it does not yet render material frames or accept
-selection (see P1-2 onward) — it only establishes the viewport, zoom/pan
-behavior, and the output-bounds rectangle.
+It renders each FrameEntry of the current group as a selectable pixmap item
+positioned at its x/y offset (P1-2). Selecting an item on the canvas does not
+yet sync back to the group tree editor — that lands in P1-3.
 """
-from typing import Optional
+from typing import List, Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                              QGraphicsView, QGraphicsScene, QGraphicsRectItem)
+                              QGraphicsView, QGraphicsScene, QGraphicsRectItem,
+                              QGraphicsPixmapItem, QGraphicsItem, QStyle)
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QPixmap
+from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QPixmap, QImage
 
 from .theme import AppTheme as _T
+from ..core import is_frame_entry
 
 MIN_ZOOM = 0.05
 MAX_ZOOM = 20.0
 _CHECKER_TILE = 8  # px per checker square, in scene units
 _CHECKER_LIGHT = QColor("#33374a")
 _CHECKER_DARK = QColor("#262a38")
+_SELECTION_COLOR = QColor("#ff9d3d")  # Godot-style orange selection outline
 
 
 def _make_checker_brush() -> QBrush:
@@ -32,6 +35,37 @@ def _make_checker_brush() -> QBrush:
     painter.fillRect(_CHECKER_TILE, _CHECKER_TILE, _CHECKER_TILE, _CHECKER_TILE, _CHECKER_DARK)
     painter.end()
     return QBrush(pixmap)
+
+
+def _pil_to_qpixmap(pil_image) -> QPixmap:
+    """Convert a PIL image to a QPixmap (RGBA)."""
+    if pil_image.mode != 'RGBA':
+        pil_image = pil_image.convert('RGBA')
+    data = pil_image.tobytes('raw', 'RGBA')
+    qimage = QImage(data, pil_image.width, pil_image.height, QImage.Format.Format_RGBA8888)
+    pixmap = QPixmap.fromImage(qimage)
+    del data  # keep alive until fromImage() has copied the pixel data
+    return pixmap
+
+
+class _MaterialPixmapItem(QGraphicsPixmapItem):
+    """A placed material frame; draws a Godot-style orange outline when selected."""
+
+    def __init__(self, pixmap: QPixmap, entry_index: int):
+        super().__init__(pixmap)
+        self.entry_index = entry_index
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+
+    def paint(self, painter, option, widget=None):
+        # Suppress Qt's default dashed selection rectangle; we draw our own outline.
+        option.state &= ~QStyle.StateFlag.State_Selected
+        super().paint(painter, option, widget)
+        if self.isSelected():
+            pen = QPen(_SELECTION_COLOR, 2)
+            pen.setCosmetic(True)  # constant on-screen width regardless of zoom
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.boundingRect())
 
 
 class _CanvasGraphicsView(QGraphicsView):
@@ -138,14 +172,18 @@ class _CanvasGraphicsView(QGraphicsView):
 class CanvasEditorWidget(QWidget):
     """Godot-style scene canvas: zoomable/pannable view of the GIF output bounds."""
 
+    entry_selected = pyqtSignal(int)  # entry index, or -1 when nothing is selected
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self._output_width = 400
         self._output_height = 400
+        self._material_items: List[_MaterialPixmapItem] = []
 
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QBrush(QColor(_T.BG)))
+        self.scene.selectionChanged.connect(self._on_scene_selection_changed)
 
         self.output_rect_item = QGraphicsRectItem()
         self.output_rect_item.setBrush(_make_checker_brush())
@@ -220,3 +258,38 @@ class CanvasEditorWidget(QWidget):
 
     def _on_mouse_scene_pos_changed(self, pos: QPointF) -> None:
         self.coords_label.setText(f"x: {pos.x():.0f}, y: {pos.y():.0f}")
+
+    # ── Material rendering & selection ──────────────────────────────────
+    def set_entries(self, entries: list, material_manager) -> None:
+        """Render the given group's entries as pixmap items positioned at their
+        x/y offsets. Only FrameEntry items are rendered — SubGroupEntry and
+        LayerBlockEntry are out of scope until later phases."""
+        self._clear_material_items()
+        for idx, entry in enumerate(entries):
+            if not is_frame_entry(entry):
+                continue
+            mat = material_manager.get_material(entry.material_index)
+            if not mat:
+                continue
+            img, _name = mat
+            item = _MaterialPixmapItem(_pil_to_qpixmap(img), idx)
+            item.setPos(entry.x, entry.y)
+            item.setZValue(idx)
+            self.scene.addItem(item)
+            self._material_items.append(item)
+
+    def _clear_material_items(self) -> None:
+        for item in self._material_items:
+            self.scene.removeItem(item)
+        self._material_items = []
+
+    def selected_entry_index(self) -> Optional[int]:
+        """Return the entry index of the currently selected material item, or None."""
+        selected = self.scene.selectedItems()
+        if not selected:
+            return None
+        return selected[0].entry_index
+
+    def _on_scene_selection_changed(self) -> None:
+        idx = self.selected_entry_index()
+        self.entry_selected.emit(idx if idx is not None else -1)
