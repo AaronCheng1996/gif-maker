@@ -78,9 +78,12 @@
   - 拖曳過程顯示半透明預覽。
   > 完成於 2026-07-08：新增 `MaterialListWidget`（`src/main_window/materials_panel_mixin.py`，繼承 `QListWidget`，覆寫 `mimeData()` 把被拖曳項目的素材索引編碼進自訂 MIME type `application/x-gifmaker-material-index`），素材庫列表 `setDragEnabled(True)`。半透明拖曳預覽直接沿用 Qt `QListWidget` 內建的拖曳縮圖機制，不需額外實作。Canvas 端：`_CanvasGraphicsView.setAcceptDrops(True)`，覆寫 `dragEnterEvent`/`dragMoveEvent`/`dropEvent`，辨識到自訂 MIME type 時解析素材索引、換算成 scene 座標，發出 `material_dropped(material_index, x, y)`（`CanvasEditorWidget` 轉發同名 signal）；`MainWindow._on_canvas_material_dropped` 接收後，以「放開點置中」（扣除素材寬高的一半）新增 `FrameEntry` 到目前群組並觸發 `refresh_timeline()`/`update_preview()`/`_refresh_canvas()`。新增 4 個測試（2 個 canvas 單元測試：drop 發出正確 signal、無效資料被忽略；1 個 MainWindow 整合測試：drop 後正確置中新增 entry 且 canvas 同步；並以無頭方式驗證 `materials_list.dragEnabled()`、`canvas view.acceptDrops()` 與實際 `mimeData()` 內容）。201→204 個測試全數通過。
 
-- [ ] **P1-7 時間軸整合**
+- [x] **P1-7 時間軸整合**
   - Canvas 下方加入 frame scrubber（時間軸滑桿）：顯示總幀數、目前幀，可拖動跳轉。
   - 播放時 Canvas 即時逐幀更新（重用 `preview_widget` 的播放邏輯或抽出共用計時器）。
+  > 完成於 2026-07-08：延續 P1-5 的設計（`entry_index` = GIF frame index），Canvas 下方新增 timeline bar：Play/Pause 按鈕、`QSlider`（範圍 0..entry 數−1，值＝目前選取的 entry index）、"Frame: i/N" 標籤。`_sync_timeline_ui()` 在 `set_entries()` 與選取變更時同步 slider/label（用 `_syncing_slider` 旗標避免 slider→選取→slider 的訊號迴圈）；拖動 slider 呼叫既有 `select_entry()`，因此自動與樹狀編輯器、Onion Skin 全部連動。播放邏輯：獨立的 `QTimer`（single-shot，逐幀重新排程，非重用 `PreviewWidget` 的計時器實例，因為兩者播放對象不同——`PreviewWidget` 播放的是 `gif_builder` 展開後的最終畫面，Canvas 播放的是「切換選取的 entry」），`_advance_playback()` 依序前進並在最後一個 entry 循環回起點（與手動導覽的 `select_next_entry()` 不同，手動導覽在邊界處會 clamp 不循環，播放時循環播放才符合 GIF loop 的直覺）；`_schedule_next_frame()` 讀取當前 entry 的 `duration_ms` 決定下一次計時器間隔。切換群組（`set_entries` 偵測到不同的 entries 清單）時自動停止播放，避免播放跑掉的舊資料。新增 9 個測試（slider 同步、拖動 slider 選取、play/pause 狀態切換與按鈕文字、播放時無選取自動選第一個、`_advance_playback` 依序前進並在尾端循環、依 entry duration 排程下一幀、切換群組時自動停止播放、無 entry 時 Play 按鈕停用）。204→212 個測試全數通過，並以無頭方式驗證 `MainWindow` 端到端：slider 拖動、播放、`_advance_playback` 皆正確運作。
+  >
+  > **Phase 1（Godot 風格 Canvas 編輯器）至此全部完成** — Canvas 已具備：縮放/平移、素材渲染與點選、拖曳移動、與樹狀編輯器雙向同步、方向鍵微調、Snap to grid、多選框選、對齊按鈕遵循選取、Onion Skin、素材庫拖放新增、時間軸 scrubber 與播放。
 
 ## Phase 2 — 進階功能
 
@@ -112,3 +115,4 @@
 - 2026-07-08：完成 P1-4（精確操作工具），方向鍵微調、Snap to grid、多選框選、對齊按鈕遵循選取，192 個測試全數通過。
 - 2026-07-08：完成 P1-5（Onion Skin 疊影），以 entry_index 作為 frame index 實作紅/綠疊色與上一個/下一個導覽，201 個測試全數通過。
 - 2026-07-08：完成 P1-6（素材庫拖放新增），從素材庫拖曳圖片到 Canvas 放開即新增置中的 FrameEntry，204 個測試全數通過。
+- 2026-07-08：完成 P1-7（時間軸整合），Canvas 加入 frame scrubber 與播放功能，212 個測試全數通過。**Phase 1 全部完成。**

@@ -461,3 +461,86 @@ def test_drop_with_invalid_material_index_is_ignored(canvas):
 
     assert received == []
     assert event.ignored is True
+
+
+def test_sync_timeline_ui_reflects_entry_count_and_selection(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    assert canvas.frame_slider.maximum() == 4
+    assert canvas.frame_label.text() == "Frame: 0/5"
+
+    canvas.select_entry(2)
+    assert canvas.frame_slider.value() == 2
+    assert canvas.frame_label.text() == "Frame: 3/5"
+
+
+def test_dragging_frame_slider_selects_matching_entry(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.frame_slider.setValue(3)
+    assert canvas.selected_entry_index() == 3
+
+
+def test_play_button_disabled_with_no_entries(canvas):
+    assert canvas.play_btn.isEnabled() is False
+
+
+def test_play_playback_selects_first_entry_and_toggles_button(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    assert canvas.is_playing() is False
+
+    canvas.play_playback()
+    assert canvas.is_playing() is True
+    assert canvas.play_btn.text() == "⏸"
+    assert canvas.selected_entry_index() == 0
+
+    canvas.pause_playback()
+    assert canvas.is_playing() is False
+    assert canvas.play_btn.text() == "▶"
+
+
+def test_toggle_playback_flips_state(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.toggle_playback()
+    assert canvas.is_playing() is True
+    canvas.toggle_playback()
+    assert canvas.is_playing() is False
+
+
+def test_advance_playback_steps_through_entries_and_wraps(canvas, material_manager):
+    _make_five_entry_scene(canvas, material_manager)
+    canvas.play_playback()  # selects entry 0
+
+    canvas._advance_playback()
+    assert canvas.selected_entry_index() == 1
+    canvas._advance_playback()
+    assert canvas.selected_entry_index() == 2
+    canvas._advance_playback()
+    assert canvas.selected_entry_index() == 3
+    canvas._advance_playback()
+    assert canvas.selected_entry_index() == 4
+    canvas._advance_playback()  # wraps back to the start, unlike select_next_entry()
+    assert canvas.selected_entry_index() == 0
+
+
+def test_schedule_next_frame_uses_entry_duration(canvas, material_manager):
+    entries = [
+        FrameEntry(material_index=0, x=0, y=0, duration_ms=250),
+        FrameEntry(material_index=0, x=0, y=0, duration_ms=80),
+    ]
+    canvas.set_entries(entries, material_manager)
+    canvas.select_entry(0)
+    canvas._schedule_next_frame()
+    assert canvas._play_timer.interval() == 250
+
+    canvas.select_entry(1)
+    canvas._schedule_next_frame()
+    assert canvas._play_timer.interval() == 80
+
+
+def test_switching_groups_stops_playback(canvas, material_manager):
+    entries_a = _make_five_entry_scene(canvas, material_manager)
+    canvas.play_playback()
+    assert canvas.is_playing() is True
+
+    entries_b = [FrameEntry(material_index=0, x=0, y=0)]
+    canvas.set_entries(entries_b, material_manager)
+    assert canvas.is_playing() is False

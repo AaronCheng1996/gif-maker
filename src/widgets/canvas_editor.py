@@ -12,8 +12,8 @@ from typing import List, Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                               QGraphicsView, QGraphicsScene, QGraphicsRectItem,
                               QGraphicsPixmapItem, QGraphicsItem, QStyle,
-                              QCheckBox, QSpinBox)
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
+                              QCheckBox, QSpinBox, QSlider)
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QTimer
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QPixmap, QImage
 
 from .theme import AppTheme as _T
@@ -265,6 +265,11 @@ class CanvasEditorWidget(QWidget):
         self._onion_enabled = False
         self._onion_opacity = 0.35
         self._onion_range = 1
+        self._playing = False
+        self._syncing_slider = False
+        self._play_timer = QTimer(self)
+        self._play_timer.setSingleShot(True)
+        self._play_timer.timeout.connect(self._advance_playback)
 
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QBrush(QColor(_T.BG)))
@@ -334,6 +339,29 @@ class CanvasEditorWidget(QWidget):
 
         layout.addWidget(self.view, stretch=1)
 
+        timeline_bar = QHBoxLayout()
+        timeline_bar.setContentsMargins(6, 4, 6, 4)
+        self.play_btn = QPushButton("▶")
+        self.play_btn.setToolTip("Play/pause — steps through FrameEntry order using each entry's duration")
+        self.play_btn.setFixedWidth(32)
+        self.play_btn.clicked.connect(self.toggle_playback)
+        timeline_bar.addWidget(self.play_btn)
+
+        self.frame_slider = QSlider(Qt.Orientation.Horizontal)
+        self.frame_slider.setMinimum(0)
+        self.frame_slider.setMaximum(0)
+        self.frame_slider.valueChanged.connect(self._on_frame_slider_changed)
+        timeline_bar.addWidget(self.frame_slider, stretch=1)
+
+        self.frame_label = QLabel("Frame: 0/0")
+        self.frame_label.setStyleSheet(f"color: {_T.TEXT_DIM}; font-size: 11px;")
+        timeline_bar.addWidget(self.frame_label)
+
+        timeline_widget = QWidget()
+        timeline_widget.setLayout(timeline_bar)
+        timeline_widget.setStyleSheet(f"background-color: {_T.PANEL}; border-top: 1px solid {_T.BORDER};")
+        layout.addWidget(timeline_widget)
+
         status_bar = QHBoxLayout()
         status_bar.setContentsMargins(6, 2, 6, 2)
         self.zoom_label = QLabel("100%")
@@ -360,6 +388,8 @@ class CanvasEditorWidget(QWidget):
         status_widget.setLayout(status_bar)
         status_widget.setStyleSheet(f"background-color: {_T.PANEL}; border-top: 1px solid {_T.BORDER};")
         layout.addWidget(status_widget)
+
+        self._sync_timeline_ui()
 
     # ── Output bounds ────────────────────────────────────────────────────
     def set_output_size(self, width: int, height: int) -> None:
@@ -417,6 +447,8 @@ class CanvasEditorWidget(QWidget):
         # means a different group, so any prior index would be coincidental.
         same_group = entries is self._entries
         previously_selected = self.selected_entry_index() if same_group else None
+        if not same_group:
+            self.pause_playback()
         self._entries = entries
         self._drag_dirty = False
         self._clear_material_items()
@@ -437,6 +469,7 @@ class CanvasEditorWidget(QWidget):
         if previously_selected is not None:
             self.select_entry(previously_selected)
         self._update_onion_skin()
+        self._sync_timeline_ui()
 
     def _clear_material_items(self) -> None:
         for item in self._material_items:
@@ -465,6 +498,7 @@ class CanvasEditorWidget(QWidget):
         idx = self.selected_entry_index()
         self.entry_selected.emit(idx if idx is not None else -1)
         self._update_onion_skin()
+        self._sync_timeline_ui()
 
     # ── Onion skin ───────────────────────────────────────────────────────
     def is_onion_skin_enabled(self) -> bool:
@@ -539,6 +573,68 @@ class CanvasEditorWidget(QWidget):
             pos = max(0, min(len(indices) - 1, pos))
             new_idx = indices[pos]
         self.select_entry(new_idx)
+
+    # ── Frame scrubber & playback ────────────────────────────────────────
+    def _sync_timeline_ui(self) -> None:
+        """Keep the frame slider/label in step with the rendered entries and selection."""
+        count = len(self._material_items)
+        idx = self.selected_entry_index()
+        self._syncing_slider = True
+        try:
+            self.frame_slider.setMaximum(max(0, count - 1))
+            self.frame_slider.setValue(idx if idx is not None else 0)
+        finally:
+            self._syncing_slider = False
+        self.play_btn.setEnabled(count > 0)
+        current_display = (idx + 1) if idx is not None else 0
+        self.frame_label.setText(f"Frame: {current_display}/{count}")
+
+    def _on_frame_slider_changed(self, value: int) -> None:
+        if self._syncing_slider:
+            return
+        self.select_entry(value)
+
+    def is_playing(self) -> bool:
+        return self._playing
+
+    def toggle_playback(self) -> None:
+        self.pause_playback() if self._playing else self.play_playback()
+
+    def play_playback(self) -> None:
+        if not self._material_items:
+            return
+        self._playing = True
+        self.play_btn.setText("⏸")
+        if self.selected_entry_index() is None:
+            self.select_entry(min(item.entry_index for item in self._material_items))
+        self._schedule_next_frame()
+
+    def pause_playback(self) -> None:
+        self._playing = False
+        self.play_btn.setText("▶")
+        self._play_timer.stop()
+
+    def _schedule_next_frame(self) -> None:
+        duration = 100
+        idx = self.selected_entry_index()
+        if self._entries is not None and idx is not None and 0 <= idx < len(self._entries):
+            entry = self._entries[idx]
+            if is_frame_entry(entry) and entry.duration_ms:
+                duration = entry.duration_ms
+        self._play_timer.start(duration)
+
+    def _advance_playback(self) -> None:
+        if not self._playing or not self._material_items:
+            self.pause_playback()
+            return
+        indices = sorted(item.entry_index for item in self._material_items)
+        current = self.selected_entry_index()
+        if current is None or current not in indices:
+            new_idx = indices[0]
+        else:
+            new_idx = indices[(indices.index(current) + 1) % len(indices)]
+        self.select_entry(new_idx)
+        self._schedule_next_frame()
 
     # ── Snap-to-grid ─────────────────────────────────────────────────────
     def is_snap_enabled(self) -> bool:
