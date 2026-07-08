@@ -1,4 +1,5 @@
 from .theme import AppTheme
+from .canvas_editor import CanvasEditorWidget
 from .preview_widget import PreviewWidget
 from .preview_page_widget import PreviewPageWidget
 from .tile_editor import TileEditorWidget, TileSplitterPage
@@ -14,6 +15,7 @@ from .settings_dialog import SettingsDialog
 
 __all__ = [
     'AppTheme',
+    'CanvasEditorWidget',
     'PreviewWidget',
     'PreviewPageWidget',
     'GroupCompositionWidget',

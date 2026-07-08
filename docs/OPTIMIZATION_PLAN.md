@@ -43,11 +43,12 @@
 
 ## Phase 1 — Godot 風格 Canvas 編輯器（核心方向）
 
-- [ ] **P1-1 CanvasWidget 骨架**
+- [x] **P1-1 CanvasWidget 骨架**
   - 新增 `src/widgets/canvas_editor.py`：基於 `QGraphicsView`/`QGraphicsScene`。
   - 功能：滾輪縮放（以游標為中心）、中鍵或空白鍵+拖曳平移、透明棋盤格背景、一個代表 GIF 輸出範圍的邊框矩形（尺寸取自目前群組輸出設定）。
   - 左下角顯示目前縮放倍率與滑鼠座標（類似 Godot 狀態列）。
   - 先以獨立 widget + 單元測試（scene 內容、座標轉換）交付，尚不需要接入主視窗。
+  > 完成於 2026-07-08：新增 `src/widgets/canvas_editor.py`（`CanvasEditorWidget` + 內部 `_CanvasGraphicsView`）。滾輪以游標為錨點縮放（`AnchorUnderMouse`，限制在 5%–2000%）、中鍵或按住空白鍵+左鍵拖曳平移（手動調整捲軸，不影響未來的框選/點選邏輯）、輸出邊界矩形以棋盤格 brush 填色代表透明背景、矩形外的 scene 背景維持深色主題底色、底部狀態列顯示縮放百分比與滑鼠場景座標。已加入 `src/widgets/__init__.py` 匯出，**尚未接入主視窗**（下一步 P1-2 才會顯示素材並接上 Composer）。新增 `tests/unit/widgets/test_canvas_editor.py`（10 個測試，涵蓋輸出尺寸/scene 內容、縮放與夾限、座標轉換往返與縮放比例、滑鼠座標標籤更新）。全專案 161→171 個測試全數通過。
 
 - [ ] **P1-2 素材渲染與點選**
   - Canvas 顯示目前選取群組「目前幀」的所有 FrameEntry：每個 entry 渲染為 `QGraphicsPixmapItem`，位置對應其 x/y offset。
@@ -99,3 +100,4 @@
 - 2026-07-08：完成 P0-1（開發環境與測試健壯性），161 個測試全數通過。
 - 2026-07-08：完成 P0-2（README 與程式碼同步），161 個測試全數通過。
 - 2026-07-08：完成 P0-3（拆分 src/main.py），新增 src/main_window/ 7 個 mixin，main.py 2046→254 行，161 個測試全數通過。
+- 2026-07-08：完成 P1-1（CanvasWidget 骨架），新增 src/widgets/canvas_editor.py + 10 個單元測試，171 個測試全數通過。尚未接入主視窗。
