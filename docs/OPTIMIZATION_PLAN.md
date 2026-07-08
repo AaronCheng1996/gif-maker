@@ -30,10 +30,11 @@
   - 安裝 `requirements.txt` + `requirements-dev.txt`，執行全部測試（約 161 個），修復任何因環境造成的失敗。
   > 完成於 2026-07-08：`pytest.ini` 移除 `--cov` 選項改為純 `-q`，README.md / README.zh.md 新增「Testing」章節說明基本測試與可選的 coverage 指令；乾淨環境安裝相依套件後 `python -m pytest` 161 個測試全數通過。
 
-- [ ] **P0-2 README 與程式碼同步**
+- [x] **P0-2 README 與程式碼同步**
   - `README.md` / `README.zh.md` 的 Project Structure 缺少後期新增模組：`video_to_gif.py`、`clip_to_gif_widget.py`、`video_to_gif_widget.py`、`i18n.py`、`settings.py`、`settings_dialog.py`、`layer_system.py`、`sequence_editor.py`、`utils.py`。
   - 補上 Video to GIF、Clip to GIF、i18n（繁體中文）、Settings 的功能說明。
   - 說明外部工具依賴：FFmpeg（video/clip to gif）、gifsicle（optimizer），以及未安裝時的行為。
+  > 完成於 2026-07-08：README.md / README.zh.md 補齊 Project Structure 缺漏模組（並核對實際路徑，如 `video_to_gif.py` 實為 `core/video_to_gif.py`），新增 Video to GIF、Clip to GIF、Settings and Language 功能說明段落，並新增「External Tool Dependencies」章節說明 FFmpeg/gifsicle 偵測方式與未安裝時的實際行為（附程式碼位置佐證）。161 個測試全數通過。
 
 - [ ] **P0-3 拆分 `src/main.py`（2046 行）**
   - 將各分頁的組裝邏輯抽出（例如 `src/widgets/composer_tab.py` 或 `src/app/` 模組），`main.py` 只保留應用程式進入點與 MainWindow 骨架。
@@ -95,3 +96,4 @@
 （每次執行後由排程任務在此追加一行：日期、完成項目、commit hash）
 
 - 2026-07-08：完成 P0-1（開發環境與測試健壯性），161 個測試全數通過。
+- 2026-07-08：完成 P0-2（README 與程式碼同步），161 個測試全數通過。

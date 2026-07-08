@@ -95,6 +95,44 @@ All operations apply to the currently selected group.
 - Reduce GIF file size with lossy compression (requires gifsicle)
 - Adjustable lossy value (0-200); higher value = smaller file at lower quality
 - Batch optimize multiple GIF files in one step
+- If gifsicle is not on PATH, optimization silently falls back to a Pillow-based
+  re-save (palette quantization + `optimize=True`) — the feature keeps working,
+  producing a smaller file, just without gifsicle's true lossy compression
+
+### Video to GIF
+
+- Convert video and animated-image files (mp4, mov, avi, mkv, webm, flv, wmv, m4v, ts, 3gp, mts, webp, gif, apng) to optimized GIFs
+- Batch conversion: add multiple files, convert one or all
+- Adjustable output FPS, width, start/end trim range, palette size (32-256 colors), and dithering algorithm (bayer, floyd_steinberg, sierra2, none)
+- Two-pass ffmpeg palette-generation pipeline for high-quality output, with an optional gifsicle lossy post-pass
+- Side-by-side source/output live preview with debounced re-encoding as settings change
+- Requires ffmpeg — see "External Tool Dependencies" below
+
+### Clip to GIF
+
+- Single-video workflow: open one file, drag a dual-handle range slider to pick the clip, export
+- Visual time-range slider with tick marks, scrub bar, and a static frame preview synced to the scrub position
+- "Find Smart Loop" analyzes candidate start/end frame pairs (pixel, edge, and motion-delta similarity) to automatically trim the clip into a seamless loop
+- Manual, cancellable preview generation (does not auto-regenerate on every settings change)
+- Same FPS / width / color / dither / gifsicle-lossy options as Video to GIF
+- Requires ffmpeg — see "External Tool Dependencies" below
+
+### Settings and Language
+
+- Settings dialog (menu bar → Settings) currently exposes interface language selection
+- Supports English and Traditional Chinese (繁體中文); the choice is persisted to `~/.gif_maker/settings.json` and reloaded on next launch
+- Changing the language shows a prompt that a restart is needed to fully apply the change
+
+---
+
+## External Tool Dependencies
+
+Some features shell out to external command-line tools that are **not** bundled with the app and are **not** listed in `requirements.txt` (they are not Python packages):
+
+- **FFmpeg** — required for the Video to GIF and Clip to GIF tools (video decoding, frame extraction, and the two-pass palette GIF encoder). Detected via `shutil.which("ffmpeg")`, with a Windows-only fallback that also reads the User/System `PATH` from the registry so a `winget install` done after app launch is picked up without an app restart (`src/core/video_to_gif.py`: `find_ffmpeg()`, `is_ffmpeg_available()`).
+  - **If ffmpeg is missing:** both tool tabs detect this at startup and show a red status hint ("ffmpeg not found — conversion unavailable") with a "How to Install FFmpeg…" button (platform-specific instructions: winget on Windows, Homebrew on macOS, apt/dnf/pacman on Linux) and a "Refresh Detection" button. The Convert/Export/Generate Preview/Find Smart Loop buttons are disabled until ffmpeg is detected. No crash occurs; the rest of the app is unaffected.
+- **gifsicle** — optional, used by the GIF Optimizer for true lossy compression, and optionally as a post-pass lossy step in Video to GIF / Clip to GIF. Detected via `shutil.which("gifsicle")` (`src/core/gif_optimizer.py`: `is_gifsicle_available()`).
+  - **If gifsicle is missing:** the GIF Optimizer automatically falls back to a Pillow-based re-save (adaptive palette quantization + `optimize=True`) instead of failing — smaller output than the original, but not as small as true gifsicle lossy compression (`src/core/gif_optimizer.py`: `optimize_gif_lossy()`). In Video to GIF / Clip to GIF, the optional gifsicle post-pass is simply skipped (`if lossy > 0 and shutil.which("gifsicle")`) and the ffmpeg-only GIF is kept.
 
 ---
 
@@ -146,14 +184,20 @@ python -m pytest --cov=src --cov-report=term-missing
 ```
 src/
   main.py                       Application entry point and main window
+  i18n.py                       Minimal i18n module (English / Traditional Chinese), tr()
+  settings.py                   Persistent app settings, stored as JSON in ~/.gif_maker/settings.json
   core/
+    utils.py                    Small PIL helpers: ensure_rgba, resize_image, create_background, paste_center, validate_image_file
     image_loader.py             Image loading, GIF extraction, tile splitting
     material_group.py           MaterialGroup (legacy animation clip)
     composition_group.py        CompositionGroup, FrameEntry, SubGroupEntry, LayerBlockEntry
     group_manager.py            Collection of CompositionGroups
+    sequence_editor.py          SequenceEditor / Frame — simple ordered frame sequence with per-frame duration
+    layer_system.py             Layer / LayeredFrame / LayerCompositor — per-layer position, crop, scale, opacity
     layer_timeline.py           LayerTimelineEditor (multi-track layer model)
     gif_builder.py              GIF composition and rendering
-    gif_optimizer.py            Lossy GIF compression via gifsicle
+    gif_optimizer.py            Lossy GIF compression via gifsicle (falls back to Pillow re-save if gifsicle is absent)
+    video_to_gif.py             FFmpeg-based video/animated-image → GIF conversion, ffmpeg detection & install-instructions helper
     template_manager.py         Template serialization and application
     batch_processor.py          Batch processing pipeline
   widgets/
@@ -164,6 +208,9 @@ src/
     tile_editor.py              Sprite sheet splitting tool
     batch_processor_widget.py   Batch processor UI
     gif_optimizer_widget.py     GIF optimizer UI
+    video_to_gif_widget.py      Video to GIF tool UI (multi-file batch conversion)
+    clip_to_gif_widget.py       Clip to GIF tool UI (single-video visual range selector, Smart Loop)
+    settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog
     group_selector_dialog.py    Group picker dialog
     material_selector_dialog.py Material picker dialog

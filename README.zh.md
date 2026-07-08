@@ -96,6 +96,42 @@ GIF 匯出
 - 使用有損壓縮縮小 GIF 檔案大小（需要 gifsicle）
 - 可調整有損值（0-200）；數值越高，檔案越小，品質越低
 - 一次批次最佳化多個 GIF 檔案
+- 若系統找不到 gifsicle，最佳化功能會自動改用 Pillow 重新儲存（調色盤量化 + `optimize=True`）作為替代方案 —— 功能仍可運作並縮小檔案，只是壓縮效果不如 gifsicle 的真正有損壓縮
+
+### 影片轉 GIF（Video to GIF）
+
+- 將影片與動態圖片檔案（mp4、mov、avi、mkv、webm、flv、wmv、m4v、ts、3gp、mts、webp、gif、apng）轉換為最佳化的 GIF
+- 支援批次轉換：加入多個檔案後可單獨或一次全部轉換
+- 可調整輸出 FPS、寬度、起訖裁切時間、調色盤大小（32-256 色）與抖色演算法（bayer、floyd_steinberg、sierra2、none）
+- 採用兩階段 ffmpeg 調色盤產生流程以確保輸出品質，並可選擇加入 gifsicle 有損壓縮後製
+- 來源與輸出並排即時預覽，設定變更後會延遲（debounce）自動重新編碼預覽
+- 需要 ffmpeg —— 詳見下方「外部工具相依性」
+
+### 剪輯轉 GIF（Clip to GIF）
+
+- 單一影片工作流程：開啟一支影片，拖曳雙滑塊時間軸選取欲擷取的片段後匯出
+- 視覺化時間範圍滑桿（含刻度標記）、拖曳式時間軸與即時同步的靜態影格預覽
+- 「尋找智慧循環」（Find Smart Loop）會分析候選的起訖幀組合（比對像素、邊緣與動態差異相似度），自動修剪片段以產生無縫循環動畫
+- 手動觸發、可取消的預覽產生流程（不會隨每次設定變更自動重新產生）
+- 與影片轉 GIF 相同的 FPS／寬度／色彩／抖色／gifsicle 有損壓縮選項
+- 需要 ffmpeg —— 詳見下方「外部工具相依性」
+
+### 設定與語言
+
+- 設定對話框（選單列 → 設定）目前提供介面語言選擇
+- 支援英文與繁體中文；選擇會儲存於 `~/.gif_maker/settings.json`，下次啟動時自動套用
+- 變更語言後會提示需要重新啟動才能完整套用變更
+
+---
+
+## 外部工具相依性
+
+部分功能會呼叫外部命令列工具，這些工具**未**隨應用程式一起打包，也**未**列在 `requirements.txt` 中（因為它們不是 Python 套件）：
+
+- **FFmpeg** —— 「影片轉 GIF」與「剪輯轉 GIF」功能所必需（用於影片解碼、影格擷取，以及兩階段調色盤 GIF 編碼）。程式透過 `shutil.which("ffmpeg")` 偵測，並在 Windows 上額外讀取登錄檔中的使用者／系統 `PATH`，因此即使在程式啟動後才透過 winget 安裝 ffmpeg，也能被偵測到而不需重啟（`src/core/video_to_gif.py`：`find_ffmpeg()`、`is_ffmpeg_available()`）。
+  - **若未安裝 ffmpeg：** 兩個工具分頁會在啟動時偵測到，並顯示紅色提示（「ffmpeg not found — conversion unavailable」），附帶「How to Install FFmpeg…」按鈕（依平台顯示對應安裝方式：Windows 用 winget、macOS 用 Homebrew、Linux 用 apt/dnf/pacman）與「Refresh Detection」按鈕。轉換／匯出／產生預覽／尋找智慧循環等按鈕會保持停用直到偵測到 ffmpeg 為止。不會造成程式崩潰，其餘功能不受影響。
+- **gifsicle** —— 非必要相依套件，供 GIF 最佳化器進行真正的有損壓縮，也可選擇作為「影片轉 GIF」／「剪輯轉 GIF」的後製有損壓縮步驟。程式透過 `shutil.which("gifsicle")` 偵測（`src/core/gif_optimizer.py`：`is_gifsicle_available()`）。
+  - **若未安裝 gifsicle：** GIF 最佳化器會自動改用 Pillow 重新儲存（自適應調色盤量化 + `optimize=True`），而非直接失敗 —— 檔案仍會比原檔小，但壓縮效果不如真正的 gifsicle 有損壓縮（`src/core/gif_optimizer.py`：`optimize_gif_lossy()`）。在「影片轉 GIF」／「剪輯轉 GIF」中，可選的 gifsicle 後製步驟會直接被略過（`if lossy > 0 and shutil.which("gifsicle")`），僅保留 ffmpeg 產生的 GIF。
 
 ---
 
@@ -147,14 +183,20 @@ python -m pytest --cov=src --cov-report=term-missing
 ```
 src/
   main.py                       應用程式進入點與主視窗
+  i18n.py                       輕量 i18n 模組（英文／繁體中文），提供 tr()
+  settings.py                   持久化應用程式設定，以 JSON 儲存於 ~/.gif_maker/settings.json
   core/
+    utils.py                    PIL 輔助函式：ensure_rgba、resize_image、create_background、paste_center、validate_image_file
     image_loader.py             圖片載入、GIF 解幀、切割工具
     material_group.py           MaterialGroup（舊版動畫片段）
     composition_group.py        CompositionGroup 及各 Entry 型別
     group_manager.py            CompositionGroup 集合管理
+    sequence_editor.py          SequenceEditor／Frame —— 簡單的有序影格序列，各幀可設定獨立持續時間
+    layer_system.py             Layer／LayeredFrame／LayerCompositor —— 每個圖層的位置、裁切、縮放、透明度
     layer_timeline.py           多軌圖層時間軸模型
     gif_builder.py              GIF 合成與渲染
-    gif_optimizer.py            gifsicle 有損 GIF 壓縮
+    gif_optimizer.py            gifsicle 有損 GIF 壓縮（若找不到 gifsicle 會改用 Pillow 重新儲存）
+    video_to_gif.py             以 ffmpeg 進行影片／動態圖片轉 GIF、ffmpeg 偵測與安裝說明輔助函式
     template_manager.py         範本序列化與套用
     batch_processor.py          批次處理流程
   widgets/
@@ -165,6 +207,9 @@ src/
     tile_editor.py              精靈圖切割工具
     batch_processor_widget.py   批次處理介面
     gif_optimizer_widget.py     GIF 最佳化介面
+    video_to_gif_widget.py      影片轉 GIF 工具介面（多檔批次轉換）
+    clip_to_gif_widget.py       剪輯轉 GIF 工具介面（單一影片視覺化範圍選取、智慧循環）
+    settings_dialog.py          設定對話框（語言選擇）
     group_editor_dialog.py      群組建立/編輯對話框
     group_selector_dialog.py    群組選取對話框
     material_selector_dialog.py 素材選取對話框
