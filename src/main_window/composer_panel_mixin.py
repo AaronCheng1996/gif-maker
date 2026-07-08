@@ -341,18 +341,29 @@ class ComposerPanelMixin:
         return self.group_manager.get_group(self.current_group_id)
 
     def _align_current_group_entries(self, apply_fn) -> int:
-        """Apply apply_fn(entry, mat_size) to every FrameEntry in the current group.
-        Returns the number of entries modified."""
+        """Apply apply_fn(entry, mat_size) to FrameEntry items in the current group.
+
+        If one or more items are selected on the Canvas tab, only those are
+        aligned; otherwise every FrameEntry in the group is aligned (unchanged
+        default behavior)."""
         group = self._get_current_group()
         if group is None:
             return 0
+        selected_indices = None
+        if hasattr(self, 'canvas_editor'):
+            indices = self.canvas_editor.selected_entry_indices()
+            if indices:
+                selected_indices = set(indices)
         count = 0
-        for entry in group.entries:
-            if isinstance(entry, FrameEntry):
-                mat = self.material_manager.get_material(entry.material_index)
-                if mat:
-                    apply_fn(entry, mat[0].size)
-                    count += 1
+        for idx, entry in enumerate(group.entries):
+            if not isinstance(entry, FrameEntry):
+                continue
+            if selected_indices is not None and idx not in selected_indices:
+                continue
+            mat = self.material_manager.get_material(entry.material_index)
+            if mat:
+                apply_fn(entry, mat[0].size)
+                count += 1
         return count
 
     def get_all_materials_max_size(self) -> Tuple[int, int]:
@@ -392,7 +403,7 @@ class ComposerPanelMixin:
         if count == 0:
             self._status("No materials in group to align")
             return
-        self.refresh_timeline(); self.update_preview()
+        self.refresh_timeline(); self.update_preview(); self._refresh_canvas()
         self._status(f"Aligned {count} frame(s) to left")
 
     def align_all_center_horizontal(self):
@@ -401,7 +412,7 @@ class ComposerPanelMixin:
         if count == 0:
             self._status("No materials in group to align")
             return
-        self.refresh_timeline(); self.update_preview()
+        self.refresh_timeline(); self.update_preview(); self._refresh_canvas()
         self._status(f"Centered {count} frame(s) horizontally")
 
     def align_all_right(self):
@@ -410,7 +421,7 @@ class ComposerPanelMixin:
         if count == 0:
             self._status("No materials in group to align")
             return
-        self.refresh_timeline(); self.update_preview()
+        self.refresh_timeline(); self.update_preview(); self._refresh_canvas()
         self._status(f"Aligned {count} frame(s) to right")
 
     def align_all_top(self):
@@ -418,7 +429,7 @@ class ComposerPanelMixin:
         if count == 0:
             self._status("No materials in group to align")
             return
-        self.refresh_timeline(); self.update_preview()
+        self.refresh_timeline(); self.update_preview(); self._refresh_canvas()
         self._status(f"Aligned {count} frame(s) to top")
 
     def align_all_middle_vertical(self):
@@ -427,7 +438,7 @@ class ComposerPanelMixin:
         if count == 0:
             self._status("No materials in group to align")
             return
-        self.refresh_timeline(); self.update_preview()
+        self.refresh_timeline(); self.update_preview(); self._refresh_canvas()
         self._status(f"Centered {count} frame(s) vertically")
 
     def align_all_bottom(self):
@@ -436,7 +447,7 @@ class ComposerPanelMixin:
         if count == 0:
             self._status("No materials in group to align")
             return
-        self.refresh_timeline(); self.update_preview()
+        self.refresh_timeline(); self.update_preview(); self._refresh_canvas()
         self._status(f"Aligned {count} frame(s) to bottom")
 
     def refresh_timeline(self):

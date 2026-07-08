@@ -48,6 +48,8 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "🔧 GIF Optimizer":                   "🔧 GIF 最佳化",
         "🎥 Video to GIF":                    "🎥 影片轉 GIF",
         "🎞️ Clip to GIF":                     "🎞️ 剪輯轉 GIF",
+        "🌳 Tree":                            "🌳 樹狀圖",
+        "🖼 Canvas":                          "🖼 畫布",
 
         # ── Material Library panel ────────────────────────────────────────────
         "Material Library":                  "素材庫",
@@ -106,6 +108,9 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "⬇ Bottom":                          "⬇ 下對齊",
         "🔄 Preview":                        "🔄 預覽",
         "💾 Export GIF":                     "💾 匯出 GIF",
+
+        # ── Canvas tab ────────────────────────────────────────────────────────
+        "Snap":                              "吸附",
 
         # ── Status bar ────────────────────────────────────────────────────────
         "Materials: 0":                      "素材：0",

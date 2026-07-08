@@ -11,12 +11,14 @@ from typing import List, Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QGraphicsView, QGraphicsScene, QGraphicsRectItem,
-                              QGraphicsPixmapItem, QGraphicsItem, QStyle)
+                              QGraphicsPixmapItem, QGraphicsItem, QStyle,
+                              QCheckBox, QSpinBox)
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QPixmap, QImage
 
 from .theme import AppTheme as _T
 from ..core import is_frame_entry
+from ..i18n import tr
 
 MIN_ZOOM = 0.05
 MAX_ZOOM = 20.0
@@ -24,6 +26,12 @@ _CHECKER_TILE = 8  # px per checker square, in scene units
 _CHECKER_LIGHT = QColor("#33374a")
 _CHECKER_DARK = QColor("#262a38")
 _SELECTION_COLOR = QColor("#ff9d3d")  # Godot-style orange selection outline
+_ARROW_KEYS = {
+    Qt.Key.Key_Left: (-1, 0),
+    Qt.Key.Key_Right: (1, 0),
+    Qt.Key.Key_Up: (0, -1),
+    Qt.Key.Key_Down: (0, 1),
+}
 
 
 def _make_checker_brush() -> QBrush:
@@ -56,6 +64,7 @@ class _MaterialPixmapItem(QGraphicsPixmapItem):
         super().__init__(pixmap)
         self.entry_index = entry_index
         self.on_position_changed = None  # callback(entry_index, x, y), set by CanvasEditorWidget
+        self.snap_fn = None  # callback(QPointF) -> QPointF, set by CanvasEditorWidget
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
@@ -72,6 +81,8 @@ class _MaterialPixmapItem(QGraphicsPixmapItem):
             painter.drawRect(self.boundingRect())
 
     def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.snap_fn:
+            return self.snap_fn(value)
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self.on_position_changed:
             self.on_position_changed(self.entry_index, value.x(), value.y())
         return super().itemChange(change, value)
@@ -91,7 +102,9 @@ class _CanvasGraphicsView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
-        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        # RubberBandDrag only activates when the press lands on empty scene
+        # space; clicking a movable/selectable item still selects+drags it.
+        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
         self._panning = False
         self._pan_start = QPointF()
@@ -171,6 +184,14 @@ class _CanvasGraphicsView(QGraphicsView):
             self._space_held = True
             if not self._panning:
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif event.key() in _ARROW_KEYS and self.scene().selectedItems():
+            dx, dy = _ARROW_KEYS[event.key()]
+            step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
+            for item in self.scene().selectedItems():
+                item.moveBy(dx * step, dy * step)
+            self.item_interaction_finished.emit()
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
@@ -195,6 +216,8 @@ class CanvasEditorWidget(QWidget):
         self._material_items: List[_MaterialPixmapItem] = []
         self._entries: Optional[list] = None
         self._drag_dirty = False
+        self._snap_enabled = False
+        self._snap_size = 10
 
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QBrush(QColor(_T.BG)))
@@ -227,6 +250,19 @@ class CanvasEditorWidget(QWidget):
         status_bar.addWidget(self.zoom_label)
         status_bar.addWidget(self.coords_label)
         status_bar.addStretch()
+
+        self.snap_checkbox = QCheckBox(tr("Snap"))
+        self.snap_checkbox.setToolTip("Snap dragged/nudged items to a grid")
+        self.snap_checkbox.toggled.connect(self.set_snap_enabled)
+        status_bar.addWidget(self.snap_checkbox)
+
+        self.snap_size_spinbox = QSpinBox()
+        self.snap_size_spinbox.setRange(1, 999)
+        self.snap_size_spinbox.setValue(self._snap_size)
+        self.snap_size_spinbox.setSuffix("px")
+        self.snap_size_spinbox.setMaximumWidth(70)
+        self.snap_size_spinbox.valueChanged.connect(self.set_snap_size)
+        status_bar.addWidget(self.snap_size_spinbox)
         status_widget = QWidget()
         status_widget.setLayout(status_bar)
         status_widget.setStyleSheet(f"background-color: {_T.PANEL}; border-top: 1px solid {_T.BORDER};")
@@ -300,6 +336,7 @@ class CanvasEditorWidget(QWidget):
             img, _name = mat
             item = _MaterialPixmapItem(_pil_to_qpixmap(img), idx)
             item.on_position_changed = self._mark_item_moved
+            item.snap_fn = self._apply_snap
             item.setPos(entry.x, entry.y)
             item.setZValue(idx)
             self.scene.addItem(item)
@@ -319,6 +356,10 @@ class CanvasEditorWidget(QWidget):
             return None
         return selected[0].entry_index
 
+    def selected_entry_indices(self) -> List[int]:
+        """Return entry indices for every currently selected material item (multi-select)."""
+        return sorted(item.entry_index for item in self.scene.selectedItems())
+
     def select_entry(self, entry_index: Optional[int]) -> None:
         """Programmatically select the item matching entry_index (or clear if None).
 
@@ -329,6 +370,29 @@ class CanvasEditorWidget(QWidget):
     def _on_scene_selection_changed(self) -> None:
         idx = self.selected_entry_index()
         self.entry_selected.emit(idx if idx is not None else -1)
+
+    # ── Snap-to-grid ─────────────────────────────────────────────────────
+    def is_snap_enabled(self) -> bool:
+        return self._snap_enabled
+
+    def set_snap_enabled(self, enabled: bool) -> None:
+        self._snap_enabled = bool(enabled)
+        if self.snap_checkbox.isChecked() != self._snap_enabled:
+            self.snap_checkbox.setChecked(self._snap_enabled)
+
+    def snap_size(self) -> int:
+        return self._snap_size
+
+    def set_snap_size(self, size: int) -> None:
+        self._snap_size = max(1, int(size))
+        if self.snap_size_spinbox.value() != self._snap_size:
+            self.snap_size_spinbox.setValue(self._snap_size)
+
+    def _apply_snap(self, pos: QPointF) -> QPointF:
+        if not self._snap_enabled:
+            return pos
+        size = self._snap_size
+        return QPointF(round(pos.x() / size) * size, round(pos.y() / size) * size)
 
     # ── Drag-to-move ─────────────────────────────────────────────────────
     def _mark_item_moved(self, entry_index: int, x: float, y: float) -> None:

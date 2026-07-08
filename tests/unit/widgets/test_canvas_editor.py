@@ -2,7 +2,9 @@ import pytest
 from PIL import Image
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtCore import QEvent
 
 from src.widgets.canvas_editor import CanvasEditorWidget, MIN_ZOOM, MAX_ZOOM
 from src.core.image_loader import MaterialManager
@@ -218,3 +220,95 @@ def test_set_entries_clears_selection_when_switching_groups(canvas, material_man
     entries_b = [FrameEntry(material_index=0, x=1, y=1)]
     canvas.set_entries(entries_b, material_manager)
     assert canvas.selected_entry_index() is None
+
+
+def _make_key_event(key, modifiers=Qt.KeyboardModifier.NoModifier):
+    return QKeyEvent(QEvent.Type.KeyPress, key, modifiers)
+
+
+def test_arrow_key_nudges_selected_item_by_1px(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=10, y=10)]
+    canvas.set_entries(entries, material_manager)
+    canvas.select_entry(0)
+
+    canvas.view.keyPressEvent(_make_key_event(Qt.Key.Key_Right))
+    assert entries[0].x == 11
+    assert entries[0].y == 10
+
+
+def test_shift_arrow_key_nudges_selected_item_by_10px(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=10, y=10)]
+    canvas.set_entries(entries, material_manager)
+    canvas.select_entry(0)
+
+    canvas.view.keyPressEvent(_make_key_event(Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier))
+    assert entries[0].y == 20
+    assert entries[0].x == 10
+
+
+def test_arrow_key_nudge_emits_entries_edited(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=0, y=0)]
+    canvas.set_entries(entries, material_manager)
+    canvas.select_entry(0)
+
+    received = []
+    canvas.entries_edited.connect(lambda: received.append(True))
+    canvas.view.keyPressEvent(_make_key_event(Qt.Key.Key_Left))
+    assert len(received) == 1
+    assert entries[0].x == -1
+
+
+def test_arrow_key_with_no_selection_does_nothing(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=5, y=5)]
+    canvas.set_entries(entries, material_manager)
+    # Nothing selected — the key event should be a no-op for the model.
+    canvas.view.keyPressEvent(_make_key_event(Qt.Key.Key_Right))
+    assert entries[0].x == 5
+
+
+def test_snap_to_grid_rounds_position_when_enabled(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=0, y=0)]
+    canvas.set_entries(entries, material_manager)
+    canvas.set_snap_enabled(True)
+    canvas.set_snap_size(10)
+
+    item = canvas._material_items[0]
+    item.setPos(23, 47)
+    assert entries[0].x == 20
+    assert entries[0].y == 50
+
+
+def test_snap_disabled_keeps_exact_position(canvas, material_manager):
+    entries = [FrameEntry(material_index=0, x=0, y=0)]
+    canvas.set_entries(entries, material_manager)
+    assert canvas.is_snap_enabled() is False
+
+    item = canvas._material_items[0]
+    item.setPos(23, 47)
+    assert entries[0].x == 23
+    assert entries[0].y == 47
+
+
+def test_snap_checkbox_and_spinbox_reflect_programmatic_changes(canvas):
+    canvas.set_snap_enabled(True)
+    assert canvas.snap_checkbox.isChecked() is True
+
+    canvas.set_snap_size(25)
+    assert canvas.snap_size_spinbox.value() == 25
+    assert canvas.snap_size() == 25
+
+
+def test_selected_entry_indices_returns_all_selected_sorted(canvas, material_manager):
+    entries = [
+        FrameEntry(material_index=0, x=0, y=0),
+        FrameEntry(material_index=1, x=1, y=1),
+    ]
+    canvas.set_entries(entries, material_manager)
+    canvas._material_items[1].setSelected(True)
+    canvas._material_items[0].setSelected(True)
+    assert canvas.selected_entry_indices() == [0, 1]
+
+
+def test_view_uses_rubber_band_drag_mode(canvas):
+    from PyQt6.QtWidgets import QGraphicsView
+    assert canvas.view.dragMode() == QGraphicsView.DragMode.RubberBandDrag

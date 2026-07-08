@@ -61,10 +61,11 @@
   - 與現有 `GroupCompositionWidget` 樹狀編輯器雙向同步：樹上選取 → canvas 高亮；canvas 選取/移動 → 樹上跟隨與數值更新。
   > 完成於 2026-07-08：`_MaterialPixmapItem` 加上 `ItemIsMovable`，`itemChange(ItemPositionHasChanged)` 即時把新位置寫回**同一個** live `FrameEntry` 物件（`CanvasEditorWidget.set_entries()` 保留 entries 清單的參照，而非複製，`GroupManager.get_group()` 本來就回傳參照，所以直接 mutate 即為真正更新模型，不需要 `update_group()`）。為避免拖曳時每個像素都觸發整棵樹重建 + 完整 GIF 預覽重算（效能考量），改成 `_CanvasGraphicsView.item_interaction_finished` 只在放開滑鼠左鍵時發一次，`CanvasEditorWidget.entries_edited` 只在該次拖曳確實改到座標時才發出，`MainWindow._on_canvas_entries_edited` 收到才呼叫 `refresh_timeline()`/`update_preview()`/`_refresh_canvas()`（一次拖曳只重建一次，不會每個像素都重建）。雙向同步：`GroupCompositionWidget` 新增 `frame_entry_selected(parent_gid, entry_idx)` signal 與 `set_selected_entry()`（FrameEntry row 改用 `_ClickableHeader`，選取時顯示藍色外框，沿用群組選取同色）；`CanvasEditorWidget` 新增 `select_entry()`；`MainWindow` 互相轉發兩個 signal，且只在 `parent_gid == current_group_id` 時才轉發到 canvas（canvas 只顯示目前群組），避免跨群組時索引誤選。`set_entries()` 重繪時只有「同一份 entries 清單物件」（同群組的拖曳後重繪）才保留選取，切換群組時正確清除選取。新增 9 個測試（拖曳寫回模型、`entries_edited` 只在放開時發一次且無變化不重複發、`select_entry`、同群組重繪保留選取、切換群組清除選取），並以無頭方式驗證 `MainWindow` 端到端：拖曳→模型更新→選取保留、樹→canvas、canvas→樹 雙向同步皆正確。180 個測試全數通過。
 
-- [ ] **P1-4 精確操作工具**
+- [x] **P1-4 精確操作工具**
   - 方向鍵微調（1px；Shift+方向鍵 10px）。
   - Snap to grid（可開關、格距可設定）。
   - 多選（框選/Ctrl+點選）與現有對齊按鈕（靠左、置中、靠右…）作用於多選物件。
+  > 完成於 2026-07-08：`_CanvasGraphicsView.keyPressEvent` 新增方向鍵處理（有選取時：一般 1px，Shift+方向鍵 10px），移動後立即發出 `item_interaction_finished`（重用 P1-3 的節流機制，只在按鍵當下 flush 一次）。Snap to grid：`CanvasEditorWidget` 內建 `Snap` checkbox + 格距 QSpinBox（自帶 UI，不需 MainWindow 額外接線），`_MaterialPixmapItem.itemChange` 攔截 `ItemPositionChange` 套用 `snap_fn`（拖曳與方向鍵微調皆會被吸附，行為一致）；新增 `set_snap_enabled/is_snap_enabled/set_snap_size/snap_size` 對外 API。多選：`_CanvasGraphicsView` 的 `dragMode` 從 `NoDrag` 改成 `RubberBandDrag`（點在素材上仍是選取/拖曳，點空白處拖曳才會框選，Qt 內建行為，Ctrl+點選多選也是原生支援）；新增 `selected_entry_indices()`（複數版本）。`ComposerPanelMixin._align_current_group_entries` 改為：canvas 上有選取時只對齊選取的 entries，否則維持原本「全部對齊」的預設行為；六個 `align_all_*` 方法都補上 `self._refresh_canvas()`（先前這裡漏了同步 canvas，一併修正）。新增 9 個 canvas 單元測試（方向鍵微調/Shift微調/無選取時不動作/發出 entries_edited、snap 開關與吸附/停用時精確定位、snap UI 雙向同步、`selected_entry_indices` 排序、RubberBandDrag 模式）與 3 個 `MainWindow` 整合測試（對齊按鈕遵循 canvas 選取、canvas↔樹雙向選取同步、拖曳更新模型且保留選取）。180→192 個測試全數通過，另以無頭方式確認 6 個分頁仍可正常切換。
 
 - [ ] **P1-5 Onion Skin 疊影**
   - 在 Canvas 上以半透明方式疊加前一幀（紅色調）與後一幀（綠色調），透明度與前後幀數可調，可一鍵開關。
@@ -105,3 +106,4 @@
 - 2026-07-08：完成 P1-1（CanvasWidget 骨架），新增 src/widgets/canvas_editor.py + 10 個單元測試，171 個測試全數通過。尚未接入主視窗。
 - 2026-07-08：完成 P1-2（素材渲染與點選），Canvas 接入 MainWindow（Tree/Canvas 分頁切換），175 個測試全數通過。
 - 2026-07-08：完成 P1-3（拖曳移動與雙向同步），Canvas 拖曳寫回模型、與樹狀編輯器雙向選取同步，180 個測試全數通過。
+- 2026-07-08：完成 P1-4（精確操作工具），方向鍵微調、Snap to grid、多選框選、對齊按鈕遵循選取，192 個測試全數通過。
