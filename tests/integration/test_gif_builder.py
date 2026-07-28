@@ -216,3 +216,60 @@ def test_build_webp_from_group_respects_solid_background(tmp_path):
     assert a == 255
 
 
+def test_compose_flat_image_stacks_layers_bottom_to_top():
+    """compose_flat_image treats FrameEntry order as simultaneous stacked layers,
+    not a sequential animation — later entries paint over earlier ones."""
+    from src.core.composition_group import FrameEntry
+
+    mm = MaterialManager()
+    mm.add_material(Image.new("RGBA", (10, 10), (255, 0, 0, 255)), name="bottom")
+    mm.add_material(Image.new("RGBA", (10, 10), (0, 255, 0, 255)), name="top")
+
+    entries = [
+        FrameEntry(material_index=0, x=0, y=0),
+        FrameEntry(material_index=1, x=0, y=0),
+    ]
+
+    gb = GifBuilder()
+    gb.set_output_size(10, 10)
+    gb.set_background_color(0, 0, 0, 0)
+
+    result = gb.compose_flat_image(entries, mm)
+    assert result.size == (10, 10)
+    assert result.getpixel((5, 5)) == (0, 255, 0, 255)
+
+
+def test_compose_flat_image_respects_offsets():
+    from src.core.composition_group import FrameEntry
+
+    mm = MaterialManager()
+    mm.add_material(Image.new("RGBA", (5, 5), (255, 0, 0, 255)), name="a")
+
+    entries = [FrameEntry(material_index=0, x=8, y=3)]
+
+    gb = GifBuilder()
+    gb.set_output_size(20, 20)
+    gb.set_background_color(0, 0, 0, 0)
+
+    result = gb.compose_flat_image(entries, mm)
+    assert result.getpixel((10, 5)) == (255, 0, 0, 255)  # inside the placed square
+    assert result.getpixel((0, 0))[3] == 0                # outside, still transparent
+
+
+def test_compose_flat_image_skips_non_frame_entries():
+    from src.core.composition_group import FrameEntry, SubGroupEntry
+
+    mm = MaterialManager()
+    mm.add_material(Image.new("RGBA", (5, 5), (255, 0, 0, 255)), name="a")
+
+    entries = [FrameEntry(material_index=0, x=0, y=0), SubGroupEntry(group_id=0)]
+
+    gb = GifBuilder()
+    gb.set_output_size(5, 5)
+    gb.set_background_color(0, 0, 0, 0)
+
+    # Should not raise despite the SubGroupEntry being present.
+    result = gb.compose_flat_image(entries, mm)
+    assert result.size == (5, 5)
+
+

@@ -117,6 +117,14 @@ All operations apply to the currently selected group.
 - Same FPS / width / color / dither / gifsicle-lossy options as Video to GIF
 - Requires ffmpeg — see "External Tool Dependencies" below
 
+### Image Merge
+
+- Simple standalone tool (independent of the Composer's material library and group model): load several images and export them as one flattened PNG
+- Positions images visually on the same Godot-style canvas used by the Composer (zoom/pan, drag-to-move, snap-to-grid, multi-select all reused as-is)
+- Newly loaded images are staggered by 20px so overlapping ones are still individually grabbable
+- "Auto Fit Size" sets the output canvas to the bounding box of all placed images
+- Export composites images bottom-to-top (later-loaded = drawn on top) into a single PNG, honoring the Transparent BG setting
+
 ### Settings and Language
 
 - Settings dialog (menu bar → Settings) currently exposes interface language selection
@@ -235,6 +243,7 @@ src/
     gif_optimizer_widget.py     GIF optimizer UI
     video_to_gif_widget.py      Video to GIF tool UI (multi-file batch conversion)
     clip_to_gif_widget.py       Clip to GIF tool UI (single-video visual range selector, Smart Loop)
+    image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog
     group_selector_dialog.py    Group picker dialog

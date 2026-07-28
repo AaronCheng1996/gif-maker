@@ -48,6 +48,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "🔧 GIF Optimizer":                   "🔧 GIF 最佳化",
         "🎥 Video to GIF":                    "🎥 影片轉 GIF",
         "🎞️ Clip to GIF":                     "🎞️ 剪輯轉 GIF",
+        "🖼️ Image Merge":                     "🖼️ 圖片合併",
         "🌳 Tree":                            "🌳 樹狀圖",
         "🖼 Canvas":                          "🖼 畫布",
 
@@ -118,6 +119,12 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Onion Skin":                        "洋蔥皮",
         "Opacity:":                          "透明度：",
         "Range:":                            "範圍：",
+
+        # ── Image Merge tab ───────────────────────────────────────────────────
+        "Images":                            "圖片",
+        "Load Images":                       "載入圖片",
+        "Output":                            "輸出",
+        "Save PNG":                          "儲存 PNG",
 
         # ── Status bar ────────────────────────────────────────────────────────
         "Materials: 0":                      "素材：0",

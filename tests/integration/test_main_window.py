@@ -217,3 +217,17 @@ def test_saving_template_generates_thumbnail_and_shows_in_list(qapp, monkeypatch
     window.remove_template()
     assert "MyTemplate" not in window.template_thumbnails
 
+
+def test_image_merge_tab_is_wired_into_main_window(qapp):
+    """The Image Merge tab should be present as its own independent tool tab."""
+    from src.widgets.image_merge_widget import ImageMergeWidget
+
+    window = MainWindow()
+    assert window.tool_tabs.count() == 7
+    assert isinstance(window.image_merge, ImageMergeWidget)
+    assert window.tool_tabs.widget(6) is window.image_merge
+
+    # Switching to and away from it shouldn't touch the shared material library panel.
+    window._on_tool_tab_changed(6)
+    assert window._material_lib_panel.isHidden()
+

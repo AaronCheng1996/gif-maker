@@ -934,3 +934,19 @@ class GifBuilder:
             loop=self.loop,
             quality=max(1, min(100, int(quality))),
         )
+
+    def compose_flat_image(
+        self,
+        entries: List["FrameEntry"],
+        material_manager: MaterialManager,
+    ) -> Image.Image:
+        """Composite a flat list of FrameEntry (materials placed at x/y) into a single
+        static image, bottom-to-top by list order. Used by the standalone Image Merge tool
+        — unlike build_gif_from_group(), these entries are treated as simultaneous layers,
+        not a sequential animation."""
+        frame_layers = [
+            (entry.material_index, entry.x, entry.y)
+            for entry in entries
+            if is_frame_entry(entry)
+        ]
+        return self._compose_from_expanded_frame(frame_layers, material_manager)

@@ -116,6 +116,14 @@ GIF 匯出
 - 與影片轉 GIF 相同的 FPS／寬度／色彩／抖色／gifsicle 有損壓縮選項
 - 需要 ffmpeg —— 詳見下方「外部工具相依性」
 
+### 圖片合併（Image Merge）
+
+- 簡單的獨立小工具（與 Composer 的素材庫、群組模型完全獨立）：載入多張圖片，匯出成一張攤平的 PNG
+- 使用與 Composer 相同的 Godot 風格畫布來擺放圖片（縮放/平移、拖曳移動、Snap to grid、多選框選全部沿用）
+- 新載入的圖片會依序錯開 20px，避免完全重疊而無法個別抓取
+- 「Auto Fit Size」會把輸出畫布尺寸設為所有已擺放圖片的邊界框
+- 匯出時由下到上依序合成（越晚載入的疊在越上層），並遵循「Transparent BG」設定
+
 ### 設定與語言
 
 - 設定對話框（選單列 → 設定）目前提供介面語言選擇
@@ -231,6 +239,7 @@ src/
     gif_optimizer_widget.py     GIF 最佳化介面
     video_to_gif_widget.py      影片轉 GIF 工具介面（多檔批次轉換）
     clip_to_gif_widget.py       剪輯轉 GIF 工具介面（單一影片視覺化範圍選取、智慧循環）
+    image_merge_widget.py       圖片合併工具介面（堆疊圖片、攤平匯出 PNG）
     settings_dialog.py          設定對話框（語言選擇）
     group_editor_dialog.py      群組建立/編輯對話框
     group_selector_dialog.py    群組選取對話框

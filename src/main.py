@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 from .core import MaterialManager, GifBuilder, GroupManager, CompositionGroup
 from .widgets import (AppTheme, PreviewPageWidget, TileSplitterPage, BatchProcessorWidget,
-                      GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget)
+                      GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget, ImageMergeWidget)
 from .i18n import tr, set_language
 from . import settings as AppSettings
 from .main_window import (MaterialsPanelMixin, ComposerPanelMixin, TemplateMixin,
@@ -171,6 +171,9 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         # ── Tab 5: Clip to GIF (single video, visual range selector) ──────────
         self.clip_to_gif = ClipToGifWidget()
 
+        # ── Tab 6: Image Merge (self-contained, own image list) ───────────────
+        self.image_merge = ImageMergeWidget()
+
         # ── Top-level QTabWidget ───────────────────────────────────────────────
         self.tool_tabs = QTabWidget()
         self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -180,6 +183,7 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         self.tool_tabs.addTab(self.gif_optimizer,        tr("🔧 GIF Optimizer"))
         self.tool_tabs.addTab(self.video_to_gif,         tr("🎥 Video to GIF"))
         self.tool_tabs.addTab(self.clip_to_gif,          tr("🎞️ Clip to GIF"))
+        self.tool_tabs.addTab(self.image_merge,          tr("🖼️ Image Merge"))
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
