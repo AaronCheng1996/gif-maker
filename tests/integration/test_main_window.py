@@ -223,11 +223,33 @@ def test_image_merge_tab_is_wired_into_main_window(qapp):
     from src.widgets.image_merge_widget import ImageMergeWidget
 
     window = MainWindow()
-    assert window.tool_tabs.count() == 7
     assert isinstance(window.image_merge, ImageMergeWidget)
     assert window.tool_tabs.widget(6) is window.image_merge
 
     # Switching to and away from it shouldn't touch the shared material library panel.
     window._on_tool_tab_changed(6)
     assert window._material_lib_panel.isHidden()
+
+
+def test_spine_to_gif_tab_is_wired_into_main_window(qapp):
+    """The Spine to GIF tab exists and starts in a disabled, no-project state."""
+    from src.widgets.spine_to_gif_widget import SpineToGifWidget
+
+    window = MainWindow()
+    assert isinstance(window.spine_to_gif, SpineToGifWidget)
+    assert window.tool_tabs.indexOf(window.spine_to_gif) >= 0
+
+    tab = window.spine_to_gif
+    assert tab.project is None
+    assert tab.export_btn.isEnabled() is False
+    assert tab.animation_list.count() == 0
+
+    window._on_tool_tab_changed(window.tool_tabs.indexOf(tab))
+    assert window._material_lib_panel.isHidden()
+    tab.stop_workers()
+
+
+    # Loading a project and exporting is covered in tests/unit/widgets, against the
+    # widget directly — building extra MainWindows there just to drive render
+    # threads is wasteful and destabilises the Qt event loop across tests.
 

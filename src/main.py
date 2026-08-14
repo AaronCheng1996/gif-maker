@@ -7,7 +7,8 @@ from PyQt6.QtCore import Qt, QTimer
 
 from .core import MaterialManager, GifBuilder, GroupManager, CompositionGroup
 from .widgets import (AppTheme, PreviewPageWidget, TileSplitterPage, BatchProcessorWidget,
-                      GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget, ImageMergeWidget)
+                      GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget, ImageMergeWidget,
+                      SpineToGifWidget)
 from .i18n import tr, set_language
 from . import settings as AppSettings
 from .main_window import (MaterialsPanelMixin, ComposerPanelMixin, TemplateMixin,
@@ -174,6 +175,9 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         # ── Tab 6: Image Merge (self-contained, own image list) ───────────────
         self.image_merge = ImageMergeWidget()
 
+        # ── Tab 7: Spine to GIF (self-contained, loads its own Spine project) ─
+        self.spine_to_gif = SpineToGifWidget()
+
         # ── Top-level QTabWidget ───────────────────────────────────────────────
         self.tool_tabs = QTabWidget()
         self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -184,6 +188,7 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         self.tool_tabs.addTab(self.video_to_gif,         tr("🎥 Video to GIF"))
         self.tool_tabs.addTab(self.clip_to_gif,          tr("🎞️ Clip to GIF"))
         self.tool_tabs.addTab(self.image_merge,          tr("🖼️ Image Merge"))
+        self.tool_tabs.addTab(self.spine_to_gif,         tr("🦴 Spine to GIF"))
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
@@ -229,6 +234,10 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
 
     def closeEvent(self, event):
         """Handle application closing - perform emergency auto-save"""
+        # Background render threads must finish before their widget is destroyed.
+        if hasattr(self, 'spine_to_gif'):
+            self.spine_to_gif.stop_workers()
+
         if self.auto_save_enabled and len(self.group_manager.groups) > 0:
             try:
                 # Force emergency save

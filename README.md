@@ -117,6 +117,15 @@ All operations apply to the currently selected group.
 - Same FPS / width / color / dither / gifsicle-lossy options as Video to GIF
 - Requires ffmpeg — see "External Tool Dependencies" below
 
+### Spine to GIF
+
+- Load a Spine skeleton (`.json` + `.atlas` + texture pages) and export any of its animations as a GIF — no Spine editor or external runtime required
+- Lists every animation with its duration and frame count at the chosen fps; pick a skin if the skeleton has several
+- Scrubbable preview with playback, rendered on a background thread
+- Export options: fps, scale, transparent background, palette size, loop count, and "Crop to animation" (fits the canvas to what the animation actually covers rather than the exported bounding box)
+- Includes a self-contained Spine 4.x runtime written in pure Python (`src/core/spine/`, numpy + Pillow only): atlas parsing, bone hierarchy with all `inherit` modes, weighted-mesh skinning, IK and transform constraints, Bezier keyframe curves, clipping attachments, and multiply/additive/screen blend modes
+- **Note:** rendering is CPU-bound. A ~5000-triangle skeleton takes roughly 0.4s per frame at 500px wide and ~0.75s at 1000px, so a long animation at a large scale can take a few minutes.
+
 ### Image Merge
 
 - Simple standalone tool (independent of the Composer's material library and group model): load several images and export them as one flattened PNG
@@ -232,6 +241,14 @@ src/
     video_to_gif.py             FFmpeg-based video/animated-image → GIF conversion, ffmpeg detection & install-instructions helper
     template_manager.py         Template serialization and application
     batch_processor.py          Batch processing pipeline (reused by cli.py)
+    spine/                      Self-contained Spine 4.x runtime (numpy + Pillow, no PyQt6)
+      atlas.py                  Texture atlas parser (4.1 bounds/offsets and legacy formats)
+      skeleton.py               Bones, slots, skins, world transforms, update cache
+      attachments.py            Region/mesh/linked-mesh/clipping attachments, weighted skinning
+      animation.py              Timelines and Bezier/stepped/linear curve evaluation
+      constraints.py            One- and two-bone IK, transform constraints
+      renderer.py               Textured-triangle software rasterizer -> PIL image
+      loader.py                 Loads skeleton + atlas + pages into a SpineProject
   widgets/
     theme.py                    Global dark theme and color palette
     canvas_editor.py             Godot-style Composer canvas: zoom/pan, drag-to-move, snap, onion skin, timeline
@@ -243,6 +260,7 @@ src/
     gif_optimizer_widget.py     GIF optimizer UI
     video_to_gif_widget.py      Video to GIF tool UI (multi-file batch conversion)
     clip_to_gif_widget.py       Clip to GIF tool UI (single-video visual range selector, Smart Loop)
+    spine_to_gif_widget.py      Spine to GIF tool UI (animation list, preview, export)
     image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog

@@ -116,6 +116,15 @@ GIF 匯出
 - 與影片轉 GIF 相同的 FPS／寬度／色彩／抖色／gifsicle 有損壓縮選項
 - 需要 ffmpeg —— 詳見下方「外部工具相依性」
 
+### Spine 轉 GIF（Spine to GIF）
+
+- 載入 Spine 骨架（`.json` + `.atlas` + 貼圖），把任一動畫匯出成 GIF —— **不需要 Spine 編輯器，也不需要外部 runtime**
+- 列出所有動畫及其長度與（依所選 fps 換算的）幀數；骨架若有多個 skin 可自由切換
+- 可拖曳時間軸的預覽 + 播放，算圖在背景執行緒進行，不卡介面
+- 匯出選項：fps、縮放、透明背景、調色盤大小、循環次數，以及「裁切至動畫範圍」（依動畫實際涵蓋範圍裁切畫布，而非使用匯出時的 bounding box）
+- 內含一套純 Python 實作的 Spine 4.x runtime（`src/core/spine/`，只依賴 numpy 與 Pillow）：atlas 解析、骨骼階層（支援所有 `inherit` 繼承模式）、加權網格蒙皮、IK 與 transform 約束、貝茲曲線關鍵幀、裁切遮罩，以及 multiply／additive／screen 混合模式
+- **注意：** 算圖是 CPU 密集運算。約 5000 個三角形的骨架，在 500px 寬時每幀約 0.4 秒、1000px 寬時約 0.75 秒，因此長動畫搭配大尺寸可能需要數分鐘。
+
 ### 圖片合併（Image Merge）
 
 - 簡單的獨立小工具（與 Composer 的素材庫、群組模型完全獨立）：載入多張圖片，匯出成一張攤平的 PNG
@@ -228,6 +237,14 @@ src/
     video_to_gif.py             以 ffmpeg 進行影片／動態圖片轉 GIF、ffmpeg 偵測與安裝說明輔助函式
     template_manager.py         範本序列化與套用
     batch_processor.py          批次處理流程（cli.py 也重用此模組）
+    spine/                      自製的 Spine 4.x runtime（僅依賴 numpy + Pillow，不依賴 PyQt6）
+      atlas.py                  貼圖圖集解析（4.1 的 bounds/offsets 格式與舊版格式）
+      skeleton.py               骨骼、插槽、skin、世界變換、更新順序快取
+      attachments.py            region／mesh／linkedmesh／clipping 附件與加權蒙皮
+      animation.py              動畫時間軸與貝茲／stepped／線性曲線求值
+      constraints.py            單骨與雙骨 IK、transform 約束
+      renderer.py               三角形貼圖軟體光柵化器 → PIL 圖片
+      loader.py                 載入骨架 + 圖集 + 貼圖頁成 SpineProject
   widgets/
     theme.py                    全域深色主題與色盤
     canvas_editor.py             Godot 風格的 Composer 畫布：縮放/平移、拖曳移動、吸附、Onion Skin、時間軸
@@ -239,6 +256,7 @@ src/
     gif_optimizer_widget.py     GIF 最佳化介面
     video_to_gif_widget.py      影片轉 GIF 工具介面（多檔批次轉換）
     clip_to_gif_widget.py       剪輯轉 GIF 工具介面（單一影片視覺化範圍選取、智慧循環）
+    spine_to_gif_widget.py      Spine 轉 GIF 工具介面（動畫列表、預覽、匯出）
     image_merge_widget.py       圖片合併工具介面（堆疊圖片、攤平匯出 PNG）
     settings_dialog.py          設定對話框（語言選擇）
     group_editor_dialog.py      群組建立/編輯對話框

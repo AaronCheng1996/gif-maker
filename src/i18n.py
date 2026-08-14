@@ -49,6 +49,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "🎥 Video to GIF":                    "🎥 影片轉 GIF",
         "🎞️ Clip to GIF":                     "🎞️ 剪輯轉 GIF",
         "🖼️ Image Merge":                     "🖼️ 圖片合併",
+        "🦴 Spine to GIF":                    "🦴 Spine 轉 GIF",
         "🌳 Tree":                            "🌳 樹狀圖",
         "🖼 Canvas":                          "🖼 畫布",
 
@@ -125,6 +126,22 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Load Images":                       "載入圖片",
         "Output":                            "輸出",
         "Save PNG":                          "儲存 PNG",
+
+        # ── Spine to GIF tab ──────────────────────────────────────────────────
+        "Spine Project":                     "Spine 專案",
+        "📂 Open Spine Project…":            "📂 開啟 Spine 專案…",
+        "Open Spine Project":                "開啟 Spine 專案",
+        "No project loaded":                 "尚未載入專案",
+        "Loading…":                          "載入中…",
+        "Skin:":                             "外觀：",
+        "Animations":                        "動畫",
+        "Open a Spine project to preview":   "開啟 Spine 專案以預覽",
+        "Rendering…":                        "算圖中…",
+        "Export Settings":                   "匯出設定",
+        "FPS:":                              "每秒影格：",
+        "Scale:":                            "縮放：",
+        "Crop to animation":                 "裁切至動畫範圍",
+        "Cancel":                            "取消",
 
         # ── Status bar ────────────────────────────────────────────────────────
         "Materials: 0":                      "素材：0",
