@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 EXE_NAME = "SpineViewerCLI.exe" if sys.platform == "win32" else "SpineViewerCLI"
 
@@ -257,6 +257,98 @@ def export_animation(skeleton_path, output_path, animations: List[str],
     if not Path(output_path).exists():
         raise SpineCliError(f"Export reported success but no file was written: {output_path}")
     return output_path
+
+
+class Framing:
+    """Where SpineViewerCLI puts the canvas, measured rather than predicted.
+
+    SpineViewer picks its own canvas, and the rule is not something we can infer
+    reliably (it is neither the skeleton's declared bounds nor a tight fit around
+    the animation). Since the crop rectangle has to line up with its output, the
+    canvas is measured by exporting one small frame and looking at it."""
+
+    __slots__ = ("canvas_w_px", "canvas_h_px", "content_box_px", "scale")
+
+    def __init__(self, canvas_w_px: int, canvas_h_px: int,
+                 content_box_px: Optional[Tuple[int, int, int, int]], scale: float):
+        self.canvas_w_px = canvas_w_px
+        self.canvas_h_px = canvas_h_px
+        self.content_box_px = content_box_px   # (left, top, right, bottom) or None
+        self.scale = scale
+
+    def canvas_size_units(self) -> Tuple[float, float]:
+        return self.canvas_w_px / self.scale, self.canvas_h_px / self.scale
+
+
+PROBE_EXTENSIONS = {
+    "Gif": "gif", "Apng": "png", "Webp": "webp", "Webpa": "webp", "Png": "png",
+    "Mp4": "mp4", "Mov": "mov", "Webm": "webm", "Mkv": "mkv",
+}
+
+
+def probe_framing(skeleton_path, animation: str, skin: Optional[str] = None,
+                  cli_path: Optional[str] = None, atlas_path=None,
+                  scale: float = 0.12, fmt: str = "Gif", timeout: int = 300) -> Framing:
+    """Export one small file and measure the canvas the CLI chose.
+
+    The format matters: SpineViewer sizes its canvas slightly differently for a
+    single still than for an animation, so probing must use the same format the
+    real export will, or the crop rectangle drifts."""
+    import tempfile
+
+    from PIL import Image
+
+    cli_path = cli_path or find_cli()
+    if not cli_path:
+        raise SpineCliError("SpineViewerCLI was not found")
+
+    if fmt not in PROBE_EXTENSIONS or fmt in ("Mp4", "Mov", "Webm", "Mkv"):
+        fmt = "Gif"   # video probes cannot be measured with Pillow
+    tmpdir = tempfile.mkdtemp(prefix="spine_probe_")
+    out = Path(tmpdir) / f"probe.{PROBE_EXTENSIONS[fmt]}"
+    try:
+        # A couple of frames per second is enough to establish the canvas.
+        options = ExportOptions(fmt=fmt, scale=scale, loop=False, fps=2,
+                                skins=[skin] if skin else [],
+                                start_time=0.0, max_resolution=20000)
+        export_animation(skeleton_path, out, [animation], options=options,
+                         cli_path=cli_path, atlas_path=atlas_path, timeout=timeout)
+        previous_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = None
+        try:
+            with Image.open(out) as img:
+                rgba = img.convert("RGBA")
+                width, height = rgba.size
+                box = rgba.getbbox()   # None when fully transparent
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_limit
+        return Framing(width, height, box, scale)
+    finally:
+        try:
+            if out.exists():
+                out.unlink()
+            Path(tmpdir).rmdir()
+        except OSError:
+            pass
+
+
+def framing_to_bounds(framing: Framing, content_bounds) -> Tuple[float, float, float, float]:
+    """Turn a measured canvas into skeleton-space bounds the renderer can use.
+
+    `content_bounds` is (x, y, w, h) of the same pose as rendered by the built-in
+    engine. Lining up where the content sits in both images pins down where the
+    CLI's canvas is; its size comes straight from the probe."""
+    canvas_w, canvas_h = framing.canvas_size_units()
+    cx, cy, cw, ch = content_bounds
+    if not framing.content_box_px or cw <= 0 or ch <= 0:
+        # Nothing visible to align against; centre the canvas on the content.
+        return (cx + cw / 2 - canvas_w / 2, cy + ch / 2 - canvas_h / 2, canvas_w, canvas_h)
+
+    left, top, _right, _bottom = framing.content_box_px
+    origin_x = cx - left / framing.scale
+    # Image rows run downwards, so the canvas top edge is the highest skeleton Y.
+    origin_y = (cy + ch) + top / framing.scale - canvas_h
+    return origin_x, origin_y, canvas_w, canvas_h
 
 
 def get_version(cli_path: Optional[str] = None) -> Optional[str]:

@@ -150,3 +150,64 @@ def test_install_hint_points_at_the_release_page():
 
 def test_gif_is_the_first_offered_format():
     assert cb.EXPORT_FORMATS[0] == "Gif"
+
+
+# ── framing ──────────────────────────────────────────────────────────────
+
+def test_framing_reports_canvas_in_skeleton_units():
+    f = cb.Framing(100, 50, (10, 5, 90, 45), scale=0.25)
+    assert f.canvas_size_units() == (400.0, 200.0)
+
+
+def test_framing_to_bounds_aligns_the_canvas_with_the_content():
+    """The probe's content position pins the canvas down in skeleton space."""
+    # Canvas 400x200 units. Content starts 10px/0.25 = 40 units from the left,
+    # and 5px/0.25 = 20 units below the top.
+    f = cb.Framing(100, 50, (10, 5, 90, 45), scale=0.25)
+    # Built-in render says that content occupies x 0..320, y 0..160.
+    x, y, w, h = cb.framing_to_bounds(f, (0.0, 0.0, 320.0, 160.0))
+    assert (w, h) == (400.0, 200.0)
+    assert x == -40.0                 # canvas starts 40 units left of the content
+    # Canvas top is 20 units above the content top (160), so the bottom is at
+    # 180 - 200 = -20.
+    assert y == pytest.approx(-20.0)
+
+
+def test_framing_to_bounds_centres_when_nothing_is_visible():
+    f = cb.Framing(100, 50, None, scale=0.5)
+    x, y, w, h = cb.framing_to_bounds(f, (0.0, 0.0, 100.0, 100.0))
+    assert (w, h) == (200.0, 100.0)
+    assert x == pytest.approx(50.0 - 100.0)
+    assert y == pytest.approx(50.0 - 50.0)
+
+
+def test_probe_falls_back_to_gif_for_video_formats(monkeypatch, tmp_path):
+    """Video probes cannot be measured with Pillow, so they use a GIF instead."""
+    seen = {}
+
+    def fake_export(skeleton, output, animations, options=None, **kwargs):
+        seen["fmt"] = options.fmt
+        from PIL import Image
+        Image.new("RGBA", (8, 4), (255, 0, 0, 255)).save(output)
+        return str(output)
+
+    monkeypatch.setattr(cb, "export_animation", fake_export)
+    monkeypatch.setattr(cb, "find_cli", lambda *a, **k: "cli")
+    cb.probe_framing(tmp_path / "m.json", "walk", fmt="Mp4", scale=0.5)
+    assert seen["fmt"] == "Gif"
+
+
+def test_probe_measures_canvas_and_content(monkeypatch, tmp_path):
+    def fake_export(skeleton, output, animations, options=None, **kwargs):
+        from PIL import Image
+        img = Image.new("RGBA", (20, 10), (0, 0, 0, 0))
+        img.paste(Image.new("RGBA", (6, 4), (255, 0, 0, 255)), (5, 3))
+        img.save(output)
+        return str(output)
+
+    monkeypatch.setattr(cb, "export_animation", fake_export)
+    monkeypatch.setattr(cb, "find_cli", lambda *a, **k: "cli")
+    f = cb.probe_framing(tmp_path / "m.json", "walk", scale=0.5)
+    assert (f.canvas_w_px, f.canvas_h_px) == (20, 10)
+    assert f.content_box_px == (5, 3, 11, 7)
+    assert f.canvas_size_units() == (40.0, 20.0)
