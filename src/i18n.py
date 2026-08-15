@@ -147,6 +147,8 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Locate SpineViewerCLI":             "指定 SpineViewerCLI",
         "Change SpineViewerCLI path…":       "變更 SpineViewerCLI 路徑…",
         "Select All":                        "全選",
+        "Crop region":                       "裁切區域",
+        "Reset":                             "重設",
         "Ctrl/Shift-click to select several, then export them all at once.":
                                              "按住 Ctrl／Shift 可複選多個動畫，一次全部匯出。",
         "💾 Export {n} animations":          "💾 匯出 {n} 個動畫",
