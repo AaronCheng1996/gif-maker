@@ -118,12 +118,34 @@ GIF 匯出
 
 ### Spine 轉 GIF（Spine to GIF）
 
-- 載入 Spine 骨架（`.json` + `.atlas` + 貼圖），把任一動畫匯出成 GIF —— **不需要 Spine 編輯器，也不需要外部 runtime**
-- 列出所有動畫及其長度與（依所選 fps 換算的）幀數；骨架若有多個 skin 可自由切換
-- 可拖曳時間軸的預覽 + 播放，算圖在背景執行緒進行，不卡介面
-- 匯出選項：fps、縮放、透明背景、調色盤大小、循環次數，以及「裁切至動畫範圍」（依動畫實際涵蓋範圍裁切畫布，而非使用匯出時的 bounding box）
-- 內含一套純 Python 實作的 Spine 4.x runtime（`src/core/spine/`，只依賴 numpy 與 Pillow）：atlas 解析、骨骼階層（支援所有 `inherit` 繼承模式）、加權網格蒙皮、IK 與 transform 約束、貝茲曲線關鍵幀、裁切遮罩，以及 multiply／additive／screen 混合模式
-- **注意：** 算圖是 CPU 密集運算。約 5000 個三角形的骨架，在 500px 寬時每幀約 0.4 秒、1000px 寬時約 0.75 秒，因此長動畫搭配大尺寸可能需要數分鐘。
+把原本「開 viewer → 匯出 MP4 → 轉成 GIF → 下一個動畫再來一遍」的手動流程，
+變成：開啟模型 → 勾選動畫 → 按一次。
+
+- 載入 Spine 骨架後**列出所有動畫及其長度與幀數**；模型若有多個 skin 可自由切換
+- **可複選動畫（Ctrl/Shift 點選，或「全選」）一次匯出全部** —— 自動命名為 `<模型>_<動畫>.<副檔名>` 存到指定資料夾，並顯示逐一進度
+- 可拖曳時間軸的預覽 + 播放
+- 匯出選項：fps、縮放、透明背景、循環次數；使用內建引擎時另有調色盤大小與「裁切至動畫範圍」
+
+兩種可切換的匯出引擎：
+
+| | **SpineViewerCLI**（優先） | **內建引擎** |
+|---|---|---|
+| Spine 版本 | 2.1 – 4.2，支援 `.json` 與二進位 `.skel` | 僅 4.x `.json` |
+| 算圖 | 官方 Spine runtime | 本專案的純 Python runtime |
+| 格式 | GIF、APNG、WebP、MP4、MOV、WebM、MKV、PNG 序列 | GIF |
+| 需求 | 需要 [SpineViewer](https://github.com/ww-rm/SpineViewer/releases) | 無 |
+
+[SpineViewerCLI](https://github.com/ww-rm/SpineViewer) 會自動從 PATH 與常見安裝路徑偵測；
+找不到時按一次「Locate SpineViewerCLI…」指定即可，路徑會被記住。它自帶 ffmpeg，
+並以 `palettegen`／`paletteuse` **直接輸出 GIF —— 完全不會產生中間的 MP4**，
+步驟更少、品質也比繞道影片更好。未安裝時分頁會自動退回內建引擎。
+
+內建 runtime（`src/core/spine/`，只依賴 numpy 與 Pillow，不依賴 PyQt6）涵蓋 atlas 解析、
+骨骼階層（所有 `inherit` 繼承模式）、加權網格蒙皮、IK 與 transform 約束、貝茲曲線關鍵幀、
+裁切遮罩，以及 multiply／additive／screen 混合模式。它是 CPU 密集運算——約 5000 三角形的
+骨架在 500px 寬時每幀約 0.4 秒——因此長動畫配大尺寸建議改用 SpineViewerCLI。預覽一律使用
+內建引擎（每拖一格就開一次子行程太慢）；若內建引擎讀不了某個模型，仍可透過 CLI 匯出，
+只是沒有預覽。
 
 ### 圖片合併（Image Merge）
 
@@ -245,6 +267,7 @@ src/
       constraints.py            單骨與雙骨 IK、transform 約束
       renderer.py               三角形貼圖軟體光柵化器 → PIL 圖片
       loader.py                 載入骨架 + 圖集 + 貼圖頁成 SpineProject
+      cli_backend.py            驅動 SpineViewerCLI（偵測、查詢、匯出）
   widgets/
     theme.py                    全域深色主題與色盤
     canvas_editor.py             Godot 風格的 Composer 畫布：縮放/平移、拖曳移動、吸附、Onion Skin、時間軸

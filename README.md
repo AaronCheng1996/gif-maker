@@ -119,12 +119,37 @@ All operations apply to the currently selected group.
 
 ### Spine to GIF
 
-- Load a Spine skeleton (`.json` + `.atlas` + texture pages) and export any of its animations as a GIF — no Spine editor or external runtime required
-- Lists every animation with its duration and frame count at the chosen fps; pick a skin if the skeleton has several
-- Scrubbable preview with playback, rendered on a background thread
-- Export options: fps, scale, transparent background, palette size, loop count, and "Crop to animation" (fits the canvas to what the animation actually covers rather than the exported bounding box)
-- Includes a self-contained Spine 4.x runtime written in pure Python (`src/core/spine/`, numpy + Pillow only): atlas parsing, bone hierarchy with all `inherit` modes, weighted-mesh skinning, IK and transform constraints, Bezier keyframe curves, clipping attachments, and multiply/additive/screen blend modes
-- **Note:** rendering is CPU-bound. A ~5000-triangle skeleton takes roughly 0.4s per frame at 500px wide and ~0.75s at 1000px, so a long animation at a large scale can take a few minutes.
+Turns the usual "open a viewer, export MP4, convert it to GIF, repeat for every
+animation" routine into: open the model, select the animations, click once.
+
+- Load a Spine skeleton and see **every animation listed with its duration and frame count**; pick a skin if the model has several
+- **Multi-select animations (Ctrl/Shift-click, or Select All) and export them all in one run** — files are named `<model>_<animation>.<ext>` into a folder you choose, with per-animation progress
+- Scrubbable preview with playback
+- Export options: fps, scale, transparent background, loop count, plus palette size and "Crop to animation" for the built-in engine
+
+Two interchangeable export engines:
+
+| | **SpineViewerCLI** (preferred) | **Built-in** |
+|---|---|---|
+| Spine versions | 2.1 – 4.2, `.json` and binary `.skel` | 4.x `.json` only |
+| Renderer | Official Spine runtimes | This app's pure-Python runtime |
+| Formats | GIF, APNG, WebP, MP4, MOV, WebM, MKV, PNG frames | GIF |
+| Requires | [SpineViewer](https://github.com/ww-rm/SpineViewer/releases) on disk | nothing |
+
+[SpineViewerCLI](https://github.com/ww-rm/SpineViewer) is auto-detected on PATH and in
+common install folders; otherwise use "Locate SpineViewerCLI…" once and the path is
+remembered. It bundles its own ffmpeg and writes GIF directly via `palettegen`/`paletteuse`,
+so **no intermediate MP4 is produced at all** — fewer steps and better quality than
+round-tripping through video. When it isn't installed the tab falls back to the built-in
+renderer automatically.
+
+The built-in runtime (`src/core/spine/`, numpy + Pillow only, no PyQt6) covers atlas parsing,
+bone hierarchies with all `inherit` modes, weighted-mesh skinning, IK and transform
+constraints, Bezier keyframe curves, clipping attachments, and multiply/additive/screen blend
+modes. It is CPU-bound — roughly 0.4s per frame at 500px wide for a ~5000-triangle skeleton —
+so prefer SpineViewerCLI for long animations at large scales. Preview always uses the built-in
+renderer (a subprocess per scrubbed frame would be far too slow); if it cannot parse a model,
+export through the CLI still works and only the preview is unavailable.
 
 ### Image Merge
 
@@ -249,6 +274,7 @@ src/
       constraints.py            One- and two-bone IK, transform constraints
       renderer.py               Textured-triangle software rasterizer -> PIL image
       loader.py                 Loads skeleton + atlas + pages into a SpineProject
+      cli_backend.py            Drives SpineViewerCLI (detect, query, export)
   widgets/
     theme.py                    Global dark theme and color palette
     canvas_editor.py             Godot-style Composer canvas: zoom/pan, drag-to-move, snap, onion skin, timeline

@@ -6,7 +6,9 @@ from PIL import Image
 
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from src.widgets.spine_to_gif_widget import SpineToGifWidget
+from src.core.spine import cli_backend
+from src.widgets.spine_to_gif_widget import (ENGINE_BUILTIN, ENGINE_CLI,
+                                              SpineToGifWidget)
 
 
 @pytest.fixture(scope="module")
@@ -22,6 +24,12 @@ def _no_blocking_dialogs(monkeypatch):
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cli(monkeypatch):
+    """Default every test to the built-in engine; CLI-specific tests opt in."""
+    monkeypatch.setattr(cli_backend, "find_cli", lambda *a, **k: None)
 
 
 @pytest.fixture()
@@ -226,3 +234,157 @@ def test_crop_to_animation_changes_output_size(widget, toy_project, qapp):
 def test_stop_workers_is_idempotent(widget):
     widget.stop_workers()
     widget.stop_workers()
+
+
+# ── engine selection ─────────────────────────────────────────────────────
+
+def test_falls_back_to_builtin_when_cli_is_absent(widget):
+    assert widget.cli_path is None
+    assert widget.engine == ENGINE_BUILTIN
+    assert "not found" in widget.engine_status.text()
+
+
+def test_prefers_the_cli_when_present(qapp, monkeypatch, tmp_path):
+    fake = tmp_path / cli_backend.EXE_NAME
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_backend, "find_cli", lambda *a, **k: str(fake))
+    w = SpineToGifWidget()
+    try:
+        assert w.engine == ENGINE_CLI
+        assert str(fake) in w.engine_status.text()
+        # Palette size is the built-in encoder's knob; the CLI does its own.
+        assert w.colors_combo.isEnabled() is False
+        assert w.format_combo.isEnabled() is True
+    finally:
+        w.stop_workers()
+
+
+def test_switching_to_builtin_reenables_its_own_options(qapp, monkeypatch, tmp_path):
+    fake = tmp_path / cli_backend.EXE_NAME
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_backend, "find_cli", lambda *a, **k: str(fake))
+    w = SpineToGifWidget()
+    try:
+        w.engine_combo.setCurrentText(ENGINE_BUILTIN)
+        assert w.colors_combo.isEnabled() is True
+        assert w.tight_bounds_checkbox.isEnabled() is True
+        assert w.format_combo.isEnabled() is False
+    finally:
+        w.stop_workers()
+
+
+def test_extension_follows_the_selected_cli_format(qapp, monkeypatch, tmp_path):
+    fake = tmp_path / cli_backend.EXE_NAME
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_backend, "find_cli", lambda *a, **k: str(fake))
+    w = SpineToGifWidget()
+    try:
+        w.format_combo.setCurrentText("Gif")
+        assert w._extension_for_format() == "gif"
+        w.format_combo.setCurrentText("Mp4")
+        assert w._extension_for_format() == "mp4"
+        w.format_combo.setCurrentText("Apng")
+        assert w._extension_for_format() == "png"
+        # The built-in engine always writes GIF.
+        w.engine_combo.setCurrentText(ENGINE_BUILTIN)
+        assert w._extension_for_format() == "gif"
+    finally:
+        w.stop_workers()
+
+
+# ── multi-select / batch ─────────────────────────────────────────────────
+
+def test_select_all_selects_every_animation(widget, toy_project, qapp):
+    _load(widget, toy_project, qapp)
+    widget.select_all_animations()
+    assert sorted(widget.selected_animations()) == ["idle", "walk"]
+
+
+def test_selected_animations_falls_back_to_the_current_row(widget, toy_project, qapp):
+    _load(widget, toy_project, qapp)
+    widget.animation_list.setCurrentRow(0)
+    widget.animation_list.clearSelection()
+    assert len(widget.selected_animations()) == 1
+
+
+def test_export_button_reflects_the_selection_count(widget, toy_project, qapp):
+    _load(widget, toy_project, qapp)
+    widget.animation_list.setCurrentRow(0)
+    widget.animation_list.clearSelection()
+    widget.animation_list.item(0).setSelected(True)
+    qapp.processEvents()
+    assert "2 animations" not in widget.export_btn.text()
+
+    widget.select_all_animations()
+    qapp.processEvents()
+    assert "2 animations" in widget.export_btn.text()
+
+
+def test_batch_export_writes_one_file_per_animation(widget, toy_project, qapp, tmp_path,
+                                                    monkeypatch):
+    _load(widget, toy_project, qapp)
+    widget.select_all_animations()
+    qapp.processEvents()
+
+    outdir = tmp_path / "batch"
+    outdir.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(outdir))
+    widget.fps_spinbox.setValue(6)
+    widget.scale_spinbox.setValue(0.5)
+    widget.export_gif()
+    assert widget._export_worker.wait(300000)
+    qapp.processEvents()
+
+    produced = sorted(p.name for p in outdir.glob("*.gif"))
+    assert produced == ["toy_idle.gif", "toy_walk.gif"]
+
+
+def test_batch_filenames_are_sanitised(widget, tmp_path, qapp, monkeypatch):
+    """Animation names with path-hostile characters still produce valid files."""
+    import json
+
+    from PIL import Image
+    page = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    page.paste(Image.new("RGBA", (16, 16), (255, 0, 0, 255)), (0, 0))
+    page.save(tmp_path / "sprites.png")
+    (tmp_path / "m.atlas").write_text(
+        "sprites.png\nsize: 32, 32\nred\nbounds: 0, 0, 16, 16\n", encoding="utf-8")
+    (tmp_path / "m.json").write_text(json.dumps({
+        "skeleton": {"spine": "4.1.23", "x": -32, "y": -32, "width": 64, "height": 64},
+        "bones": [{"name": "root"}],
+        "slots": [{"name": "s", "bone": "root", "attachment": "red"}],
+        "skins": [{"name": "default", "attachments": {
+            "s": {"red": {"type": "region", "path": "red", "width": 16, "height": 16}}}}],
+        "animations": {
+            "a/b": {"bones": {"root": {"rotate": [
+                {"time": 0, "value": 0}, {"time": 0.2, "value": 10}]}}},
+            "c:d": {"bones": {"root": {"rotate": [
+                {"time": 0, "value": 0}, {"time": 0.2, "value": 10}]}}},
+        },
+    }), encoding="utf-8")
+
+    _load(widget, tmp_path / "m.json", qapp)
+    widget.select_all_animations()
+    qapp.processEvents()
+
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(outdir))
+    widget.fps_spinbox.setValue(5)
+    widget.scale_spinbox.setValue(0.5)
+    widget.export_gif()
+    assert widget._export_worker.wait(300000)
+    qapp.processEvents()
+
+    files = sorted(p.name for p in outdir.glob("*.gif"))
+    assert len(files) == 2
+    assert all("/" not in f and ":" not in f for f in files)
+
+
+def test_cancelled_directory_dialog_aborts_batch(widget, toy_project, qapp, monkeypatch):
+    _load(widget, toy_project, qapp)
+    widget.select_all_animations()
+    qapp.processEvents()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
+    widget.export_gif()
+    assert widget._export_worker is None or not widget._export_worker.isRunning()

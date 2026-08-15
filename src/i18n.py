@@ -142,6 +142,15 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Scale:":                            "縮放：",
         "Crop to animation":                 "裁切至動畫範圍",
         "Cancel":                            "取消",
+        "Export Engine":                     "匯出引擎",
+        "Locate SpineViewerCLI…":            "指定 SpineViewerCLI…",
+        "Locate SpineViewerCLI":             "指定 SpineViewerCLI",
+        "Change SpineViewerCLI path…":       "變更 SpineViewerCLI 路徑…",
+        "Select All":                        "全選",
+        "Ctrl/Shift-click to select several, then export them all at once.":
+                                             "按住 Ctrl／Shift 可複選多個動畫，一次全部匯出。",
+        "💾 Export {n} animations":          "💾 匯出 {n} 個動畫",
+        "Save":                              "儲存",
 
         # ── Status bar ────────────────────────────────────────────────────────
         "Materials: 0":                      "素材：0",
