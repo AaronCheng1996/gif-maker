@@ -204,6 +204,77 @@ def test_compute_bounds_tracks_animation_extent(tmp_path):
     assert h == pytest.approx(16, abs=1e-6)
 
 
+def test_attachment_name_field_selects_the_atlas_region(tmp_path):
+    """Skinned exports key an attachment by the slot-facing name but point at a
+    differently-named region via a "name" field. Missing that override makes the
+    region lookup fail and the part silently disappear."""
+    skel = _region_skeleton()
+    skel["skins"] = [{
+        "name": "default",
+        "attachments": {
+            # Slot asks for "square"; the real region is "blue".
+            "square": {"square": {"type": "region", "name": "blue",
+                                  "width": 16, "height": 16}}
+        },
+    }]
+    skel["slots"] = [{"name": "square", "bone": "root", "attachment": "square"}]
+    path = _write_project(tmp_path, skel)
+
+    p = load_project(path)
+    att = p.skeleton.get_attachment("square", "square")
+    assert att is not None
+    assert att.region is not None, "the name field should resolve the atlas region"
+    assert att.region.name == "blue"
+
+    a = np.asarray(SpineRenderer(p).render(None, 0.0, RenderSettings(1.0)))
+    assert tuple(a[32, 32]) == (0, 0, 255, 255)
+
+
+def test_explicit_path_wins_over_the_name_field(tmp_path):
+    skel = _region_skeleton()
+    skel["skins"] = [{
+        "name": "default",
+        "attachments": {
+            "square": {"square": {"type": "region", "name": "blue", "path": "red",
+                                  "width": 16, "height": 16}}
+        },
+    }]
+    skel["slots"] = [{"name": "square", "bone": "root", "attachment": "square"}]
+    p = load_project(_write_project(tmp_path, skel))
+    assert p.skeleton.get_attachment("square", "square").region.name == "red"
+
+
+def test_rotated_region_samples_the_right_pixels(tmp_path):
+    """A 90-degree packed region must un-rotate correctly, otherwise the mesh
+    samples empty atlas space and the part renders full of holes."""
+    # Page: a 16x32 red block laid on its side at (0,0), i.e. 32x16 on the page.
+    page = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    page.paste(Image.new("RGBA", (32, 16), (255, 0, 0, 255)), (0, 0))
+    page.save(tmp_path / "sprites.png")
+    (tmp_path / "rot.atlas").write_text(
+        "sprites.png\nsize: 64, 64\nred\nbounds: 0, 0, 16, 32\nrotate: 90\n",
+        encoding="utf-8")
+    (tmp_path / "rot.json").write_text(json.dumps({
+        "skeleton": {"spine": "4.1.23", "x": -32, "y": -32, "width": 64, "height": 64},
+        "bones": [{"name": "root"}],
+        "slots": [{"name": "s", "bone": "root", "attachment": "red"}],
+        "skins": [{"name": "default", "attachments": {
+            "s": {"red": {"type": "region", "path": "red", "width": 16, "height": 32}}}}],
+        "animations": {},
+    }), encoding="utf-8")
+
+    p = load_project(tmp_path / "rot.json")
+    region = p.atlas.find_region("red")
+    assert (region.packed_width, region.packed_height) == (32, 16)
+
+    a = np.asarray(SpineRenderer(p).render(None, 0.0, RenderSettings(1.0)))
+    # The 16x32 sprite is centred: every pixel inside it must be opaque red,
+    # with no holes from sampling outside the packed area.
+    inner = a[32 - 14:32 + 14, 32 - 6:32 + 6]
+    assert (inner[:, :, 3] == 255).all()
+    assert (inner[:, :, 0] == 255).all()
+
+
 def test_draw_order_puts_later_slots_on_top(tmp_path):
     """Two overlapping opaque squares: the one later in draw order wins."""
     skel = _region_skeleton()

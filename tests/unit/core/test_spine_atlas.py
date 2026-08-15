@@ -60,14 +60,32 @@ def test_41_bounds_and_defaults():
     assert (head.offset_x, head.offset_y) == (0, 0)
 
 
-def test_41_rotated_region_swaps_original_size():
-    """bounds is the footprint on the page; the source image is the un-rotated one."""
+def test_41_rotated_region_records_unrotated_size():
+    """`bounds` gives the source size before rotation; the page footprint is swapped.
+
+    Reading it the other way round pushes real regions past the page edge, and
+    makes Spine's UV maths sample the wrong part of the atlas."""
     atlas = Atlas.parse_text(ATLAS_41)
     r = atlas.find_region("rotated_part")
     assert r.degrees == 270
-    assert (r.width, r.height) == (30, 60)          # packed, on-page
-    assert (r.original_width, r.original_height) == (60, 30)  # un-rotated source
-    assert (r.packed_width, r.packed_height) == (30, 60)
+    assert (r.width, r.height) == (30, 60)                     # un-rotated source
+    assert (r.original_width, r.original_height) == (30, 60)   # nothing trimmed
+    assert (r.packed_width, r.packed_height) == (60, 30)       # swapped on the page
+
+
+def test_unrotated_region_footprint_matches_its_size():
+    atlas = Atlas.parse_text(ATLAS_41)
+    r = atlas.find_region("head")
+    assert (r.packed_width, r.packed_height) == (r.width, r.height)
+
+
+def test_rotated_regions_stay_inside_the_page():
+    """A packed atlas never places a region past the page edge; this is what
+    distinguishes the two possible readings of `bounds` for rotated regions."""
+    atlas = Atlas.parse_text(ATLAS_41)
+    for r in atlas.regions.values():
+        assert r.x + r.packed_width <= r.page.width
+        assert r.y + r.packed_height <= r.page.height
 
 
 def test_41_offsets_record_trimming():

@@ -32,16 +32,19 @@ class AtlasRegion:
         self.offset_x = self.offset_y = 0
         self.original_width = self.original_height = 0
 
-    # `width`/`height` are the region's footprint *on the page*, i.e. already
-    # rotated. `original_width`/`original_height` describe the source image
-    # before rotation and whitespace stripping.
+    # `width`/`height` are the source image's dimensions *before* rotation, which
+    # is what Spine's UV maths expects. A 90/270 region therefore occupies a
+    # swapped footprint on the page — verified against real atlases, where the
+    # unswapped reading pushes regions past the page edge.
     @property
     def packed_width(self) -> int:
-        return self.width
+        """Horizontal extent actually occupied on the atlas page."""
+        return self.height if self.degrees in (90, 270) else self.width
 
     @property
     def packed_height(self) -> int:
-        return self.height
+        """Vertical extent actually occupied on the atlas page."""
+        return self.width if self.degrees in (90, 270) else self.height
 
     def __repr__(self):
         return (f"AtlasRegion({self.name!r}, page={self.page.name!r}, "
@@ -176,12 +179,9 @@ class Atlas:
 
     @staticmethod
     def _finalize_region(region: AtlasRegion) -> None:
-        """Without an `offsets`/`orig` line nothing was stripped, so the source size
-        equals the packed size — un-rotated, so 90/270 regions swap width/height."""
-        if not region.original_width or not region.original_height:
-            if region.degrees in (90, 270):
-                region.original_width = region.height
-                region.original_height = region.width
-            else:
-                region.original_width = region.width
-                region.original_height = region.height
+        """Without an `offsets`/`orig` line nothing was stripped, so the untrimmed
+        source size equals the recorded (already un-rotated) size."""
+        if not region.original_width:
+            region.original_width = region.width
+        if not region.original_height:
+            region.original_height = region.height

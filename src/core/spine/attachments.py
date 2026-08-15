@@ -22,9 +22,14 @@ class Attachment:
     type = None
 
     def __init__(self, name: str, data: dict):
+        # `name` is the key the slot looks this attachment up by. An optional
+        # "name" field overrides the attachment's own name, and the atlas region
+        # is resolved as: path -> name field -> key. Skinned exports rely on
+        # this: skin1's {"armL": {"name": "armL skin12"}} must load the region
+        # "armL skin12" while still being addressable by the slot as "armL".
         self.name = name
         self.data = data
-        self.path = data.get("path", name)
+        self.path = data.get("path", data.get("name", name))
         color = data.get("color")
         self.color = _parse_color(color) if color else (1.0, 1.0, 1.0, 1.0)
 

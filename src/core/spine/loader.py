@@ -134,21 +134,23 @@ def _compute_atlas_uvs(region_uvs: np.ndarray, region: AtlasRegion) -> np.ndarra
     v = region.y / th
     ow, oh = float(region.original_width), float(region.original_height)
     ox, oy = float(region.offset_x), float(region.offset_y)
-    pw, ph = float(region.packed_width), float(region.packed_height)
+    # Spine's updateRegion works with the region's un-rotated size here, not its
+    # on-page footprint.
+    rw, rh = float(region.width), float(region.height)
 
     su = region_uvs[:, 0]
     sv = region_uvs[:, 1]
     out = np.empty_like(region_uvs)
 
     if region.degrees == 90:
-        u -= (oh - oy - ph) / tw
-        v -= (ow - ox - pw) / th
+        u -= (oh - oy - rh) / tw
+        v -= (ow - ox - rw) / th
         w = oh / tw
         h = ow / th
         out[:, 0] = u + sv * w
         out[:, 1] = v + h - su * h
     elif region.degrees == 180:
-        u -= (ow - ox - pw) / tw
+        u -= (ow - ox - rw) / tw
         v -= oy / th
         w = ow / tw
         h = oh / th
@@ -163,7 +165,7 @@ def _compute_atlas_uvs(region_uvs: np.ndarray, region: AtlasRegion) -> np.ndarra
         out[:, 1] = v + su * h
     else:
         u -= ox / tw
-        v -= (oh - oy - ph) / th
+        v -= (oh - oy - rh) / th
         w = ow / tw
         h = oh / th
         out[:, 0] = u + su * w
