@@ -1,10 +1,28 @@
 """Load a Spine project (skeleton .json + .atlas + texture pages) into memory."""
+import contextlib
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 from PIL import Image
+
+# Pillow refuses images past ~179 MPix by default as a decompression-bomb guard.
+# Spine atlases are legitimately huge — 16384x16384 (268 MPix) is common for
+# detailed models — so the ceiling is raised while reading atlas pages only,
+# rather than switching the guard off process-wide.
+MAX_ATLAS_PIXELS = 32768 * 32768
+
+
+@contextlib.contextmanager
+def _relaxed_image_limit(limit: int = MAX_ATLAS_PIXELS):
+    previous = Image.MAX_IMAGE_PIXELS
+    if previous is not None and previous < limit:
+        Image.MAX_IMAGE_PIXELS = limit
+    try:
+        yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
 
 from .animation import Animation
 from .atlas import Atlas, AtlasRegion
@@ -79,9 +97,7 @@ def load_project(skeleton_path, atlas_path=None) -> SpineProject:
         tex_path = atlas_path.parent / page.name
         if not tex_path.exists():
             raise SpineLoadError(f"Atlas page image not found: {tex_path}")
-        img = Image.open(tex_path).convert("RGBA")
-        page.width, page.height = img.size
-        textures[page.name] = np.asarray(img)
+        textures[page.name] = _load_atlas_page(tex_path, page)
 
     skeleton = Skeleton(data)
 
@@ -105,6 +121,30 @@ def load_project(skeleton_path, atlas_path=None) -> SpineProject:
 
     return SpineProject(skeleton, atlas, textures, animations,
                         skeleton_path.stem, skeleton_path.parent)
+
+
+def _load_atlas_page(tex_path: Path, page) -> np.ndarray:
+    """Decode one atlas page to an RGBA array, with useful errors when it is
+    too large for Pillow's guard or for available memory."""
+    try:
+        with _relaxed_image_limit():
+            with Image.open(tex_path) as img:
+                page.width, page.height = img.size
+                return np.asarray(img.convert("RGBA"))
+    except Image.DecompressionBombError as e:
+        raise SpineLoadError(
+            f"Atlas page {tex_path.name} is larger than this app will decode "
+            f"({MAX_ATLAS_PIXELS:,} pixels max): {e}") from e
+    except MemoryError as e:
+        w = getattr(page, "width", 0) or 0
+        h = getattr(page, "height", 0) or 0
+        needed = w * h * 4 / (1024 ** 3)
+        raise SpineLoadError(
+            f"Ran out of memory decoding atlas page {tex_path.name} "
+            f"({w}x{h}, about {needed:.1f} GB as RGBA). Export the GIF with "
+            f"SpineViewerCLI instead, which streams the atlas on the GPU.") from e
+    except OSError as e:
+        raise SpineLoadError(f"Could not read atlas page {tex_path.name}: {e}") from e
 
 
 def _wire_attachments(skeleton: Skeleton, atlas: Atlas):

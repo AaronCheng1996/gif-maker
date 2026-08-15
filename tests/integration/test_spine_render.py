@@ -204,6 +204,39 @@ def test_compute_bounds_tracks_animation_extent(tmp_path):
     assert h == pytest.approx(16, abs=1e-6)
 
 
+def test_loads_an_atlas_past_pillows_bomb_guard(region_project, monkeypatch):
+    """Spine atlases are legitimately huge (16384x16384 is common), which trips
+    Pillow's decompression-bomb guard. Simulate that by lowering the guard below
+    the test atlas instead of shipping a giant PNG."""
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 16)
+    p = load_project(region_project)
+    assert p.textures["sprites.png"].shape == (64, 64, 4)
+
+
+def test_image_limit_is_restored_after_loading(region_project, monkeypatch):
+    """The guard is relaxed only while reading atlas pages, not process-wide."""
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 16)
+    load_project(region_project)
+    assert Image.MAX_IMAGE_PIXELS == 16
+
+
+def test_image_limit_is_restored_even_when_loading_fails(tmp_path, monkeypatch):
+    _write_project(tmp_path, _region_skeleton())
+    (tmp_path / "sprites.png").write_bytes(b"not a png")
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 16)
+    with pytest.raises(SpineLoadError):
+        load_project(tmp_path / "test.json")
+    assert Image.MAX_IMAGE_PIXELS == 16
+
+
+def test_unreadable_atlas_page_reports_the_filename(tmp_path):
+    _write_project(tmp_path, _region_skeleton())
+    (tmp_path / "sprites.png").write_bytes(b"not a png")
+    with pytest.raises(SpineLoadError) as exc:
+        load_project(tmp_path / "test.json")
+    assert "sprites.png" in str(exc.value)
+
+
 def test_attachment_name_field_selects_the_atlas_region(tmp_path):
     """Skinned exports key an attachment by the slot-facing name but point at a
     differently-named region via a "name" field. Missing that override makes the
