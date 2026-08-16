@@ -10,13 +10,21 @@ Two export engines:
   but JSON-format Spine 4.x only.
 
 The animation list is multi-select so a whole model can be exported in one go.
-The scrubbable preview always uses the built-in renderer (a subprocess per
-scrubbed frame would be far too slow); when the built-in runtime cannot parse a
-model, export via the CLI still works and only the preview is unavailable.
+
+The preview is rendered by whichever engine will do the export. Under the CLI
+that means one `-f Frames` run per animation, which writes PNGs into a temp
+folder as it renders: the first frame lands about a second in, the rest fill in
+behind it faster than they play back, and from then on scrubbing and playback
+are just file reads. That also makes the preview show exactly what the export
+will contain. The built-in software rasteriser is the fallback — it costs
+roughly a third of a second per frame, so scrubbing lags and playback crawls.
 """
+import hashlib
+import shutil
 import sys
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                               QListWidget, QListWidgetItem, QGroupBox, QSpinBox,
@@ -36,6 +44,10 @@ from ..core.spine import cli_backend
 from .theme import AppTheme as _T
 
 PREVIEW_MAX = 460
+# The preview runs at its own frame rate. Matching the export's fps would mean
+# re-rendering the whole animation every time that spinbox ticks, and a few
+# frames per second either way is not something you can see in a preview.
+PREVIEW_FPS = 15
 ENGINE_CLI = "SpineViewerCLI"
 ENGINE_BUILTIN = "Built-in"
 CLI_PATH_SETTING = "spineviewer_cli_path"
@@ -109,6 +121,42 @@ class _PreviewWorker(QThread):
             self.done.emit(renderer.render(self.animation, self.time, self.settings))
         except Exception as e:
             self.error.emit(str(e))
+
+
+class _CliPreviewWorker(QThread):
+    """Renders a whole animation to PNGs with the CLI, reporting frames as they land."""
+    # Every signal carries the key it belongs to: a superseded render can still
+    # have queued signals in flight when the next one starts.
+    frame = pyqtSignal(object, int, object)   # key, index, Path
+    done = pyqtSignal(object, int)            # key, frame count
+    error = pyqtSignal(object, str)           # key, message
+
+    def __init__(self, skeleton_path: Path, frame_dir: Path, animation: str,
+                 options, cli_path: str, key: tuple, parent=None):
+        super().__init__(parent)
+        self.skeleton_path = skeleton_path
+        self.frame_dir = frame_dir
+        self.animation = animation
+        self.options = options
+        self.cli_path = cli_path
+        self.key = key
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            frames = cli_backend.render_frame_sequence(
+                self.skeleton_path, self.frame_dir, self.animation,
+                options=self.options, cli_path=self.cli_path,
+                on_frame=lambda i, path: self.frame.emit(self.key, i, path),
+                should_stop=lambda: self._cancelled)
+            if not self._cancelled:
+                self.done.emit(self.key, len(frames))
+        except Exception as e:
+            if not self._cancelled:
+                self.error.emit(self.key, str(e))
 
 
 class _ExportWorker(QThread):
@@ -231,8 +279,18 @@ class SpineToGifWidget(QWidget):
 
         self._load_worker: Optional[_LoadWorker] = None
         self._preview_worker: Optional[_PreviewWorker] = None
+        self._cli_preview_worker: Optional[_CliPreviewWorker] = None
         self._export_worker: Optional[_ExportWorker] = None
         self._preview_pending = False
+
+        # Frames the CLI has rendered for the preview. They live on disk rather
+        # than in memory so that flicking between a model's dozen animations
+        # does not accumulate hundreds of megabytes of pixmaps; decoding one PNG
+        # costs a few milliseconds, which is nothing against a 15 fps budget.
+        self._frames_root: Optional[Path] = None
+        self._rendered: Dict[tuple, List[Path]] = {}
+        self._frame_key: Optional[tuple] = None
+        self._frame_paths: List[Path] = []
 
         self._preview_debounce = QTimer(self)
         self._preview_debounce.setSingleShot(True)
@@ -503,14 +561,20 @@ class SpineToGifWidget(QWidget):
         # Framing is the built-in renderer's business; the CLI picks its own.
         self.tight_bounds_checkbox.setEnabled(not using_cli)
         self.tight_bounds_checkbox.setToolTip(
-            "SpineViewerCLI chooses its own canvas, so this only affects the "
-            "preview and the built-in engine."
+            "SpineViewerCLI chooses its own canvas, so this has no effect on it."
             if using_cli else
             "Fit the canvas to what the animation actually covers instead of the "
             "skeleton's exported bounding box")
+        if not using_cli:
+            # Keep the rendered frames on disk for a switch back, but stop
+            # showing them: the built-in engine frames differently.
+            self._stop_cli_preview()
+            self._frame_key = None
+            self._frame_paths = []
         self._cached_bounds = None
         self._update_export_button_text()
         self._update_frame_estimate()
+        self._update_enabled_state()
         self._schedule_preview()
 
     def browse_for_cli(self):
@@ -555,6 +619,8 @@ class SpineToGifWidget(QWidget):
         self.project = project
         self.model_info = info
         self._cached_bounds = None
+        self._stop_cli_preview()
+        self._discard_preview_frames()
 
         # The CLI's list is authoritative (it understands every Spine version).
         if info is not None and info.animations:
@@ -652,6 +718,10 @@ class SpineToGifWidget(QWidget):
 
     def _on_time_changed(self, _value: int):
         self._update_time_label()
+        anim = self.current_animation
+        if anim and self._frame_key == self._preview_key(anim):
+            self._show_frame(self.time_slider.value())
+            return
         self._schedule_preview()
 
     def _on_settings_changed(self, *_):
@@ -684,12 +754,11 @@ class SpineToGifWidget(QWidget):
             f"{self._current_time():.2f}s / {self.animations.get(anim, 0.0):.2f}s")
 
     def _render_bounds(self):
-        """Framing for the preview and the built-in exporter.
+        """Framing for the built-in renderer.
 
-        This does not try to mirror SpineViewerCLI's canvas: it picks its own,
-        and matching it exactly needs a probe export that made selecting an
-        animation take seconds. Cropping now happens in the Crop GIF tab, on the
-        finished file, so the preview only has to be representative."""
+        This does not try to mirror SpineViewerCLI's canvas — the CLI picks its
+        own, and under that engine the preview comes from the CLI too, so there
+        is nothing left to reconcile."""
         if self.project is None or not self.tight_bounds_checkbox.isChecked():
             return None
         if self._cached_bounds is None:
@@ -698,8 +767,153 @@ class SpineToGifWidget(QWidget):
             self._cached_bounds = renderer.compute_bounds(self.current_animation)
         return self._cached_bounds
 
+    # ── CLI preview: render the animation once, then scrub it from disk ──
+
+    def _use_cli_preview(self) -> bool:
+        return (self.engine == ENGINE_CLI and bool(self.cli_path)
+                and self.skeleton_path is not None and bool(self.animations))
+
+    def _preview_key(self, animation: str) -> tuple:
+        """Everything that changes what the preview looks like.
+
+        Deliberately not the export's fps, scale or loop count: those change the
+        file but not what the animation looks like, and folding them in here
+        would throw away a rendered animation every time a spinbox ticks."""
+        return (str(self.skeleton_path), animation, self.skin_combo.currentText(),
+                self.transparent_checkbox.isChecked())
+
+    def _frame_dir_for(self, key: tuple) -> Path:
+        if self._frames_root is None:
+            self._frames_root = Path(tempfile.mkdtemp(prefix="gifmaker_spine_preview_"))
+        digest = hashlib.sha1("\x1f".join(str(p) for p in key).encode("utf-8")).hexdigest()
+        return self._frames_root / digest[:16]
+
+    def _start_cli_preview(self, animation: str):
+        key = self._preview_key(animation)
+        if key == self._frame_key and self._cli_preview_worker is not None:
+            return   # already rendering exactly this
+        self._stop_cli_preview()
+        self._frame_key = key
+
+        cached = self._rendered.get(key)
+        if cached:
+            self._frame_paths = list(cached)
+            self._sync_slider_to_frames()
+            self._show_frame(self.time_slider.value())
+            return
+
+        self._frame_paths = []
+        self.preview_label.setText(tr("Rendering with SpineViewerCLI…"))
+        self.preview_status.setText(tr("Starting SpineViewerCLI…"))
+
+        # Until the frames land, the slider is sized by estimate so the progress
+        # readout has something to count towards.
+        duration = self.animations.get(animation, 0.0)
+        self.time_slider.blockSignals(True)
+        self.time_slider.setMaximum(max(1, int(round(duration * PREVIEW_FPS))) - 1)
+        self.time_slider.setValue(0)
+        self.time_slider.blockSignals(False)
+
+        skin = self.skin_combo.currentText()
+        options = cli_backend.ExportOptions(
+            fps=PREVIEW_FPS,
+            scale=1.0,
+            loop=True,
+            skins=[skin] if skin else [],
+            background=None if self.transparent_checkbox.isChecked() else "#FFFFFFFF",
+            # The canvas is capped rather than scaled: SpineViewer chooses its
+            # own canvas, so a maximum is the only way to land on a preview-sized
+            # image without knowing that size up front.
+            max_resolution=PREVIEW_MAX)
+
+        self._cli_preview_worker = _CliPreviewWorker(
+            self.skeleton_path, self._frame_dir_for(key), animation, options,
+            self.cli_path, key, self)
+        self._cli_preview_worker.frame.connect(self._on_cli_frame)
+        self._cli_preview_worker.done.connect(self._on_cli_preview_done)
+        self._cli_preview_worker.error.connect(self._on_cli_preview_error)
+        self._cli_preview_worker.start()
+
+    def _stop_cli_preview(self):
+        worker, self._cli_preview_worker = self._cli_preview_worker, None
+        if worker is not None:
+            worker.cancel()
+            worker.wait(10000)
+
+    def _on_cli_frame(self, key, index: int, path):
+        if key != self._frame_key:
+            return
+        self._frame_paths.append(Path(path))
+        expected = max(self.time_slider.maximum() + 1, index + 1)
+        self.preview_status.setText(f"Rendering… {index + 1}/{expected} frames")
+        # Show the first frame the moment it exists; after that, only keep
+        # following the render if the user has scrubbed ahead of it anyway.
+        if index == 0 or self.time_slider.value() >= index:
+            self._show_frame(self.time_slider.value())
+
+    def _on_cli_preview_done(self, key, _count: int):
+        if key != self._frame_key:
+            return
+        self._cli_preview_worker = None
+        if not self._frame_paths:
+            self.preview_status.setText(tr("SpineViewerCLI produced no frames."))
+            return
+        self._rendered[key] = list(self._frame_paths)
+        self._sync_slider_to_frames()
+        self._show_frame(self.time_slider.value())
+
+    def _on_cli_preview_error(self, key, message: str):
+        if key != self._frame_key:
+            return
+        self._cli_preview_worker = None
+        self._frame_key = None
+        self._frame_paths = []
+        if self.project is not None:
+            self.preview_status.setText(
+                f"SpineViewerCLI preview failed ({message}); using the built-in renderer.")
+            self._preview_debounce.start(0)
+        else:
+            self.preview_label.setText(tr("Preview unavailable"))
+            self.preview_status.setText(f"Preview failed: {message}")
+
+    def _sync_slider_to_frames(self):
+        """One slider notch per rendered frame, so scrubbing lands on real frames."""
+        self.time_slider.blockSignals(True)
+        self.time_slider.setMaximum(max(len(self._frame_paths) - 1, 0))
+        self.time_slider.setValue(min(self.time_slider.value(), self.time_slider.maximum()))
+        self.time_slider.blockSignals(False)
+        self._update_time_label()
+
+    def _show_frame(self, index: int):
+        """Put an already-rendered frame on screen — just a file read."""
+        if not self._frame_paths:
+            return
+        index = max(0, min(index, len(self._frame_paths) - 1))
+        pixmap = QPixmap(str(self._frame_paths[index]))
+        if pixmap.isNull():
+            return
+        ready = len(self._frame_paths)
+        total = max(self.time_slider.maximum() + 1, ready)
+        suffix = "" if ready >= total else f"  ·  rendering {ready}/{total}"
+        self._set_preview_pixmap(pixmap, f"{pixmap.width()}×{pixmap.height()}{suffix}")
+
+    def _set_preview_pixmap(self, pixmap: QPixmap, status: str):
+        avail = self.preview_label.size()
+        if pixmap.width() > avail.width() or pixmap.height() > avail.height():
+            pixmap = pixmap.scaled(avail, Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+        self.preview_label.setPixmap(pixmap)
+        self.preview_status.setText(status)
+
+    # ── built-in preview (fallback) ──────────────────────────────────────
+
     def _schedule_preview(self):
-        if self.project is None or not self.current_animation:
+        if not self.current_animation:
+            return
+        if self._use_cli_preview():
+            self._start_cli_preview(self.current_animation)
+            return
+        if self.project is None:
             return
         self._preview_debounce.start(60)
 
@@ -728,13 +942,7 @@ class SpineToGifWidget(QWidget):
         self._preview_worker.start()
 
     def _on_preview_done(self, img: Image.Image):
-        pixmap = _pil_to_pixmap(img)
-        avail = self.preview_label.size()
-        if pixmap.width() > avail.width() or pixmap.height() > avail.height():
-            pixmap = pixmap.scaled(avail, Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-        self.preview_label.setPixmap(pixmap)
-        self.preview_status.setText(f"{img.width}×{img.height}")
+        self._set_preview_pixmap(_pil_to_pixmap(img), f"{img.width}×{img.height}")
         if self._preview_pending:
             self._preview_pending = False
             self._render_preview()
@@ -748,11 +956,17 @@ class SpineToGifWidget(QWidget):
         self.pause_playback() if self._playing else self.play_playback()
 
     def play_playback(self):
-        if self.project is None or not self.current_animation:
+        if not self.current_animation:
+            return
+        if self.project is None and not self._frame_paths:
             return
         self._playing = True
         self.play_btn.setText("⏸")
-        self._play_timer.start(int(1000 / max(self.fps_spinbox.value(), 1)))
+        # CLI frames were rendered at PREVIEW_FPS, so they have to be played back
+        # at that rate or the animation runs fast; the built-in renderer draws
+        # whatever time the slider asks for, so there the export fps is right.
+        fps = PREVIEW_FPS if self._frame_paths else self.fps_spinbox.value()
+        self._play_timer.start(int(1000 / max(fps, 1)))
 
     def pause_playback(self):
         self._playing = False
@@ -935,9 +1149,18 @@ class SpineToGifWidget(QWidget):
         for w in (self.skin_combo, self.animation_list, self.export_btn,
                   self.select_all_btn):
             w.setEnabled(has)
-        can_preview = self.project is not None and has
+        can_preview = has and (self.project is not None or self._use_cli_preview())
         self.play_btn.setEnabled(can_preview)
         self.time_slider.setEnabled(can_preview)
+
+    def _discard_preview_frames(self):
+        """Drop the rendered frames and the temp folder holding them."""
+        self._rendered.clear()
+        self._frame_key = None
+        self._frame_paths = []
+        if self._frames_root is not None:
+            shutil.rmtree(self._frames_root, ignore_errors=True)
+            self._frames_root = None
 
     def stop_workers(self, timeout_ms: int = 30000):
         """Stop timers and wait for background work to finish.
@@ -949,11 +1172,16 @@ class SpineToGifWidget(QWidget):
         self._playing = False
         if self._export_worker is not None:
             self._export_worker.cancel()
-        for worker in (self._load_worker, self._preview_worker, self._export_worker):
+        if self._cli_preview_worker is not None:
+            self._cli_preview_worker.cancel()
+        for worker in (self._load_worker, self._preview_worker,
+                       self._cli_preview_worker, self._export_worker):
             if worker is not None and worker.isRunning():
                 worker.wait(timeout_ms)
+        self._cli_preview_worker = None
         self._preview_pending = False
 
     def closeEvent(self, event):
         self.stop_workers()
+        self._discard_preview_frames()
         super().closeEvent(event)

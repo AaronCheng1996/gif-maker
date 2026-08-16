@@ -1,5 +1,6 @@
 """Tests for the Spine to GIF tab, driven against the widget directly."""
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -7,7 +8,7 @@ from PIL import Image
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from src.core.spine import cli_backend
-from src.widgets.spine_to_gif_widget import (ENGINE_BUILTIN, ENGINE_CLI,
+from src.widgets.spine_to_gif_widget import (ENGINE_BUILTIN, ENGINE_CLI, PREVIEW_FPS,
                                               SpineToGifWidget)
 
 
@@ -388,3 +389,170 @@ def test_cancelled_directory_dialog_aborts_batch(widget, toy_project, qapp, monk
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
     widget.export_gif()
     assert widget._export_worker is None or not widget._export_worker.isRunning()
+
+
+# ── CLI preview: render the animation once, then scrub it from disk ──────
+
+@pytest.fixture()
+def fake_render(monkeypatch):
+    """Replace the CLI render with one that writes frames straight to disk."""
+    calls = []
+
+    def install(frames=3, error=None):
+        def render(skeleton_path, output_dir, animation, options=None, cli_path=None,
+                   atlas_path=None, on_frame=None, should_stop=None, **kwargs):
+            calls.append((animation, options))
+            if error is not None:
+                raise error
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            written = []
+            for i in range(frames):
+                path = output_dir / f"frame_{i:06d}.png"
+                Image.new("RGBA", (8, 8), (10 * i, 0, 0, 255)).save(path)
+                written.append(path)
+                if on_frame is not None:
+                    on_frame(i, path)
+            return written
+
+        monkeypatch.setattr(cli_backend, "render_frame_sequence", render)
+        return calls
+
+    return install
+
+
+@pytest.fixture()
+def cli_widget(qapp, monkeypatch, tmp_path):
+    fake = tmp_path / cli_backend.EXE_NAME
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_backend, "find_cli", lambda *a, **k: str(fake))
+    w = SpineToGifWidget()
+    yield w
+    w.stop_workers()
+    w._discard_preview_frames()
+
+
+def _select(widget, qapp, row=0):
+    widget.animation_list.setCurrentRow(row)
+    qapp.processEvents()
+    worker = widget._cli_preview_worker
+    if worker is not None:
+        assert worker.wait(60000)
+    qapp.processEvents()
+
+
+def test_cli_engine_previews_from_rendered_frames(cli_widget, toy_project, qapp, fake_render):
+    calls = fake_render(frames=4)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    assert len(calls) == 1
+    assert len(cli_widget._frame_paths) == 4
+    # One slider notch per frame, so scrubbing lands on frames the CLI produced.
+    assert cli_widget.time_slider.maximum() == 3
+    pixmap = cli_widget.preview_label.pixmap()
+    assert pixmap is not None and not pixmap.isNull()
+
+
+def test_scrubbing_rendered_frames_does_not_re_render(cli_widget, toy_project, qapp,
+                                                      fake_render):
+    calls = fake_render(frames=4)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    for value in (3, 1, 2, 0):
+        cli_widget.time_slider.setValue(value)
+        qapp.processEvents()
+    assert len(calls) == 1
+
+
+def test_returning_to_an_animation_reuses_its_frames(cli_widget, toy_project, qapp,
+                                                     fake_render):
+    calls = fake_render(frames=4)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp, row=0)
+    _select(cli_widget, qapp, row=1)
+    _select(cli_widget, qapp, row=0)
+
+    # Two animations, two renders — the third selection came off the disk cache.
+    assert len(calls) == 2
+    assert len(cli_widget._frame_paths) == 4
+
+
+def test_changing_the_skin_re_renders(cli_widget, toy_project, qapp, fake_render):
+    calls = fake_render(frames=2)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.skin_combo.setCurrentText("alt")
+    qapp.processEvents()
+    if cli_widget._cli_preview_worker is not None:
+        assert cli_widget._cli_preview_worker.wait(60000)
+    qapp.processEvents()
+    assert len(calls) == 2
+
+
+def test_export_only_settings_do_not_discard_the_preview(cli_widget, toy_project, qapp,
+                                                         fake_render):
+    calls = fake_render(frames=2)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    # fps, scale and loop change the file, not what the animation looks like.
+    cli_widget.fps_spinbox.setValue(30)
+    cli_widget.scale_spinbox.setValue(0.5)
+    cli_widget.loop_spinbox.setValue(3)
+    cli_widget.time_slider.setValue(1)
+    qapp.processEvents()
+    assert len(calls) == 1
+
+
+def test_rendered_frames_play_back_at_the_preview_rate(cli_widget, toy_project, qapp,
+                                                       fake_render):
+    fake_render(frames=4)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.fps_spinbox.setValue(30)   # export fps, not the preview's
+    cli_widget.play_playback()
+    try:
+        assert cli_widget._play_timer.interval() == int(1000 / PREVIEW_FPS)
+    finally:
+        cli_widget.pause_playback()
+
+
+def test_preview_falls_back_to_the_builtin_renderer_when_the_cli_fails(
+        cli_widget, toy_project, qapp, fake_render):
+    fake_render(error=RuntimeError("no runtime for this model"))
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    assert cli_widget._frame_paths == []
+    assert "built-in" in cli_widget.preview_status.text()
+    assert "no runtime for this model" in cli_widget.preview_status.text()
+
+
+def test_switching_to_the_builtin_engine_stops_using_rendered_frames(
+        cli_widget, toy_project, qapp, fake_render):
+    fake_render(frames=4)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+    assert cli_widget._frame_paths
+
+    cli_widget.engine_combo.setCurrentText(ENGINE_BUILTIN)
+    qapp.processEvents()
+    assert cli_widget._frame_paths == []
+    assert cli_widget._frame_key is None
+
+
+def test_discarding_frames_removes_the_temp_folder(cli_widget, toy_project, qapp,
+                                                   fake_render):
+    fake_render(frames=2)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    root = cli_widget._frames_root
+    assert root is not None and root.exists()
+    cli_widget._discard_preview_frames()
+    assert not root.exists()
+    assert cli_widget._frames_root is None

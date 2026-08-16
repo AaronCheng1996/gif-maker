@@ -147,9 +147,16 @@ The built-in runtime (`src/core/spine/`, numpy + Pillow only, no PyQt6) covers a
 bone hierarchies with all `inherit` modes, weighted-mesh skinning, IK and transform
 constraints, Bezier keyframe curves, clipping attachments, and multiply/additive/screen blend
 modes. It is CPU-bound — roughly 0.4s per frame at 500px wide for a ~5000-triangle skeleton —
-so prefer SpineViewerCLI for long animations at large scales. Preview always uses the built-in
-renderer (a subprocess per scrubbed frame would be far too slow); if it cannot parse a model,
-export through the CLI still works and only the preview is unavailable.
+so prefer SpineViewerCLI for long animations at large scales.
+
+The preview is rendered by whichever engine will do the export. Under SpineViewerCLI, picking
+an animation kicks off a single `-f Frames` run that writes preview-sized PNGs into a temp
+folder as it renders: the first frame appears about a second in, the rest fill in behind it
+faster than they play back, and after that scrubbing and playback are just file reads — around
+8ms a frame instead of the built-in renderer's 337ms. Frames stay on disk for as long as the
+model is open, so flicking back to an animation you already looked at is instant. It also
+means the preview shows exactly what the export will contain. The built-in renderer is the
+fallback, used when it is the selected engine or when the CLI cannot render the model.
 
 ### Crop GIF
 

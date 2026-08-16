@@ -7,11 +7,14 @@ versions than the built-in Python runtime, and needs no intermediate MP4.
 
 This module only shells out to it; nothing here imports PyQt6.
 """
+import copy
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -257,6 +260,97 @@ def export_animation(skeleton_path, output_path, animations: List[str],
     if not Path(output_path).exists():
         raise SpineCliError(f"Export reported success but no file was written: {output_path}")
     return output_path
+
+
+def render_frame_sequence(skeleton_path, output_dir, animation: str,
+                          options: Optional[ExportOptions] = None,
+                          cli_path: Optional[str] = None, atlas_path=None,
+                          on_frame: Optional[Callable[[int, Path], None]] = None,
+                          should_stop: Optional[Callable[[], bool]] = None,
+                          poll_interval: float = 0.05,
+                          timeout: Optional[int] = None) -> List[Path]:
+    """Render one animation to a folder of PNGs, reporting frames as they land.
+
+    `-f Frames` writes its folder one file at a time instead of all at the end,
+    and does so faster than the animation plays, so a caller can put the first
+    frame on screen about a second in and let the rest fill in behind it.
+    `on_frame(index, path)` is called once per file, in frame order.
+
+    Returns the frame paths. When `should_stop` starts returning True the CLI is
+    terminated and whatever had been rendered so far is returned."""
+    cli_path = cli_path or find_cli()
+    if not cli_path:
+        raise SpineCliError("SpineViewerCLI was not found")
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    options = copy.copy(options) if options is not None else ExportOptions()
+    options.fmt = "Frames"
+
+    args = ["export", str(skeleton_path), "-o", str(output_dir), "-a", animation]
+    if atlas_path:
+        args += ["--atlas", str(atlas_path)]
+    args += options.to_args()
+    args.append("--no-progress")
+
+    try:
+        proc = subprocess.Popen(
+            [cli_path] + args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except OSError as e:
+        raise SpineCliError(f"Could not run SpineViewerCLI: {e}") from e
+
+    log: List[str] = []
+    reader = threading.Thread(target=log.extend, args=(proc.stdout,), daemon=True)
+    reader.start()
+
+    frames: List[Path] = []
+
+    def collect(finished: bool):
+        try:
+            current = sorted(output_dir.glob("*.png"))
+        except OSError:
+            return
+        # The newest file may still be half-written, so it is held back until
+        # another one appears after it (or the CLI exits).
+        ready = current if finished else current[:-1]
+        for path in ready[len(frames):]:
+            frames.append(path)
+            if on_frame is not None:
+                on_frame(len(frames) - 1, path)
+
+    deadline = time.monotonic() + timeout if timeout else None
+    while proc.poll() is None:
+        if should_stop is not None and should_stop():
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            return frames
+        if deadline is not None and time.monotonic() > deadline:
+            proc.kill()
+            proc.wait()
+            raise SpineCliError(f"SpineViewerCLI timed out after {timeout}s")
+        collect(False)
+        time.sleep(poll_interval)
+
+    reader.join(timeout=5)
+    collect(True)
+    if proc.returncode != 0:
+        raise SpineCliError(
+            f"SpineViewerCLI exited with code {proc.returncode}.\n"
+            f"{''.join(log).strip()[-2000:]}")
+    return frames
 
 
 class Framing:

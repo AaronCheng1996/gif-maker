@@ -1,8 +1,12 @@
 """Unit tests for the SpineViewerCLI backend wrapper (no real CLI needed)."""
+import io
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from src.core.spine import cli_backend as cb
 
@@ -211,3 +215,133 @@ def test_probe_measures_canvas_and_content(monkeypatch, tmp_path):
     assert (f.canvas_w_px, f.canvas_h_px) == (20, 10)
     assert f.content_box_px == (5, 3, 11, 7)
     assert f.canvas_size_units() == (40.0, 20.0)
+
+
+# ── render_frame_sequence: streaming a preview out of the CLI ────────────
+
+class _FakeProc:
+    """A stand-in for a running SpineViewerCLI that drips frames onto disk."""
+
+    def __init__(self, out_dir, frames, returncode, delay, log):
+        self.out_dir = Path(out_dir)
+        self.frames = frames
+        self.stdout = io.StringIO(log)
+        self.returncode = None
+        self.terminated = False
+        self._final = returncode
+        self._delay = delay
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._write, daemon=True)
+        self._thread.start()
+
+    def _write(self):
+        for i in range(self.frames):
+            if self._stop.is_set():
+                break
+            time.sleep(self._delay)
+            Image.new("RGBA", (4, 4), (i, 0, 0, 255)).save(
+                self.out_dir / f"frame_15_{i:06d}.png")
+        self.returncode = self._final
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout)
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self._stop.set()
+        self._thread.join(5)
+
+    kill = terminate
+
+
+class _FakeCli:
+    def __init__(self, frames, returncode=0, delay=0.01, log=""):
+        self._args = (frames, returncode, delay, log)
+        self.cmd = []
+        self.proc = None
+
+    def __call__(self, cmd, **kwargs):
+        self.cmd = list(cmd)
+        out_dir = Path(cmd[cmd.index("-o") + 1])
+        self.proc = _FakeProc(out_dir, *self._args)
+        return self.proc
+
+
+@pytest.fixture()
+def fake_cli(monkeypatch):
+    def install(**kwargs):
+        cli = _FakeCli(**kwargs)
+        monkeypatch.setattr(cb.subprocess, "Popen", cli)
+        return cli
+    return install
+
+
+def test_frame_sequence_reports_every_frame_in_order(fake_cli, tmp_path):
+    cli = fake_cli(frames=5)
+    seen = []
+    frames = cb.render_frame_sequence(
+        tmp_path / "m.json", tmp_path / "out", "walk", cli_path="cli",
+        on_frame=lambda i, p: seen.append((i, p)), poll_interval=0.005)
+
+    assert len(frames) == 5
+    assert [i for i, _ in seen] == [0, 1, 2, 3, 4]
+    # The last file is held back while the CLI runs, so it can only be reported
+    # once the process has exited — but it must still be reported.
+    assert [p for _, p in seen] == frames
+    assert all(p.exists() for p in frames)
+
+
+def test_frame_sequence_only_reports_complete_files(fake_cli, tmp_path):
+    fake_cli(frames=6)
+    decoded = []
+    cb.render_frame_sequence(
+        tmp_path / "m.json", tmp_path / "out", "walk", cli_path="cli",
+        on_frame=lambda i, p: decoded.append(Image.open(p).size), poll_interval=0.005)
+    assert decoded == [(4, 4)] * 6
+
+
+def test_frame_sequence_forces_the_frames_format(fake_cli, tmp_path):
+    cli = fake_cli(frames=1)
+    options = cb.ExportOptions(fmt="Gif", fps=15)
+    cb.render_frame_sequence(tmp_path / "m.json", tmp_path / "out", "walk",
+                             options=options, cli_path="cli", poll_interval=0.005)
+
+    assert cli.cmd[cli.cmd.index("-f") + 1] == "Frames"
+    assert cli.cmd[cli.cmd.index("-a") + 1] == "walk"
+    # The caller's options are left alone.
+    assert options.fmt == "Gif"
+
+
+def test_frame_sequence_stops_when_asked(fake_cli, tmp_path):
+    cli = fake_cli(frames=100, delay=0.01)
+    stop = {"now": False}
+
+    def on_frame(index, _path):
+        if index >= 1:
+            stop["now"] = True
+
+    frames = cb.render_frame_sequence(
+        tmp_path / "m.json", tmp_path / "out", "walk", cli_path="cli",
+        on_frame=on_frame, should_stop=lambda: stop["now"], poll_interval=0.005)
+
+    assert 0 < len(frames) < 100
+    assert cli.proc.terminated is True
+
+
+def test_frame_sequence_reports_a_failing_cli(fake_cli, tmp_path):
+    fake_cli(frames=1, returncode=3, log="boom: bad skeleton\n")
+    with pytest.raises(cb.SpineCliError) as excinfo:
+        cb.render_frame_sequence(tmp_path / "m.json", tmp_path / "out", "walk",
+                                 cli_path="cli", poll_interval=0.005)
+    assert "code 3" in str(excinfo.value)
+    assert "bad skeleton" in str(excinfo.value)
+
+
+def test_frame_sequence_requires_a_located_cli(tmp_path, monkeypatch):
+    monkeypatch.setattr(cb, "find_cli", lambda *a, **k: None)
+    with pytest.raises(cb.SpineCliError):
+        cb.render_frame_sequence(tmp_path / "m.json", tmp_path / "out", "walk")
