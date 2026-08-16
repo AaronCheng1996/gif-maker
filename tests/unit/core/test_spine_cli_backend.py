@@ -345,3 +345,18 @@ def test_frame_sequence_requires_a_located_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(cb, "find_cli", lambda *a, **k: None)
     with pytest.raises(cb.SpineCliError):
         cb.render_frame_sequence(tmp_path / "m.json", tmp_path / "out", "walk")
+
+
+def test_jpg_is_an_offered_format():
+    assert "Jpg" in cb.EXPORT_FORMATS
+    assert cb.PROBE_EXTENSIONS["Jpg"] == "jpg"
+
+
+def test_still_formats_are_the_single_frame_ones():
+    assert cb.STILL_FORMATS == {"Png", "Jpg"}
+    assert not (cb.STILL_FORMATS & {"Gif", "Apng", "Webpa", "Frames", "Mp4"})
+
+
+def test_start_time_reaches_the_command_line():
+    args = cb.ExportOptions(fmt="Png", start_time=3.25).to_args()
+    assert args[args.index("--time") + 1] == "3.25"

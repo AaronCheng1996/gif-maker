@@ -172,6 +172,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Ctrl/Shift-click to select several, then export them all at once.":
                                              "按住 Ctrl／Shift 可複選多個動畫，一次全部匯出。",
         "💾 Export {n} animations":          "💾 匯出 {n} 個動畫",
+        "💾 Export {n} stills":              "💾 匯出 {n} 張靜圖",
         "Save":                              "儲存",
 
         # ── Status bar ────────────────────────────────────────────────────────

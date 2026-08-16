@@ -168,7 +168,8 @@ class _ExportWorker(QThread):
 
     def __init__(self, *, engine, skeleton_path, project, animations, skin, outputs,
                  fps, scale, loop_count, transparent, colors, fmt, cli_path,
-                 bounds, margin, max_resolution, parent=None):
+                 bounds, margin, max_resolution, still_time=0.0,
+                 parent=None):
         super().__init__(parent)
         self.engine = engine
         self.skeleton_path = skeleton_path
@@ -186,6 +187,7 @@ class _ExportWorker(QThread):
         self.bounds = bounds
         self.margin = margin
         self.max_resolution = max_resolution
+        self.still_time = still_time
         self._cancelled = False
 
     def cancel(self):
@@ -216,6 +218,10 @@ class _ExportWorker(QThread):
             self.error.emit(str(e))
 
     def _export_with_cli(self, animation: str):
+        # Png and Jpg write one frame, and the frame they write is whichever the
+        # preview is showing — otherwise the only still you could ever get would
+        # be the pose at t=0.
+        is_still = self.fmt in cli_backend.STILL_FORMATS
         options = cli_backend.ExportOptions(
             fmt=self.fmt,
             fps=self.fps,
@@ -225,6 +231,7 @@ class _ExportWorker(QThread):
             background=None if self.transparent else "#FFFFFFFF",
             margin=self.margin,
             max_resolution=self.max_resolution,
+            start_time=self.still_time if is_still else 0.0,
         )
         cli_backend.export_animation(
             self.skeleton_path, self.outputs[animation], [animation],
@@ -646,6 +653,12 @@ class SpineToGifWidget(QWidget):
         self.skin_combo.blockSignals(True)
         self.skin_combo.clear()
         self.skin_combo.addItems(skins)
+        # The CLI lists skins in its own order, which does not necessarily put
+        # "default" first — models that ship costume variants can list one of
+        # those ahead of it, and taking whatever came first would quietly render
+        # the wrong outfit.
+        if "default" in skins:
+            self.skin_combo.setCurrentText("default")
         self.skin_combo.blockSignals(False)
 
         self.animation_list.blockSignals(True)
@@ -695,7 +708,11 @@ class SpineToGifWidget(QWidget):
     def _update_export_button_text(self):
         count = len(self.selected_animations())
         fmt = self.format_combo.currentText() if self.engine == ENGINE_CLI else "GIF"
-        if count > 1:
+        if count > 1 and self._exports_a_still():
+            # One still per selected animation — a whole model's worth of poses
+            # in a single run.
+            self.export_btn.setText(tr("💾 Export {n} stills").replace("{n}", str(count)))
+        elif count > 1:
             self.export_btn.setText(tr("💾 Export {n} animations").replace("{n}", str(count)))
         else:
             self.export_btn.setText(f"💾 Export {fmt}")
@@ -718,6 +735,8 @@ class SpineToGifWidget(QWidget):
 
     def _on_time_changed(self, _value: int):
         self._update_time_label()
+        if self._exports_a_still():
+            self.estimate_label.setText(self._still_estimate_text())
         anim = self.current_animation
         if anim and self._frame_key == self._preview_key(anim):
             self._show_frame(self.time_slider.value())
@@ -785,7 +804,7 @@ class SpineToGifWidget(QWidget):
     def _frame_dir_for(self, key: tuple) -> Path:
         if self._frames_root is None:
             self._frames_root = Path(tempfile.mkdtemp(prefix="gifmaker_spine_preview_"))
-        digest = hashlib.sha1("\x1f".join(str(p) for p in key).encode("utf-8")).hexdigest()
+        digest = hashlib.sha1("".join(str(p) for p in key).encode("utf-8")).hexdigest()
         return self._frames_root / digest[:16]
 
     def _start_cli_preview(self, animation: str):
@@ -1003,7 +1022,9 @@ class SpineToGifWidget(QWidget):
             # known once it has run.
             self.size_label.setText(f"Scale ×{scale:.2f} (canvas chosen by the CLI)")
 
-        if self.engine == ENGINE_CLI:
+        if self._exports_a_still():
+            self.estimate_label.setText(self._still_estimate_text())
+        elif self.engine == ENGINE_CLI:
             self.estimate_label.setText(
                 f"{frames} frames at {fps} fps, rendered by SpineViewerCLI "
                 f"(official runtime, direct {self.format_combo.currentText()} output).")
@@ -1012,6 +1033,10 @@ class SpineToGifWidget(QWidget):
                 f"{frames} frames at {fps} fps. The built-in renderer is CPU-bound, "
                 f"so large scales take noticeably longer.")
 
+        # Rendered CLI frames own the slider — one notch per frame that actually
+        # exists on disk — so the fps-derived estimate must not resize it.
+        if self._frame_paths:
+            return
         if self.time_slider.maximum() != frames:
             value = self.time_slider.value()
             old_max = max(self.time_slider.maximum(), 1)
@@ -1026,9 +1051,17 @@ class SpineToGifWidget(QWidget):
             return "gif"
         return {
             "Gif": "gif", "Apng": "png", "Webp": "webp", "Webpa": "webp",
-            "Png": "png", "Frames": "", "Mp4": "mp4", "Mov": "mov",
+            "Png": "png", "Jpg": "jpg", "Frames": "", "Mp4": "mp4", "Mov": "mov",
             "Webm": "webm", "Mkv": "mkv",
         }.get(self.format_combo.currentText(), "gif")
+
+    def _exports_a_still(self) -> bool:
+        return (self.engine == ENGINE_CLI
+                and self.format_combo.currentText() in cli_backend.STILL_FORMATS)
+
+    def _still_estimate_text(self) -> str:
+        return (f"One still frame at {self._current_time():.2f}s — whichever frame the "
+                f"preview is showing. Scrub to pick it.")
 
     def export_gif(self):
         animations = self.selected_animations()
@@ -1095,6 +1128,7 @@ class SpineToGifWidget(QWidget):
             bounds=self._render_bounds(),
             margin=0,
             max_resolution=4096,
+            still_time=self._current_time(),
             parent=self)
         self._export_worker.progress.connect(self._on_export_progress)
         self._export_worker.frame_progress.connect(self._on_frame_progress)

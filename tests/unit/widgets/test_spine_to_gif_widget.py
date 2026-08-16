@@ -556,3 +556,138 @@ def test_discarding_frames_removes_the_temp_folder(cli_widget, toy_project, qapp
     cli_widget._discard_preview_frames()
     assert not root.exists()
     assert cli_widget._frames_root is None
+
+
+# ── still export: Png/Jpg take the frame the preview is showing ──────────
+
+@pytest.fixture()
+def recorded_export(monkeypatch):
+    """Capture the ExportOptions the CLI would have been driven with."""
+    calls = []
+
+    def fake_export(skeleton_path, output_path, animations, options=None, **kwargs):
+        calls.append({"animations": list(animations), "options": options,
+                      "output": str(output_path)})
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(b"stub")
+        return str(output_path)
+
+    monkeypatch.setattr(cli_backend, "export_animation", fake_export)
+    return calls
+
+
+def _export_one(widget, qapp, monkeypatch, out_path):
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(out_path), ""))
+    widget.export_gif()
+    assert widget._export_worker.wait(120000)
+    qapp.processEvents()
+
+
+def test_still_export_uses_the_scrubbed_time(cli_widget, toy_project, qapp, tmp_path,
+                                             monkeypatch, fake_render, recorded_export):
+    fake_render(frames=5)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.format_combo.setCurrentText("Png")
+    cli_widget.time_slider.setValue(cli_widget.time_slider.maximum())
+    qapp.processEvents()
+    expected = cli_widget._current_time()
+    assert expected > 0
+
+    _export_one(cli_widget, qapp, monkeypatch, tmp_path / "still.png")
+    assert len(recorded_export) == 1
+    assert recorded_export[0]["options"].start_time == pytest.approx(expected)
+
+
+def test_animated_export_ignores_the_scrubbed_time(cli_widget, toy_project, qapp, tmp_path,
+                                                   monkeypatch, fake_render, recorded_export):
+    fake_render(frames=5)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.format_combo.setCurrentText("Gif")
+    cli_widget.time_slider.setValue(cli_widget.time_slider.maximum())
+    qapp.processEvents()
+
+    _export_one(cli_widget, qapp, monkeypatch, tmp_path / "out.gif")
+    # A GIF is the whole animation, so it always starts at the beginning.
+    assert recorded_export[0]["options"].start_time == 0.0
+
+
+def test_still_formats_report_a_frame_not_a_frame_count(cli_widget, toy_project, qapp,
+                                                        fake_render):
+    fake_render(frames=5)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.format_combo.setCurrentText("Jpg")
+    qapp.processEvents()
+    assert cli_widget._exports_a_still() is True
+    assert "One still frame" in cli_widget.estimate_label.text()
+
+    cli_widget.format_combo.setCurrentText("Gif")
+    qapp.processEvents()
+    assert cli_widget._exports_a_still() is False
+    assert "frames at" in cli_widget.estimate_label.text()
+
+
+def test_jpg_maps_to_a_jpg_extension(cli_widget):
+    cli_widget.format_combo.setCurrentText("Jpg")
+    assert cli_widget._extension_for_format() == "jpg"
+
+
+def test_batch_of_stills_is_named_as_such(cli_widget, toy_project, qapp, fake_render):
+    fake_render(frames=3)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.format_combo.setCurrentText("Png")
+    cli_widget.select_all_animations()
+    qapp.processEvents()
+    assert "2 stills" in cli_widget.export_btn.text()
+
+    cli_widget.format_combo.setCurrentText("Gif")
+    qapp.processEvents()
+    assert "2 animations" in cli_widget.export_btn.text()
+
+
+def test_changing_fps_keeps_one_slider_notch_per_rendered_frame(cli_widget, toy_project,
+                                                                qapp, fake_render):
+    fake_render(frames=6)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+    assert cli_widget.time_slider.maximum() == 5
+
+    # The fps-derived estimate must not resize a slider that is indexing frames
+    # the CLI has already written to disk.
+    cli_widget.fps_spinbox.setValue(60)
+    qapp.processEvents()
+    assert cli_widget.time_slider.maximum() == 5
+
+
+def test_default_skin_wins_over_the_order_the_cli_lists(widget, qapp, tmp_path):
+    class Info:
+        # The order SpineViewerCLI actually reports for a costume-variant model.
+        skins = ["AVG", "CoverUpMode_01/3", "default", "CoverUpMode_02/1", "1"]
+        animations = {"Idle": 8.0}
+        slots = []
+
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, Info(), "")
+    qapp.processEvents()
+    assert widget.skin_combo.currentText() == "default"
+
+
+def test_first_skin_is_kept_when_there_is_no_default(widget, qapp, tmp_path):
+    class Info:
+        skins = ["outfit_a", "outfit_b"]
+        animations = {"Idle": 8.0}
+        slots = []
+
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, Info(), "")
+    qapp.processEvents()
+    assert widget.skin_combo.currentText() == "outfit_a"
+

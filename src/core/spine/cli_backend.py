@@ -22,7 +22,12 @@ EXE_NAME = "SpineViewerCLI.exe" if sys.platform == "win32" else "SpineViewerCLI"
 
 # Formats the CLI accepts for -f. GIF is what this app cares about, but the
 # others are handy for users who want a lossless master alongside the GIF.
-EXPORT_FORMATS = ["Gif", "Apng", "Webp", "Webpa", "Png", "Frames", "Mp4", "Mov", "Webm", "Mkv"]
+# Png and Jpg write a single still rather than an animation.
+EXPORT_FORMATS = ["Gif", "Apng", "Webp", "Webpa", "Png", "Jpg", "Frames",
+                  "Mp4", "Mov", "Webm", "Mkv"]
+
+# The two formats above that produce one frame instead of a sequence.
+STILL_FORMATS = frozenset({"Png", "Jpg"})
 
 # Where SpineViewer commonly ends up when unpacked by hand.
 _COMMON_DIRS = [
@@ -376,7 +381,7 @@ class Framing:
 
 PROBE_EXTENSIONS = {
     "Gif": "gif", "Apng": "png", "Webp": "webp", "Webpa": "webp", "Png": "png",
-    "Mp4": "mp4", "Mov": "mov", "Webm": "webm", "Mkv": "mkv",
+    "Jpg": "jpg", "Mp4": "mp4", "Mov": "mov", "Webm": "webm", "Mkv": "mkv",
 }
 
 
