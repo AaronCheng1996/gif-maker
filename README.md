@@ -125,7 +125,6 @@ animation" routine into: open the model, select the animations, click once.
 - Load a Spine skeleton and see **every animation listed with its duration and frame count**; pick a skin if the model has several
 - **Multi-select animations (Ctrl/Shift-click, or Select All) and export them all in one run** — files are named `<model>_<animation>.<ext>` into a folder you choose, with per-animation progress
 - Scrubbable preview with playback
-- **Crop region** — tick "Crop region" and drag a rectangle on the preview to export just part of the frame. The area outside is dimmed, corners resize, and the panel shows the resulting pixel size. Applies to every animation in a batch.
 - Export options: fps, scale, transparent background, loop count, plus palette size and "Crop to animation" for the built-in engine
 
 Two interchangeable export engines:
@@ -151,6 +150,19 @@ modes. It is CPU-bound — roughly 0.4s per frame at 500px wide for a ~5000-tria
 so prefer SpineViewerCLI for long animations at large scales. Preview always uses the built-in
 renderer (a subprocess per scrubbed frame would be far too slow); if it cannot parse a model,
 export through the CLI still works and only the preview is unavailable.
+
+### Crop GIF
+
+Trims finished animations to a rectangle. Because the preview here *is* the file,
+what you see is exactly what gets written — no render step, no guessing at framing.
+
+- Add GIF/APNG/WebP files (or videos, cropped through ffmpeg) and drag a rectangle over the real frames, with playback to check the crop across the whole animation
+- The region is also editable as exact X/Y/width/height pixel values, kept in sync with the rectangle
+- One rectangle applies to every file in the list, which suits a folder exported from the same model
+- Writes `<name>_cropped.gif` beside each source by default; optionally into a chosen folder, or overwriting the originals after a confirmation
+
+The crop is stored proportionally, so a batch of differently-sized files each keep
+the same relative region rather than an identical pixel size.
 
 ### Image Merge
 
@@ -267,6 +279,7 @@ src/
     video_to_gif.py             FFmpeg-based video/animated-image → GIF conversion, ffmpeg detection & install-instructions helper
     template_manager.py         Template serialization and application
     batch_processor.py          Batch processing pipeline (reused by cli.py)
+    cropping.py                 Crops animation files to a rectangle (Pillow, or ffmpeg for video)
     spine/                      Self-contained Spine 4.x runtime (numpy + Pillow, no PyQt6)
       atlas.py                  Texture atlas parser (4.1 bounds/offsets and legacy formats)
       skeleton.py               Bones, slots, skins, world transforms, update cache
@@ -276,7 +289,6 @@ src/
       renderer.py               Textured-triangle software rasterizer -> PIL image
       loader.py                 Loads skeleton + atlas + pages into a SpineProject
       cli_backend.py            Drives SpineViewerCLI (detect, query, export)
-      cropping.py               Crop geometry, plus post-export cropping via Pillow/ffmpeg
   widgets/
     theme.py                    Global dark theme and color palette
     canvas_editor.py             Godot-style Composer canvas: zoom/pan, drag-to-move, snap, onion skin, timeline
@@ -289,6 +301,7 @@ src/
     video_to_gif_widget.py      Video to GIF tool UI (multi-file batch conversion)
     clip_to_gif_widget.py       Clip to GIF tool UI (single-video visual range selector, Smart Loop)
     spine_to_gif_widget.py      Spine to GIF tool UI (animation list, preview, export)
+    crop_gif_widget.py          Crop GIF tool UI (file list, frame preview, batch crop)
     crop_overlay.py             Preview label with a draggable crop rectangle
     image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)

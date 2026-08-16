@@ -1,8 +1,8 @@
-"""Crop an already-exported animation file to a sub-rectangle.
+"""Crop an animation file to a sub-rectangle.
 
-Used for the SpineViewerCLI path: the CLI has no crop/offset option (its
-`--ff-filter` is ignored for GIF), so the file is cropped after the fact.
-Frame-based formats go through Pillow; video formats go through ffmpeg.
+Crops are expressed as normalized (x, y, w, h) in 0..1 with the origin at the
+top left, so the same rectangle applies to files of any size. Frame-based
+formats (gif/apng/webp) go through Pillow; video formats go through ffmpeg.
 """
 import shutil
 import subprocess
@@ -33,25 +33,6 @@ def pixel_box(width: int, height: int, crop: Tuple[float, float, float, float]
     return left, top, right, bottom
 
 
-def apply_crop_to_bounds(bounds: Tuple[float, float, float, float],
-                         crop: Optional[Tuple[float, float, float, float]]
-                         ) -> Tuple[float, float, float, float]:
-    """Narrow render bounds to a normalized crop rectangle.
-
-    Crop coordinates have their origin at the *top* left of the rendered image,
-    while skeleton bounds are (x, y, w, h) with +Y up, so the vertical axis is
-    flipped here."""
-    if is_noop(crop):
-        return bounds
-    bx, by, bw, bh = bounds
-    cx, cy, cw, ch = crop
-    new_w = bw * cw
-    new_h = bh * ch
-    new_x = bx + bw * cx
-    new_y = by + bh - bh * cy - new_h
-    return new_x, new_y, new_w, new_h
-
-
 def is_noop(crop: Optional[Tuple[float, float, float, float]]) -> bool:
     if crop is None:
         return True
@@ -60,23 +41,31 @@ def is_noop(crop: Optional[Tuple[float, float, float, float]]) -> bool:
 
 
 def crop_animation_file(path, crop: Tuple[float, float, float, float],
-                        ffmpeg_path: Optional[str] = None) -> str:
-    """Crop `path` in place to the normalized rectangle `crop`."""
+                        ffmpeg_path: Optional[str] = None,
+                        output_path=None) -> str:
+    """Crop `path` to the normalized rectangle `crop`.
+
+    Writes to `output_path` when given, otherwise replaces the file in place.
+    Returns the path written."""
     path = Path(path)
     if not path.exists():
         raise CropError(f"File not found: {path}")
+    destination = Path(output_path) if output_path else path
     if is_noop(crop):
-        return str(path)
+        if destination != path:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+        return str(destination)
 
     suffix = path.suffix.lower()
     if suffix in PIL_FORMATS:
-        return _crop_with_pil(path, crop)
+        return _crop_with_pil(path, crop, destination)
     if suffix in VIDEO_FORMATS:
-        return _crop_with_ffmpeg(path, crop, ffmpeg_path)
+        return _crop_with_ffmpeg(path, crop, ffmpeg_path, destination)
     raise CropError(f"Cropping is not supported for {suffix} files")
 
 
-def _crop_with_pil(path: Path, crop) -> str:
+def _crop_with_pil(path: Path, crop, destination: Path) -> str:
     with Image.open(path) as src:
         box = pixel_box(src.width, src.height, crop)
         is_animated = getattr(src, "is_animated", False)
@@ -92,7 +81,10 @@ def _crop_with_pil(path: Path, crop) -> str:
     if not frames:
         raise CropError("No frames to crop")
 
-    tmp = path.with_name(path.stem + "__cropped" + path.suffix)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Write beside the destination first so a failure cannot leave a half-written
+    # file where the caller expects a good one.
+    tmp = destination.with_name(destination.stem + "__cropped" + destination.suffix)
     fmt = path.suffix.lower().lstrip(".")
     save_kwargs = {}
     if is_animated:
@@ -113,8 +105,8 @@ def _crop_with_pil(path: Path, crop) -> str:
     else:  # png / apng
         frames[0].save(tmp, format="PNG", **save_kwargs)
 
-    tmp.replace(path)
-    return str(path)
+    tmp.replace(destination)
+    return str(destination)
 
 
 def _to_palette(img: Image.Image) -> Image.Image:
@@ -127,7 +119,8 @@ def _to_palette(img: Image.Image) -> Image.Image:
     return out
 
 
-def _crop_with_ffmpeg(path: Path, crop, ffmpeg_path: Optional[str]) -> str:
+def _crop_with_ffmpeg(path: Path, crop, ffmpeg_path: Optional[str],
+                      destination: Path) -> str:
     exe = ffmpeg_path or shutil.which("ffmpeg")
     if not exe:
         raise CropError(
@@ -138,7 +131,8 @@ def _crop_with_ffmpeg(path: Path, crop, ffmpeg_path: Optional[str]) -> str:
     crop_expr = (f"crop=trunc(iw*{cw:.6f}/2)*2:trunc(ih*{ch:.6f}/2)*2"
                  f":trunc(iw*{cx:.6f}):trunc(ih*{cy:.6f})")
 
-    tmp = path.with_name(path.stem + "__cropped" + path.suffix)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destination.with_name(destination.stem + "__cropped" + destination.suffix)
     cmd = [exe, "-y", "-i", str(path), "-vf", crop_expr, "-c:a", "copy", str(tmp)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
@@ -147,5 +141,5 @@ def _crop_with_ffmpeg(path: Path, crop, ffmpeg_path: Optional[str]) -> str:
         raise CropError(f"Could not run ffmpeg: {e}") from e
     if proc.returncode != 0 or not tmp.exists():
         raise CropError(f"ffmpeg failed to crop:\n{proc.stderr[-1500:]}")
-    tmp.replace(path)
-    return str(path)
+    tmp.replace(destination)
+    return str(destination)

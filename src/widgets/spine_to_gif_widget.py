@@ -33,9 +33,6 @@ from ..i18n import tr
 from ..core.gif_builder import GifBuilder
 from ..core.spine import RenderSettings, SpineProject, SpineRenderer, load_project
 from ..core.spine import cli_backend
-from ..core.spine.cropping import (CropError, apply_crop_to_bounds, crop_animation_file,
-                                    is_noop, pixel_box)
-from .crop_overlay import CropOverlayLabel
 from .theme import AppTheme as _T
 
 PREVIEW_MAX = 460
@@ -93,36 +90,6 @@ class _LoadWorker(QThread):
         self.done.emit(project, info, warning)
 
 
-class _FramingWorker(QThread):
-    """Measures the canvas SpineViewerCLI will use, so the preview (and therefore
-    the crop rectangle) is framed exactly like the export."""
-    done = pyqtSignal(str, object)   # cache key, (x, y, w, h)
-    failed = pyqtSignal(str)
-
-    def __init__(self, key, skeleton_path, animation, skin, cli_path, project,
-                 fmt="Gif", parent=None):
-        super().__init__(parent)
-        self.key = key
-        self.skeleton_path = skeleton_path
-        self.animation = animation
-        self.skin = skin
-        self.cli_path = cli_path
-        self.project = project
-        self.fmt = fmt
-
-    def run(self):
-        try:
-            framing = cli_backend.probe_framing(
-                self.skeleton_path, self.animation, skin=self.skin or None,
-                cli_path=self.cli_path, fmt=self.fmt)
-            self.project.skeleton.set_skin(self.skin)
-            renderer = SpineRenderer(self.project)
-            content = renderer.compute_bounds(self.animation, samples=1)
-            self.done.emit(self.key, cli_backend.framing_to_bounds(framing, content))
-        except Exception as e:
-            self.failed.emit(str(e))
-
-
 class _PreviewWorker(QThread):
     done = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -153,9 +120,8 @@ class _ExportWorker(QThread):
 
     def __init__(self, *, engine, skeleton_path, project, animations, skin, outputs,
                  fps, scale, loop_count, transparent, colors, fmt, cli_path,
-                 bounds, margin, max_resolution, crop=None, parent=None):
+                 bounds, margin, max_resolution, parent=None):
         super().__init__(parent)
-        self.crop = crop
         self.engine = engine
         self.skeleton_path = skeleton_path
         self.project = project
@@ -215,30 +181,16 @@ class _ExportWorker(QThread):
         cli_backend.export_animation(
             self.skeleton_path, self.outputs[animation], [animation],
             options=options, cli_path=self.cli_path)
-        # The CLI cannot crop (its --ff-filter is ignored for GIF), so trim the
-        # finished file instead.
-        if not is_noop(self.crop):
-            ffmpeg = None
-            if self.cli_path:
-                candidate = Path(self.cli_path).with_name(
-                    "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
-                if candidate.exists():
-                    ffmpeg = str(candidate)
-            crop_animation_file(self.outputs[animation], self.crop, ffmpeg_path=ffmpeg)
 
     def _export_with_builtin(self, animation: str):
         if self.project is None:
             raise RuntimeError("The built-in renderer could not read this model")
         self.project.skeleton.set_skin(self.skin)
         renderer = SpineRenderer(self.project)
-        bounds = self.bounds if self.bounds is not None else self.project.bounds()
-        # Crop natively by narrowing the render bounds: lossless, and cheaper
-        # than rendering the whole frame and throwing pixels away.
-        bounds = apply_crop_to_bounds(bounds, self.crop)
         settings = RenderSettings(
             scale=self.scale,
             background=None if self.transparent else (255, 255, 255, 255),
-            bounds=bounds)
+            bounds=self.bounds)
 
         duration = self.project.animations[animation].duration
         frame_count = max(1, int(round(duration * self.fps)))
@@ -280,11 +232,7 @@ class SpineToGifWidget(QWidget):
         self._load_worker: Optional[_LoadWorker] = None
         self._preview_worker: Optional[_PreviewWorker] = None
         self._export_worker: Optional[_ExportWorker] = None
-        self._framing_worker: Optional[_FramingWorker] = None
         self._preview_pending = False
-        # Measured CLI canvases, keyed by model|animation|skin.
-        self._cli_framing: Dict[str, tuple] = {}
-        self._framing_pending: set = set()
 
         self._preview_debounce = QTimer(self)
         self._preview_debounce.setSingleShot(True)
@@ -296,7 +244,6 @@ class SpineToGifWidget(QWidget):
 
         self._init_ui()
         self._refresh_engine_state()
-        self.crop_reset_btn.setEnabled(False)
         self._update_enabled_state()
 
     # ── UI ───────────────────────────────────────────────────────────────
@@ -365,35 +312,14 @@ class SpineToGifWidget(QWidget):
         panel = QWidget()
         v = QVBoxLayout(panel)
 
-        self.preview_label = CropOverlayLabel()
-        self.preview_label.setText(tr("Open a Spine project to preview"))
+        self.preview_label = QLabel(tr("Open a Spine project to preview"))
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.preview_label.setMinimumSize(320, 320)
         self.preview_label.setStyleSheet(
             f"background-color: {_T.CARD}; border: 1px solid {_T.BORDER}; border-radius: 4px;"
             f" color: {_T.TEXT_HINT};")
-        self.preview_label.crop_changed.connect(self._on_crop_changed)
         v.addWidget(self.preview_label, stretch=1)
-
-        crop_row = QHBoxLayout()
-        self.crop_checkbox = QCheckBox(tr("Crop region"))
-        self.crop_checkbox.setToolTip(
-            "Export only part of the frame. Drag inside the preview to draw the "
-            "region, drag its edges or corners to adjust.")
-        self.crop_checkbox.toggled.connect(self._on_crop_toggled)
-        crop_row.addWidget(self.crop_checkbox)
-
-        self.crop_reset_btn = QPushButton(tr("Reset"))
-        self.crop_reset_btn.setFixedHeight(22)
-        self.crop_reset_btn.clicked.connect(self.preview_label.reset_crop)
-        crop_row.addWidget(self.crop_reset_btn)
-
-        self.crop_label = QLabel("")
-        self.crop_label.setStyleSheet(f"color: {_T.TEXT_DIM}; font-size: 11px;")
-        crop_row.addWidget(self.crop_label)
-        crop_row.addStretch()
-        v.addLayout(crop_row)
 
         controls = QHBoxLayout()
         self.play_btn = QPushButton("▶")
@@ -574,12 +500,11 @@ class SpineToGifWidget(QWidget):
         # palette through ffmpeg.
         self.colors_combo.setEnabled(not using_cli)
         self.colors_label.setEnabled(not using_cli)
-        # SpineViewerCLI always crops to the animation, so the option is implied
-        # (and locked on) rather than unavailable.
+        # Framing is the built-in renderer's business; the CLI picks its own.
         self.tight_bounds_checkbox.setEnabled(not using_cli)
         self.tight_bounds_checkbox.setToolTip(
-            "SpineViewerCLI always fits the canvas to the animation, so this is "
-            "always on for that engine."
+            "SpineViewerCLI chooses its own canvas, so this only affects the "
+            "preview and the built-in engine."
             if using_cli else
             "Fit the canvas to what the animation actually covers instead of the "
             "skeleton's exported bounding box")
@@ -630,8 +555,6 @@ class SpineToGifWidget(QWidget):
         self.project = project
         self.model_info = info
         self._cached_bounds = None
-        self._cli_framing.clear()
-        self._framing_pending.clear()
 
         # The CLI's list is authoritative (it understands every Spine version).
         if info is not None and info.animations:
@@ -740,38 +663,9 @@ class SpineToGifWidget(QWidget):
         self._update_frame_estimate()
         self._schedule_preview()
 
-    # ── crop region ──────────────────────────────────────────────────────
-
     def _on_format_changed(self, _fmt: str):
-        # The canvas is format-dependent, so the framing has to be re-measured.
-        self._cached_bounds = None
         self._update_export_button_text()
         self._update_frame_estimate()
-        self._schedule_preview()
-
-    def _on_crop_toggled(self, checked: bool):
-        self.preview_label.set_crop_enabled(checked)
-        self.crop_reset_btn.setEnabled(checked)
-        self._update_frame_estimate()
-
-    def _on_crop_changed(self):
-        self._update_frame_estimate()
-
-    def active_crop(self) -> Optional[tuple]:
-        """Normalized (x, y, w, h) crop, or None when disabled / full frame."""
-        if not self.crop_checkbox.isChecked():
-            return None
-        crop = self.preview_label.crop_rect()
-        return None if is_noop(crop) else crop
-
-    def _full_output_size(self) -> Optional[tuple]:
-        """Size the export would have before cropping."""
-        scale = self.scale_spinbox.value()
-        if self.project is not None:
-            bounds = self._render_bounds()
-            _, _, bw, bh = bounds if bounds is not None else self.project.bounds()
-            return int(bw * scale), int(bh * scale)
-        return None
 
     def _current_time(self) -> float:
         anim = self.current_animation
@@ -789,61 +683,14 @@ class SpineToGifWidget(QWidget):
         self.time_label.setText(
             f"{self._current_time():.2f}s / {self.animations.get(anim, 0.0):.2f}s")
 
-    def _framing_key(self) -> str:
-        # Format is part of the key: SpineViewer's canvas differs between a still
-        # and an animation.
-        return (f"{self.skeleton_path}|{self.current_animation}"
-                f"|{self.skin_combo.currentText()}|{self.format_combo.currentText()}")
-
-    def _request_cli_framing(self):
-        """Measure the CLI's canvas in the background; the preview refreshes once
-        it lands. SpineViewer picks a canvas we cannot predict from the skeleton
-        data, so it has to be measured for the crop rectangle to line up."""
-        if (self.project is None or not self.current_animation or not self.cli_path
-                or self.engine != ENGINE_CLI):
-            return
-        key = self._framing_key()
-        if key in self._cli_framing or key in self._framing_pending:
-            return
-        if self._framing_worker is not None and self._framing_worker.isRunning():
-            return
-        self._framing_pending.add(key)
-        self._framing_worker = _FramingWorker(
-            key, self.skeleton_path, self.current_animation,
-            self.skin_combo.currentText(), self.cli_path, self.project,
-            fmt=self.format_combo.currentText(), parent=self)
-        self._framing_worker.done.connect(self._on_framing_measured)
-        self._framing_worker.failed.connect(self._on_framing_failed)
-        self._framing_worker.start()
-
-    def _on_framing_measured(self, key: str, bounds):
-        self._framing_pending.discard(key)
-        self._cli_framing[key] = bounds
-        if key == self._framing_key():
-            self._cached_bounds = None
-            self._update_frame_estimate()
-            self._schedule_preview()
-
-    def _on_framing_failed(self, message: str):
-        self._framing_pending.clear()
-        # Fall back to the built-in framing; the crop may be slightly off but
-        # everything still works.
-        self.preview_status.setText(f"Could not measure the CLI canvas: {message}")
-
-    def _uses_tight_bounds(self) -> bool:
-        # SpineViewerCLI frames tighter than the skeleton's declared bounds, so
-        # the preview must not use those or the crop would map to the wrong area.
-        return self.tight_bounds_checkbox.isChecked() or self.engine == ENGINE_CLI
-
     def _render_bounds(self):
-        if self.project is None:
-            return None
-        if self.engine == ENGINE_CLI and self.cli_path:
-            measured = self._cli_framing.get(self._framing_key())
-            if measured is not None:
-                return measured
-            self._request_cli_framing()
-        if not self._uses_tight_bounds():
+        """Framing for the preview and the built-in exporter.
+
+        This does not try to mirror SpineViewerCLI's canvas: it picks its own,
+        and matching it exactly needs a probe export that made selecting an
+        animation take seconds. Cropping now happens in the Crop GIF tab, on the
+        finished file, so the preview only has to be representative."""
+        if self.project is None or not self.tight_bounds_checkbox.isChecked():
             return None
         if self._cached_bounds is None:
             renderer = SpineRenderer(self.project)
@@ -881,9 +728,12 @@ class SpineToGifWidget(QWidget):
         self._preview_worker.start()
 
     def _on_preview_done(self, img: Image.Image):
-        # The overlay scales the pixmap itself so the crop rectangle stays
-        # aligned with the image rather than the widget.
-        self.preview_label.set_preview_pixmap(_pil_to_pixmap(img))
+        pixmap = _pil_to_pixmap(img)
+        avail = self.preview_label.size()
+        if pixmap.width() > avail.width() or pixmap.height() > avail.height():
+            pixmap = pixmap.scaled(avail, Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+        self.preview_label.setPixmap(pixmap)
         self.preview_status.setText(f"{img.width}×{img.height}")
         if self._preview_pending:
             self._preview_pending = False
@@ -930,24 +780,14 @@ class SpineToGifWidget(QWidget):
         frames = max(1, int(round(duration * fps)))
         scale = self.scale_spinbox.value()
 
-        full = self._full_output_size()
-        crop = self.active_crop()
-        if full is not None:
-            fw, fh = full
-            if crop is not None:
-                left, top, right, bottom = pixel_box(fw, fh, crop)
-                self.size_label.setText(
-                    f"Output: {right - left}×{bottom - top} px  (cropped from {fw}×{fh})")
-            else:
-                self.size_label.setText(f"Output: {fw}×{fh} px")
+        if self.project is not None and self.engine == ENGINE_BUILTIN:
+            bounds = self._render_bounds()
+            _, _, bw, bh = bounds if bounds is not None else self.project.bounds()
+            self.size_label.setText(f"Output: {int(bw * scale)}×{int(bh * scale)} px")
         else:
-            self.size_label.setText(f"Scale ×{scale:.2f}")
-
-        if self.crop_checkbox.isChecked():
-            cx, cy, cw, ch = self.preview_label.crop_rect()
-            self.crop_label.setText(f"{cw * 100:.0f}% × {ch * 100:.0f}% of frame")
-        else:
-            self.crop_label.setText("")
+            # SpineViewerCLI decides its own canvas, so the exact size is only
+            # known once it has run.
+            self.size_label.setText(f"Scale ×{scale:.2f} (canvas chosen by the CLI)")
 
         if self.engine == ENGINE_CLI:
             self.estimate_label.setText(
@@ -1041,7 +881,6 @@ class SpineToGifWidget(QWidget):
             bounds=self._render_bounds(),
             margin=0,
             max_resolution=4096,
-            crop=self.active_crop(),
             parent=self)
         self._export_worker.progress.connect(self._on_export_progress)
         self._export_worker.frame_progress.connect(self._on_frame_progress)
@@ -1110,12 +949,10 @@ class SpineToGifWidget(QWidget):
         self._playing = False
         if self._export_worker is not None:
             self._export_worker.cancel()
-        for worker in (self._load_worker, self._preview_worker, self._export_worker,
-                       self._framing_worker):
+        for worker in (self._load_worker, self._preview_worker, self._export_worker):
             if worker is not None and worker.isRunning():
                 worker.wait(timeout_ms)
         self._preview_pending = False
-        self._framing_pending.clear()
 
     def closeEvent(self, event):
         self.stop_workers()

@@ -2,8 +2,8 @@
 import pytest
 from PIL import Image
 
-from src.core.spine.cropping import (CropError, apply_crop_to_bounds, crop_animation_file,
-                                      is_noop, pixel_box)
+from src.core.cropping import (CropError, crop_animation_file, is_noop,
+                                      pixel_box)
 
 FULL = (0.0, 0.0, 1.0, 1.0)
 
@@ -39,40 +39,6 @@ def test_pixel_box_is_clamped_inside_the_image():
 def test_pixel_box_never_produces_an_empty_region():
     left, top, right, bottom = pixel_box(50, 50, (0.5, 0.5, 0.0001, 0.0001))
     assert right > left and bottom > top
-
-
-# ── apply_crop_to_bounds ─────────────────────────────────────────────────
-
-def test_bounds_unchanged_for_a_full_crop():
-    bounds = (-10.0, -20.0, 100.0, 200.0)
-    assert apply_crop_to_bounds(bounds, FULL) == bounds
-    assert apply_crop_to_bounds(bounds, None) == bounds
-
-
-def test_crop_narrows_bounds_and_flips_the_vertical_axis():
-    """Crop y is measured from the top; skeleton bounds have +Y up."""
-    bounds = (0.0, 0.0, 100.0, 200.0)
-    x, y, w, h = apply_crop_to_bounds(bounds, (0.0, 0.0, 1.0, 0.5))
-    # Top half of the image = upper half in skeleton space.
-    assert (x, w) == (0.0, 100.0)
-    assert h == 100.0
-    assert y == 100.0
-
-
-def test_bottom_half_crop_maps_to_the_lower_bounds():
-    x, y, w, h = apply_crop_to_bounds((0.0, 0.0, 100.0, 200.0), (0.0, 0.5, 1.0, 0.5))
-    assert y == 0.0 and h == 100.0
-
-
-def test_horizontal_crop_offsets_x():
-    x, y, w, h = apply_crop_to_bounds((0.0, 0.0, 100.0, 200.0), (0.25, 0.0, 0.5, 1.0))
-    assert x == 25.0 and w == 50.0
-
-
-def test_crop_of_negative_origin_bounds():
-    x, y, w, h = apply_crop_to_bounds((-50.0, -100.0, 100.0, 200.0), (0.5, 0.0, 0.5, 1.0))
-    assert x == 0.0 and w == 50.0
-    assert y == -100.0 and h == 200.0
 
 
 # ── crop_animation_file ──────────────────────────────────────────────────
@@ -139,7 +105,7 @@ def test_unsupported_extension_raises(tmp_path):
 
 
 def test_video_crop_without_ffmpeg_reports_clearly(tmp_path, monkeypatch):
-    import src.core.spine.cropping as cropping
+    import src.core.cropping as cropping
     fake = tmp_path / "v.mp4"
     fake.write_bytes(b"not really a video")
     monkeypatch.setattr(cropping.shutil, "which", lambda *_a, **_k: None)

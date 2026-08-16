@@ -145,7 +145,7 @@ def test_preview_renders_a_frame(widget, toy_project, qapp):
     widget._render_preview()
     assert widget._preview_worker.wait(60000)
     qapp.processEvents()
-    pixmap = widget.preview_label.preview_pixmap()
+    pixmap = widget.preview_label.pixmap()
     assert pixmap is not None and not pixmap.isNull()
 
 

@@ -8,6 +8,7 @@ from .gif_optimizer_widget import GifOptimizerWidget
 from .video_to_gif_widget import VideoToGifWidget
 from .clip_to_gif_widget import ClipToGifWidget
 from .spine_to_gif_widget import SpineToGifWidget
+from .crop_gif_widget import CropGifWidget
 from .image_merge_widget import ImageMergeWidget
 from .group_editor_dialog import GroupEditorDialog
 from .material_selector_dialog import MaterialSelectorDialog
@@ -28,6 +29,7 @@ __all__ = [
     'VideoToGifWidget',
     'ClipToGifWidget',
     'SpineToGifWidget',
+    'CropGifWidget',
     'ImageMergeWidget',
     'GroupEditorDialog',
     'MaterialSelectorDialog',

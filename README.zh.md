@@ -124,7 +124,6 @@ GIF 匯出
 - 載入 Spine 骨架後**列出所有動畫及其長度與幀數**；模型若有多個 skin 可自由切換
 - **可複選動畫（Ctrl/Shift 點選，或「全選」）一次匯出全部** —— 自動命名為 `<模型>_<動畫>.<副檔名>` 存到指定資料夾，並顯示逐一進度
 - 可拖曳時間軸的預覽 + 播放
-- **裁切區域** —— 勾選「裁切區域」後直接在預覽上拖出方框，就只匯出畫面的一部分。框外會變暗、可拖角落調整大小，右側面板即時顯示裁切後的實際像素尺寸；批次匯出時會套用到每個動畫。
 - 匯出選項：fps、縮放、透明背景、循環次數；使用內建引擎時另有調色盤大小與「裁切至動畫範圍」
 
 兩種可切換的匯出引擎：
@@ -147,6 +146,17 @@ GIF 匯出
 骨架在 500px 寬時每幀約 0.4 秒——因此長動畫配大尺寸建議改用 SpineViewerCLI。預覽一律使用
 內建引擎（每拖一格就開一次子行程太慢）；若內建引擎讀不了某個模型，仍可透過 CLI 匯出，
 只是沒有預覽。
+
+### 裁切 GIF（Crop GIF）
+
+把已完成的動畫裁成指定範圍。這裡的預覽**就是檔案本身**，所見即所得——不必等算圖，也不會有取景猜錯的問題。
+
+- 加入 GIF／APNG／WebP（影片格式則透過 ffmpeg 裁切），直接在真實影格上拖出方框，並可播放確認整段動畫都在框內
+- 裁切範圍同時能以精確的 X／Y／寬／高像素值輸入，與方框雙向同步
+- 清單中所有檔案套用同一個裁切框，適合處理同一個模型匯出的整批動畫
+- 預設在來源旁輸出 `<檔名>_cropped.gif`；也可指定輸出資料夾，或在確認後直接覆蓋原檔
+
+裁切框以比例儲存，因此尺寸不同的檔案會各自保留相同的**相對**範圍，而非固定像素尺寸。
 
 ### 圖片合併（Image Merge）
 
@@ -260,6 +270,7 @@ src/
     video_to_gif.py             以 ffmpeg 進行影片／動態圖片轉 GIF、ffmpeg 偵測與安裝說明輔助函式
     template_manager.py         範本序列化與套用
     batch_processor.py          批次處理流程（cli.py 也重用此模組）
+    cropping.py                 將動畫檔裁切成指定範圍（Pillow，影片則用 ffmpeg）
     spine/                      自製的 Spine 4.x runtime（僅依賴 numpy + Pillow，不依賴 PyQt6）
       atlas.py                  貼圖圖集解析（4.1 的 bounds/offsets 格式與舊版格式）
       skeleton.py               骨骼、插槽、skin、世界變換、更新順序快取
@@ -269,7 +280,6 @@ src/
       renderer.py               三角形貼圖軟體光柵化器 → PIL 圖片
       loader.py                 載入骨架 + 圖集 + 貼圖頁成 SpineProject
       cli_backend.py            驅動 SpineViewerCLI（偵測、查詢、匯出）
-      cropping.py               裁切幾何運算，以及用 Pillow／ffmpeg 做匯出後裁切
   widgets/
     theme.py                    全域深色主題與色盤
     canvas_editor.py             Godot 風格的 Composer 畫布：縮放/平移、拖曳移動、吸附、Onion Skin、時間軸
@@ -282,6 +292,7 @@ src/
     video_to_gif_widget.py      影片轉 GIF 工具介面（多檔批次轉換）
     clip_to_gif_widget.py       剪輯轉 GIF 工具介面（單一影片視覺化範圍選取、智慧循環）
     spine_to_gif_widget.py      Spine 轉 GIF 工具介面（動畫列表、預覽、匯出）
+    crop_gif_widget.py          裁切 GIF 工具介面（檔案清單、影格預覽、批次裁切）
     crop_overlay.py             帶可拖曳裁切框的預覽元件
     image_merge_widget.py       圖片合併工具介面（堆疊圖片、攤平匯出 PNG）
     settings_dialog.py          設定對話框（語言選擇）
