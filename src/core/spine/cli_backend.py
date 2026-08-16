@@ -194,7 +194,8 @@ class ExportOptions:
                  max_resolution: int = 2048, start_time: float = 0.0,
                  duration: float = -1.0, speed: float = 1.0,
                  warm_up: float = 0.0, pma: bool = False, quality: int = 80,
-                 drop_last_frame: bool = False):
+                 drop_last_frame: bool = False,
+                 disabled_slots: Optional[List[str]] = None):
         self.fmt = fmt
         self.fps = fps
         self.scale = scale
@@ -210,6 +211,9 @@ class ExportOptions:
         self.pma = pma
         self.quality = quality
         self.drop_last_frame = drop_last_frame
+        # Slots to leave unrendered — how stray shadows, masks and signature
+        # layers get taken out of an export.
+        self.disabled_slots = disabled_slots or []
 
     def to_args(self) -> List[str]:
         args: List[str] = [
@@ -232,6 +236,8 @@ class ExportOptions:
             args.append("--drop-last-frame")
         for skin in self.skins:
             args += ["--skins", skin]
+        for slot in self.disabled_slots:
+            args += ["--disable-slots", slot]
         if self.background:
             args += ["--color", self.background]
         return args

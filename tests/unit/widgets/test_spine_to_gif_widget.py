@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from src.core.spine import cli_backend
@@ -690,4 +691,137 @@ def test_first_skin_is_kept_when_there_is_no_default(widget, qapp, tmp_path):
     widget._on_project_loaded(None, Info(), "")
     qapp.processEvents()
     assert widget.skin_combo.currentText() == "outfit_a"
+
+
+# ── hiding slots: taking stray shadows / masks / signatures out ──────────
+
+def test_slots_are_listed_and_all_visible_to_start(widget, toy_project, qapp):
+    _load(widget, toy_project, qapp)
+    assert widget.slot_list.count() == 1
+    assert widget.slot_list.item(0).text() == "s"
+    assert widget.disabled_slots() == []
+    assert widget.slot_count_label.text() == "1"
+
+
+def _fake_info(slots):
+    class Info:
+        animations = {"Idle": 2.0}
+        skins = ["default"]
+
+    Info.slots = list(slots)
+    return Info()
+
+
+def test_unticking_a_slot_disables_it(widget, qapp, tmp_path):
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, _fake_info(["body", "sign", "bg"]), "")
+    qapp.processEvents()
+
+    widget.slot_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+    assert widget.disabled_slots() == ["sign"]
+    assert "1 of 3 hidden" in widget.slot_count_label.text()
+
+
+def test_show_all_slots_re_enables_everything(widget, qapp, tmp_path):
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, _fake_info(["body", "sign", "bg"]), "")
+    for i in (1, 2):
+        widget.slot_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+    assert len(widget.disabled_slots()) == 2
+
+    widget.show_all_slots()
+    qapp.processEvents()
+    assert widget.disabled_slots() == []
+    assert widget.slot_count_label.text() == "3"
+
+
+def test_slot_filter_hides_non_matching_rows(widget, qapp, tmp_path):
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, _fake_info(["body", "penis2_shadow", "bg"]), "")
+    qapp.processEvents()
+
+    widget.slot_filter.setText("shadow")
+    qapp.processEvents()
+    visible = [widget.slot_list.item(i).text() for i in range(widget.slot_list.count())
+               if not widget.slot_list.item(i).isHidden()]
+    assert visible == ["penis2_shadow"]
+
+
+def test_filter_never_hides_an_already_disabled_slot(widget, qapp, tmp_path):
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, _fake_info(["body", "sign", "bg"]), "")
+    widget.slot_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+
+    # Otherwise a stale search box could leave a hidden layer with no way back.
+    widget.slot_filter.setText("body")
+    qapp.processEvents()
+    visible = [widget.slot_list.item(i).text() for i in range(widget.slot_list.count())
+               if not widget.slot_list.item(i).isHidden()]
+    assert visible == ["body", "sign"]
+
+
+def test_loading_another_model_resets_the_slot_list(widget, qapp, tmp_path):
+    widget.skeleton_path = tmp_path / "m.json"
+    widget._on_project_loaded(None, _fake_info(["body", "sign"]), "")
+    widget.slot_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+    assert widget.disabled_slots() == ["sign"]
+
+    widget._on_project_loaded(None, _fake_info(["head", "tail"]), "")
+    qapp.processEvents()
+    assert widget.disabled_slots() == []
+    assert widget.slot_list.count() == 2
+
+
+def test_hidden_slots_reach_the_cli_export(cli_widget, toy_project, qapp, tmp_path,
+                                           monkeypatch, fake_render, recorded_export):
+    fake_render(frames=3)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.slot_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+    _export_one(cli_widget, qapp, monkeypatch, tmp_path / "out.gif")
+    assert recorded_export[0]["options"].disabled_slots == ["s"]
+
+
+def test_hidden_slots_reach_the_cli_preview(cli_widget, toy_project, qapp, fake_render):
+    calls = fake_render(frames=3)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+    assert calls[0][1].disabled_slots == []
+
+    cli_widget.slot_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+    if cli_widget._cli_preview_worker is not None:
+        assert cli_widget._cli_preview_worker.wait(60000)
+    qapp.processEvents()
+    # Hiding a slot is a different render, so it must not reuse the cache.
+    assert len(calls) == 2
+    assert calls[1][1].disabled_slots == ["s"]
+
+
+def test_hidden_slots_reach_the_builtin_renderer(widget, toy_project, qapp, tmp_path,
+                                                 monkeypatch):
+    _load(widget, toy_project, qapp)
+    widget.animation_list.setCurrentRow(0)
+    qapp.processEvents()
+
+    out = tmp_path / "out.gif"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
+    widget.slot_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+    widget.export_gif()
+    assert widget._export_worker.wait(120000)
+    qapp.processEvents()
+
+    # The toy model's only slot is hidden, so every frame is empty.
+    img = Image.open(out)
+    try:
+        assert img.convert("RGBA").getbbox() is None
+    finally:
+        img.close()
 

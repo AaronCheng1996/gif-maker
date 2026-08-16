@@ -158,6 +158,15 @@ model is open, so flicking back to an animation you already looked at is instant
 means the preview shows exactly what the export will contain. The built-in renderer is the
 fallback, used when it is the selected engine or when the CLI cannot render the model.
 
+Models often carry layers you do not want in the output — a drop shadow, a mask that renders
+as a visible blob, a background, an artist's signature. The **Slots** list under the animations
+shows every slot in the model with a tick box; unticking one leaves it out of both the preview
+and the export (`--disable-slots` under the CLI, skipped in the draw loop under the built-in
+renderer). There is a filter box because models routinely have a hundred-plus slots, and
+hiding a background also tightens the canvas, since the framing is computed from what is
+actually drawn. An unticked slot always stays visible in the list, whatever the filter says,
+so a hidden layer can never get lost behind a stale search.
+
 ### Crop GIF
 
 Trims finished animations to a rectangle. Because the preview here *is* the file,

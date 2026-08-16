@@ -5,7 +5,7 @@ attachments are applied as a rasterized polygon mask covering the slot range
 they declare.
 """
 import math
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -25,11 +25,16 @@ class RenderSettings:
 
     def __init__(self, scale: float = 1.0, padding: int = 0,
                  background: Optional[Tuple[int, int, int, int]] = None,
-                 bounds: Optional[Tuple[float, float, float, float]] = None):
+                 bounds: Optional[Tuple[float, float, float, float]] = None,
+                 disabled_slots: Optional[Iterable[str]] = None):
         self.scale = scale
         self.padding = padding
         self.background = background  # None = transparent
         self.bounds = bounds  # (x, y, width, height) in skeleton space
+        # Slot names to leave unrendered, matching SpineViewerCLI's
+        # --disable-slots: the way stray shadow, mask and signature layers get
+        # taken out of a render.
+        self.disabled_slots = frozenset(disabled_slots or ())
 
 
 class SpineRenderer:
@@ -66,8 +71,13 @@ class SpineRenderer:
         oy = (by + bh) * scale + pad
         return width, height, ox, oy
 
-    def compute_bounds(self, animation_name: Optional[str] = None, samples: int = 12):
-        """Bounding box over the whole animation (or the current pose)."""
+    def compute_bounds(self, animation_name: Optional[str] = None, samples: int = 12,
+                       disabled_slots: Optional[Iterable[str]] = None):
+        """Bounding box over the whole animation (or the current pose).
+
+        Disabled slots are left out, so hiding a background or a stray effect
+        tightens the framing instead of leaving a hole in it."""
+        hidden = frozenset(disabled_slots or ())
         min_x = min_y = float("inf")
         max_x = max_y = float("-inf")
         animation = self.project.animations.get(animation_name) if animation_name else None
@@ -79,6 +89,8 @@ class SpineRenderer:
             self.pose(animation_name, t)
             for slot_index in self.skeleton.draw_order:
                 slot = self.skeleton.slots[slot_index]
+                if slot.name in hidden:
+                    continue
                 att = self._slot_attachment(slot)
                 if att is None or not isinstance(att, (MeshAttachment, RegionAttachment)):
                     continue
@@ -127,6 +139,11 @@ class SpineRenderer:
             if clip_end_slot is not None and slot.name == clip_end_slot:
                 clip_mask = None
                 clip_end_slot = None
+
+            # Checked after the clip-end reset above, so hiding the slot a
+            # clipping attachment ends on still closes the clip.
+            if slot.name in settings.disabled_slots:
+                continue
 
             if att is None:
                 continue

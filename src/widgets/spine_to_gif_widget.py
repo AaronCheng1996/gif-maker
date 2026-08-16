@@ -19,7 +19,6 @@ are just file reads. That also makes the preview show exactly what the export
 will contain. The built-in software rasteriser is the fallback — it costs
 roughly a third of a second per frame, so scrubbing lags and playback crawls.
 """
-import hashlib
 import shutil
 import sys
 import tempfile
@@ -30,7 +29,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
                               QListWidget, QListWidgetItem, QGroupBox, QSpinBox,
                               QDoubleSpinBox, QComboBox, QCheckBox, QSlider, QFileDialog,
                               QMessageBox, QProgressBar, QSplitter, QSizePolicy,
-                              QAbstractItemView)
+                              QAbstractItemView, QLineEdit)
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 
@@ -169,7 +168,7 @@ class _ExportWorker(QThread):
     def __init__(self, *, engine, skeleton_path, project, animations, skin, outputs,
                  fps, scale, loop_count, transparent, colors, fmt, cli_path,
                  bounds, margin, max_resolution, still_time=0.0,
-                 parent=None):
+                 disabled_slots=(), parent=None):
         super().__init__(parent)
         self.engine = engine
         self.skeleton_path = skeleton_path
@@ -188,6 +187,7 @@ class _ExportWorker(QThread):
         self.margin = margin
         self.max_resolution = max_resolution
         self.still_time = still_time
+        self.disabled_slots = list(disabled_slots)
         self._cancelled = False
 
     def cancel(self):
@@ -232,6 +232,7 @@ class _ExportWorker(QThread):
             margin=self.margin,
             max_resolution=self.max_resolution,
             start_time=self.still_time if is_still else 0.0,
+            disabled_slots=self.disabled_slots,
         )
         cli_backend.export_animation(
             self.skeleton_path, self.outputs[animation], [animation],
@@ -245,7 +246,8 @@ class _ExportWorker(QThread):
         settings = RenderSettings(
             scale=self.scale,
             background=None if self.transparent else (255, 255, 255, 255),
-            bounds=self.bounds)
+            bounds=self.bounds,
+            disabled_slots=self.disabled_slots)
 
         duration = self.project.animations[animation].duration
         frame_count = max(1, int(round(duration * self.fps)))
@@ -298,6 +300,10 @@ class SpineToGifWidget(QWidget):
         self._rendered: Dict[tuple, List[Path]] = {}
         self._frame_key: Optional[tuple] = None
         self._frame_paths: List[Path] = []
+        self._render_seq = 0
+        # Superseded renders, left to shut down on their own rather than blocking
+        # the GUI; joined in stop_workers().
+        self._retiring_workers: List[_CliPreviewWorker] = []
 
         self._preview_debounce = QTimer(self)
         self._preview_debounce.setSingleShot(True)
@@ -365,6 +371,34 @@ class SpineToGifWidget(QWidget):
         self.animation_list.currentRowChanged.connect(self._on_animation_selected)
         self.animation_list.itemSelectionChanged.connect(self._update_export_button_text)
         v.addWidget(self.animation_list, stretch=1)
+
+        slot_header = QHBoxLayout()
+        slot_label = QLabel(tr("Slots"))
+        slot_label.setStyleSheet(f"font-weight: 600; font-size: 12px; color: {_T.TEXT_DIM};")
+        slot_header.addWidget(slot_label)
+        self.slot_count_label = QLabel("")
+        self.slot_count_label.setStyleSheet(f"color: {_T.TEXT_HINT}; font-size: 10px;")
+        slot_header.addWidget(self.slot_count_label)
+        slot_header.addStretch()
+        self.show_all_slots_btn = QPushButton(tr("Show All"))
+        self.show_all_slots_btn.setFixedHeight(22)
+        self.show_all_slots_btn.setToolTip("Re-enable every slot")
+        self.show_all_slots_btn.clicked.connect(self.show_all_slots)
+        slot_header.addWidget(self.show_all_slots_btn)
+        v.addLayout(slot_header)
+
+        self.slot_filter = QLineEdit()
+        self.slot_filter.setPlaceholderText(tr("Filter slots (e.g. shadow, mask, bg)"))
+        self.slot_filter.setClearButtonEnabled(True)
+        self.slot_filter.textChanged.connect(self._apply_slot_filter)
+        v.addWidget(self.slot_filter)
+
+        self.slot_list = QListWidget()
+        self.slot_list.setToolTip(
+            "Untick a slot to leave it out of the preview and the export — "
+            "how stray shadows, masks and signature layers get removed.")
+        self.slot_list.itemChanged.connect(self._on_slot_toggled)
+        v.addWidget(self.slot_list, stretch=1)
 
         hint = QLabel(tr("Ctrl/Shift-click to select several, then export them all at once."))
         hint.setWordWrap(True)
@@ -633,12 +667,16 @@ class SpineToGifWidget(QWidget):
         if info is not None and info.animations:
             self.animations = dict(info.animations)
             skins = info.skins
+            slots = list(info.slots)
         elif project is not None:
             self.animations = {n: a.duration for n, a in project.animations.items()}
             skins = project.skin_names
+            slots = [s.name for s in project.skeleton.slots]
         else:
             self.animations = {}
             skins = []
+            slots = []
+        self._populate_slots(slots)
 
         name = self.skeleton_path.stem if self.skeleton_path else "?"
         if project is not None:
@@ -704,6 +742,54 @@ class SpineToGifWidget(QWidget):
 
     def select_all_animations(self):
         self.animation_list.selectAll()
+
+    # ── slots ────────────────────────────────────────────────────────────
+
+    def _populate_slots(self, slots: List[str]):
+        self.slot_list.blockSignals(True)
+        self.slot_list.clear()
+        for name in slots:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.slot_list.addItem(item)
+        self.slot_list.blockSignals(False)
+        self.slot_filter.clear()
+        self._update_slot_count()
+
+    def disabled_slots(self) -> List[str]:
+        """Unticked slots, in the order the model lists them."""
+        return [self.slot_list.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(self.slot_list.count())
+                if self.slot_list.item(i).checkState() == Qt.CheckState.Unchecked]
+
+    def show_all_slots(self):
+        self.slot_list.blockSignals(True)
+        for i in range(self.slot_list.count()):
+            self.slot_list.item(i).setCheckState(Qt.CheckState.Checked)
+        self.slot_list.blockSignals(False)
+        self._update_slot_count()
+        self._on_settings_changed()
+
+    def _apply_slot_filter(self, text: str):
+        needle = text.strip().lower()
+        for i in range(self.slot_list.count()):
+            item = self.slot_list.item(i)
+            # An unticked slot stays visible whatever the filter says, so a
+            # hidden layer can never be lost behind a stale search box.
+            hidden = bool(needle) and needle not in item.text().lower() \
+                and item.checkState() == Qt.CheckState.Checked
+            item.setHidden(hidden)
+
+    def _on_slot_toggled(self, _item):
+        self._update_slot_count()
+        self._on_settings_changed()
+
+    def _update_slot_count(self):
+        total = self.slot_list.count()
+        off = len(self.disabled_slots())
+        self.slot_count_label.setText(f"{off} of {total} hidden" if off else f"{total}")
 
     def _update_export_button_text(self):
         count = len(self.selected_animations())
@@ -783,7 +869,8 @@ class SpineToGifWidget(QWidget):
         if self._cached_bounds is None:
             renderer = SpineRenderer(self.project)
             self.project.skeleton.set_skin(self.skin_combo.currentText())
-            self._cached_bounds = renderer.compute_bounds(self.current_animation)
+            self._cached_bounds = renderer.compute_bounds(
+                self.current_animation, disabled_slots=self.disabled_slots())
         return self._cached_bounds
 
     # ── CLI preview: render the animation once, then scrub it from disk ──
@@ -799,13 +886,18 @@ class SpineToGifWidget(QWidget):
         file but not what the animation looks like, and folding them in here
         would throw away a rendered animation every time a spinbox ticks."""
         return (str(self.skeleton_path), animation, self.skin_combo.currentText(),
-                self.transparent_checkbox.isChecked())
+                self.transparent_checkbox.isChecked(), tuple(self.disabled_slots()))
 
-    def _frame_dir_for(self, key: tuple) -> Path:
+    def _new_frame_dir(self) -> Path:
+        """A fresh folder per render.
+
+        Deliberately not derived from the key: a superseded render is left to
+        die in the background, and if the user came straight back to the same
+        settings both processes would otherwise be writing the same folder."""
         if self._frames_root is None:
             self._frames_root = Path(tempfile.mkdtemp(prefix="gifmaker_spine_preview_"))
-        digest = hashlib.sha1("".join(str(p) for p in key).encode("utf-8")).hexdigest()
-        return self._frames_root / digest[:16]
+        self._render_seq += 1
+        return self._frames_root / f"r{self._render_seq:04d}"
 
     def _start_cli_preview(self, animation: str):
         key = self._preview_key(animation)
@@ -843,10 +935,11 @@ class SpineToGifWidget(QWidget):
             # The canvas is capped rather than scaled: SpineViewer chooses its
             # own canvas, so a maximum is the only way to land on a preview-sized
             # image without knowing that size up front.
-            max_resolution=PREVIEW_MAX)
+            max_resolution=PREVIEW_MAX,
+            disabled_slots=self.disabled_slots())
 
         self._cli_preview_worker = _CliPreviewWorker(
-            self.skeleton_path, self._frame_dir_for(key), animation, options,
+            self.skeleton_path, self._new_frame_dir(), animation, options,
             self.cli_path, key, self)
         self._cli_preview_worker.frame.connect(self._on_cli_frame)
         self._cli_preview_worker.done.connect(self._on_cli_preview_done)
@@ -855,9 +948,15 @@ class SpineToGifWidget(QWidget):
 
     def _stop_cli_preview(self):
         worker, self._cli_preview_worker = self._cli_preview_worker, None
+        # Waiting for the CLI to die here would freeze the UI for a second every
+        # time a slot is ticked. There is no need to: signals from a superseded
+        # render are discarded by key, each render owns its own folder, and
+        # stop_workers() joins any strays before the widget goes away.
+        self._retiring_workers = [w for w in self._retiring_workers if w.isRunning()]
         if worker is not None:
             worker.cancel()
-            worker.wait(10000)
+            if worker.isRunning():
+                self._retiring_workers.append(worker)
 
     def _on_cli_frame(self, key, index: int, path):
         if key != self._frame_key:
@@ -950,7 +1049,8 @@ class SpineToGifWidget(QWidget):
         settings = RenderSettings(
             scale=scale,
             background=None if self.transparent_checkbox.isChecked() else (255, 255, 255, 255),
-            bounds=bounds)
+            bounds=bounds,
+            disabled_slots=self.disabled_slots())
 
         self.preview_status.setText(tr("Rendering…"))
         self._preview_worker = _PreviewWorker(
@@ -1129,6 +1229,7 @@ class SpineToGifWidget(QWidget):
             margin=0,
             max_resolution=4096,
             still_time=self._current_time(),
+            disabled_slots=self.disabled_slots(),
             parent=self)
         self._export_worker.progress.connect(self._on_export_progress)
         self._export_worker.frame_progress.connect(self._on_frame_progress)
@@ -1183,6 +1284,9 @@ class SpineToGifWidget(QWidget):
         for w in (self.skin_combo, self.animation_list, self.export_btn,
                   self.select_all_btn):
             w.setEnabled(has)
+        has_slots = self.slot_list.count() > 0
+        for w in (self.slot_list, self.slot_filter, self.show_all_slots_btn):
+            w.setEnabled(has_slots)
         can_preview = has and (self.project is not None or self._use_cli_preview())
         self.play_btn.setEnabled(can_preview)
         self.time_slider.setEnabled(can_preview)
@@ -1208,11 +1312,15 @@ class SpineToGifWidget(QWidget):
             self._export_worker.cancel()
         if self._cli_preview_worker is not None:
             self._cli_preview_worker.cancel()
+        for worker in self._retiring_workers:
+            worker.cancel()
         for worker in (self._load_worker, self._preview_worker,
-                       self._cli_preview_worker, self._export_worker):
+                       self._cli_preview_worker, self._export_worker,
+                       *self._retiring_workers):
             if worker is not None and worker.isRunning():
                 worker.wait(timeout_ms)
         self._cli_preview_worker = None
+        self._retiring_workers = []
         self._preview_pending = False
 
     def closeEvent(self, event):

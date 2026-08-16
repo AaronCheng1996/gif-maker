@@ -360,3 +360,14 @@ def test_still_formats_are_the_single_frame_ones():
 def test_start_time_reaches_the_command_line():
     args = cb.ExportOptions(fmt="Png", start_time=3.25).to_args()
     assert args[args.index("--time") + 1] == "3.25"
+
+
+def test_disabled_slots_are_passed_individually():
+    args = cb.ExportOptions(disabled_slots=["sign", "bg", "penis2_shadow"]).to_args()
+    pairs = [(args[i], args[i + 1]) for i, a in enumerate(args) if a == "--disable-slots"]
+    assert pairs == [("--disable-slots", "sign"), ("--disable-slots", "bg"),
+                     ("--disable-slots", "penis2_shadow")]
+
+
+def test_no_disable_flag_when_every_slot_is_visible():
+    assert "--disable-slots" not in cb.ExportOptions().to_args()
