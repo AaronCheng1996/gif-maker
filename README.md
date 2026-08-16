@@ -167,6 +167,15 @@ hiding a background also tightens the canvas, since the framing is computed from
 actually drawn. An unticked slot always stays visible in the list, whatever the filter says,
 so a hidden layer can never get lost behind a stale search.
 
+**Premultiplied alpha** is ticked automatically from the atlas's own `pma` flag. It matters
+more than it sounds: a premultiplied page stores colour already multiplied by alpha, so
+rendering it as straight alpha multiplies through a second time and every partly transparent
+texel comes out darkened by alpha squared. That is what black fringes around hair, soft edges
+and mask attachments actually are — on one real model it dropped the mean brightness of
+semi-transparent pixels from 94 to 21 out of 255. Both engines honour the flag (`--pma` for
+the CLI, skipping the second multiply in the built-in draw loop), and the checkbox is there to
+override a model that declares it wrongly.
+
 ### Crop GIF
 
 Trims finished animations to a rectangle. Because the preview here *is* the file,

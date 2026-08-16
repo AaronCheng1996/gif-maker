@@ -137,6 +137,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Skin:":                             "外觀：",
         "Animations":                        "動畫",
         "Slots":                             "圖層",
+        "Premultiplied alpha":               "預乘 Alpha",
         "Show All":                          "全部顯示",
         "Filter slots (e.g. shadow, mask, bg)": "篩選圖層（例如 shadow、mask、bg）",
         "Open a Spine project to preview":   "開啟 Spine 專案以預覽",

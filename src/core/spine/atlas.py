@@ -70,6 +70,15 @@ class Atlas:
         self.pages = pages
         self.regions = regions
 
+    @property
+    def premultiplied(self) -> bool:
+        """Whether the pages store colour already multiplied by alpha.
+
+        Rendering a premultiplied page as if it were straight alpha multiplies
+        by alpha a second time, which shows up as black fringes around soft
+        edges and mask attachments."""
+        return any(page.pma for page in self.pages)
+
     def find_region(self, name: str) -> Optional[AtlasRegion]:
         return self.regions.get(name)
 

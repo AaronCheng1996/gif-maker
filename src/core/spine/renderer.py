@@ -26,7 +26,8 @@ class RenderSettings:
     def __init__(self, scale: float = 1.0, padding: int = 0,
                  background: Optional[Tuple[int, int, int, int]] = None,
                  bounds: Optional[Tuple[float, float, float, float]] = None,
-                 disabled_slots: Optional[Iterable[str]] = None):
+                 disabled_slots: Optional[Iterable[str]] = None,
+                 premultiplied: Optional[bool] = None):
         self.scale = scale
         self.padding = padding
         self.background = background  # None = transparent
@@ -35,6 +36,10 @@ class RenderSettings:
         # --disable-slots: the way stray shadow, mask and signature layers get
         # taken out of a render.
         self.disabled_slots = frozenset(disabled_slots or ())
+        # None = trust each atlas page's own `pma` flag. Set it to override a
+        # model that declares the flag wrongly, which shows as dark or bright
+        # fringes along soft edges.
+        self.premultiplied = premultiplied
 
 
 class SpineRenderer:
@@ -178,8 +183,10 @@ class SpineRenderer:
             if tint[3] <= 0.001:
                 continue
 
+            pma = region.page.pma if settings.premultiplied is None \
+                else settings.premultiplied
             _draw_mesh(canvas, texture, sxy, att.atlas_uvs, att.triangles, tint,
-                       slot.data.blend_mode, clip_mask)
+                       slot.data.blend_mode, clip_mask, pma)
 
         img = Image.fromarray(_unpremultiply(canvas), mode="RGBA")
         if settings.background is not None:
@@ -207,15 +214,17 @@ def _slot_tint(slot, att):
     return (c[0] * ac[0], c[1] * ac[1], c[2] * ac[2], c[3] * ac[3])
 
 
-def _draw_mesh(canvas, texture, sxy, uvs, triangles, tint, blend_mode, clip_mask):
+def _draw_mesh(canvas, texture, sxy, uvs, triangles, tint, blend_mode, clip_mask,
+               premultiplied=False):
     tex_h, tex_w = texture.shape[:2]
     for i in range(0, len(triangles) - 2, 3):
         idx = (triangles[i], triangles[i + 1], triangles[i + 2])
         _draw_triangle(canvas, texture, sxy[idx, :], uvs[idx, :], tex_w, tex_h,
-                       tint, blend_mode, clip_mask)
+                       tint, blend_mode, clip_mask, premultiplied)
 
 
-def _draw_triangle(canvas, texture, tri_xy, tri_uv, tex_w, tex_h, tint, blend_mode, clip_mask):
+def _draw_triangle(canvas, texture, tri_xy, tri_uv, tex_w, tex_h, tint, blend_mode, clip_mask,
+                   premultiplied=False):
     H, W = canvas.shape[:2]
     xs = tri_xy[:, 0]
     ys = tri_xy[:, 1]
@@ -264,14 +273,26 @@ def _draw_triangle(canvas, texture, tri_xy, tri_uv, tex_w, tex_h, tint, blend_mo
         src = src * np.array(tint, dtype=np.float32)
 
     src_a = src[:, 3:4]
+    # Everything applied to coverage *other than* the texture's own alpha. For a
+    # premultiplied page the texture's alpha is already baked into its RGB, so
+    # only these extra factors may be applied to the colour.
+    extra = tint[3]
     if clip_mask is not None:
         m = clip_mask[min_y:max_y, min_x:max_x][inside]
         if not m.any():
             return
         src_a = src_a * m[:, None]
+        extra = extra * m[:, None]
 
     sa = src_a * (1.0 / 255.0)          # source coverage, 0..1
-    src_rgb = src[:, :3] * sa           # premultiplied source colour
+    if premultiplied:
+        # The page stores colour already multiplied by alpha (`pma:true` in the
+        # atlas). Scaling by alpha again would darken every partly transparent
+        # texel by alpha squared — which is exactly what the black fringes
+        # around soft edges and mask attachments are.
+        src_rgb = src[:, :3] * extra
+    else:
+        src_rgb = src[:, :3] * sa       # premultiplied source colour
 
     region = canvas[min_y:max_y, min_x:max_x]
     dst = region[inside]

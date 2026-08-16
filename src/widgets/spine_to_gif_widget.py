@@ -38,7 +38,8 @@ from PIL import Image
 from .. import settings as AppSettings
 from ..i18n import tr
 from ..core.gif_builder import GifBuilder
-from ..core.spine import RenderSettings, SpineProject, SpineRenderer, load_project
+from ..core.spine import (RenderSettings, SpineProject, SpineRenderer,
+                          atlas_is_premultiplied, load_project)
 from ..core.spine import cli_backend
 from .theme import AppTheme as _T
 
@@ -168,7 +169,7 @@ class _ExportWorker(QThread):
     def __init__(self, *, engine, skeleton_path, project, animations, skin, outputs,
                  fps, scale, loop_count, transparent, colors, fmt, cli_path,
                  bounds, margin, max_resolution, still_time=0.0,
-                 disabled_slots=(), parent=None):
+                 disabled_slots=(), pma=False, parent=None):
         super().__init__(parent)
         self.engine = engine
         self.skeleton_path = skeleton_path
@@ -188,6 +189,7 @@ class _ExportWorker(QThread):
         self.max_resolution = max_resolution
         self.still_time = still_time
         self.disabled_slots = list(disabled_slots)
+        self.pma = pma
         self._cancelled = False
 
     def cancel(self):
@@ -233,6 +235,7 @@ class _ExportWorker(QThread):
             max_resolution=self.max_resolution,
             start_time=self.still_time if is_still else 0.0,
             disabled_slots=self.disabled_slots,
+            pma=self.pma,
         )
         cli_backend.export_animation(
             self.skeleton_path, self.outputs[animation], [animation],
@@ -247,7 +250,8 @@ class _ExportWorker(QThread):
             scale=self.scale,
             background=None if self.transparent else (255, 255, 255, 255),
             bounds=self.bounds,
-            disabled_slots=self.disabled_slots)
+            disabled_slots=self.disabled_slots,
+            premultiplied=self.pma)
 
         duration = self.project.animations[animation].duration
         frame_count = max(1, int(round(duration * self.fps)))
@@ -519,6 +523,14 @@ class SpineToGifWidget(QWidget):
         self.transparent_checkbox.toggled.connect(self._on_settings_changed)
         form.addWidget(self.transparent_checkbox)
 
+        self.pma_checkbox = QCheckBox(tr("Premultiplied alpha"))
+        self.pma_checkbox.setToolTip(
+            "Set automatically from the atlas's own `pma` flag. Getting it wrong "
+            "shows up as dark fringes along soft edges — hair, masks, anything "
+            "that fades out. Only change it if a model declares the flag wrongly.")
+        self.pma_checkbox.toggled.connect(self._on_settings_changed)
+        form.addWidget(self.pma_checkbox)
+
         colors_row = QHBoxLayout()
         self.colors_label = QLabel(tr("Colors:"))
         colors_row.addWidget(self.colors_label)
@@ -677,6 +689,12 @@ class SpineToGifWidget(QWidget):
             skins = []
             slots = []
         self._populate_slots(slots)
+        # The atlas says whether its pages are premultiplied; rendering it the
+        # other way is what puts black fringes on every soft edge.
+        self.pma_checkbox.blockSignals(True)
+        self.pma_checkbox.setChecked(
+            atlas_is_premultiplied(self.skeleton_path) if self.skeleton_path else False)
+        self.pma_checkbox.blockSignals(False)
 
         name = self.skeleton_path.stem if self.skeleton_path else "?"
         if project is not None:
@@ -886,7 +904,8 @@ class SpineToGifWidget(QWidget):
         file but not what the animation looks like, and folding them in here
         would throw away a rendered animation every time a spinbox ticks."""
         return (str(self.skeleton_path), animation, self.skin_combo.currentText(),
-                self.transparent_checkbox.isChecked(), tuple(self.disabled_slots()))
+                self.transparent_checkbox.isChecked(), self.pma_checkbox.isChecked(),
+                tuple(self.disabled_slots()))
 
     def _new_frame_dir(self) -> Path:
         """A fresh folder per render.
@@ -936,6 +955,7 @@ class SpineToGifWidget(QWidget):
             # own canvas, so a maximum is the only way to land on a preview-sized
             # image without knowing that size up front.
             max_resolution=PREVIEW_MAX,
+            pma=self.pma_checkbox.isChecked(),
             disabled_slots=self.disabled_slots())
 
         self._cli_preview_worker = _CliPreviewWorker(
@@ -1050,7 +1070,8 @@ class SpineToGifWidget(QWidget):
             scale=scale,
             background=None if self.transparent_checkbox.isChecked() else (255, 255, 255, 255),
             bounds=bounds,
-            disabled_slots=self.disabled_slots())
+            disabled_slots=self.disabled_slots(),
+            premultiplied=self.pma_checkbox.isChecked())
 
         self.preview_status.setText(tr("Rendering…"))
         self._preview_worker = _PreviewWorker(
@@ -1230,6 +1251,7 @@ class SpineToGifWidget(QWidget):
             max_resolution=4096,
             still_time=self._current_time(),
             disabled_slots=self.disabled_slots(),
+            pma=self.pma_checkbox.isChecked(),
             parent=self)
         self._export_worker.progress.connect(self._on_export_progress)
         self._export_worker.frame_progress.connect(self._on_frame_progress)

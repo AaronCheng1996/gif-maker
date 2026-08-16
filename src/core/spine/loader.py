@@ -74,6 +74,22 @@ def find_project_files(directory) -> List[Path]:
     return out
 
 
+def atlas_is_premultiplied(skeleton_path, atlas_path=None) -> bool:
+    """Whether a model's atlas declares premultiplied alpha, without loading it.
+
+    Only the atlas text is read — no texture pages — so this is cheap enough to
+    call while opening a model, including when the skeleton itself is a format
+    the built-in runtime cannot parse."""
+    skeleton_path = Path(skeleton_path)
+    atlas_path = Path(atlas_path) if atlas_path else skeleton_path.with_suffix(".atlas")
+    if not atlas_path.exists():
+        return False
+    try:
+        return Atlas.parse(atlas_path).premultiplied
+    except Exception:
+        return False
+
+
 def load_project(skeleton_path, atlas_path=None) -> SpineProject:
     skeleton_path = Path(skeleton_path)
     if not skeleton_path.exists():

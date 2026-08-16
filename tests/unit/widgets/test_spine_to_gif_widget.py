@@ -825,3 +825,61 @@ def test_hidden_slots_reach_the_builtin_renderer(widget, toy_project, qapp, tmp_
     finally:
         img.close()
 
+
+# ── premultiplied alpha: the cause of black fringes on soft edges ────────
+
+def _pma_project(tmp_path, pma: bool):
+    """The toy model, with the atlas declaring premultiplied alpha or not."""
+    page = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    page.paste(Image.new("RGBA", (16, 16), (128, 0, 0, 128)), (0, 0))
+    page.save(tmp_path / "sprites.png")
+    (tmp_path / "toy.atlas").write_text(
+        "sprites.png\nsize: 32, 32\n" + ("pma: true\n" if pma else "") +
+        "red\nbounds: 0, 0, 16, 16\n", encoding="utf-8")
+    (tmp_path / "toy.json").write_text(json.dumps({
+        "skeleton": {"spine": "4.1.23", "x": -32, "y": -32, "width": 64, "height": 64},
+        "bones": [{"name": "root"}],
+        "slots": [{"name": "s", "bone": "root", "attachment": "red"}],
+        "skins": [{"name": "default", "attachments": {
+            "s": {"red": {"type": "region", "path": "red", "width": 16, "height": 16}}}}],
+        "animations": {"idle": {}},
+    }), encoding="utf-8")
+    return tmp_path / "toy.json"
+
+
+def test_pma_checkbox_follows_the_atlas(widget, qapp, tmp_path):
+    _load(widget, _pma_project(tmp_path, pma=True), qapp)
+    assert widget.pma_checkbox.isChecked() is True
+
+
+def test_pma_checkbox_is_off_for_a_straight_alpha_atlas(widget, qapp, tmp_path):
+    _load(widget, _pma_project(tmp_path, pma=False), qapp)
+    assert widget.pma_checkbox.isChecked() is False
+
+
+def test_pma_reaches_the_cli_export(cli_widget, toy_project, qapp, tmp_path, monkeypatch,
+                                    fake_render, recorded_export):
+    fake_render(frames=3)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+
+    cli_widget.pma_checkbox.setChecked(True)
+    qapp.processEvents()
+    _export_one(cli_widget, qapp, monkeypatch, tmp_path / "out.gif")
+    assert recorded_export[0]["options"].pma is True
+    assert "--pma" in recorded_export[0]["options"].to_args()
+
+
+def test_toggling_pma_re_renders_the_preview(cli_widget, toy_project, qapp, fake_render):
+    calls = fake_render(frames=3)
+    _load(cli_widget, toy_project, qapp)
+    _select(cli_widget, qapp)
+    assert calls[0][1].pma is False
+
+    cli_widget.pma_checkbox.setChecked(True)
+    qapp.processEvents()
+    if cli_widget._cli_preview_worker is not None:
+        assert cli_widget._cli_preview_worker.wait(60000)
+    qapp.processEvents()
+    assert len(calls) == 2
+    assert calls[1][1].pma is True

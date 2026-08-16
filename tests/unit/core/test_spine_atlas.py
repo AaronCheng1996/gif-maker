@@ -125,3 +125,28 @@ def test_missing_bounds_raises():
 def test_find_region_returns_none_for_unknown():
     atlas = Atlas.parse_text(ATLAS_41)
     assert atlas.find_region("nope") is None
+
+
+ATLAS_PMA = """page.png
+size: 64, 64
+filter: Linear, Linear
+pma: true
+blob
+bounds: 0, 0, 16, 16
+"""
+
+
+def test_pma_flag_is_read_off_the_page():
+    atlas = Atlas.parse_text(ATLAS_PMA)
+    assert atlas.pages[0].pma is True
+    assert atlas.premultiplied is True
+
+
+def test_atlas_without_the_flag_is_straight_alpha():
+    assert Atlas.parse_text(ATLAS_41).premultiplied is False
+    assert all(page.pma is False for page in Atlas.parse_text(ATLAS_41).pages)
+
+
+def test_premultiplied_is_true_when_any_page_declares_it():
+    mixed = ATLAS_41 + "\nthird.png\nsize: 32, 32\npma: true\nbit\nbounds: 0, 0, 4, 4\n"
+    assert Atlas.parse_text(mixed).premultiplied is True
