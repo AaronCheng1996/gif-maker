@@ -154,7 +154,11 @@ an animation kicks off a single `-f Frames` run that writes preview-sized PNGs i
 folder as it renders: the first frame appears about a second in, the rest fill in behind it
 faster than they play back, and after that scrubbing and playback are just file reads — around
 8ms a frame instead of the built-in renderer's 337ms. Frames stay on disk for as long as the
-model is open, so flicking back to an animation you already looked at is instant. It also
+model is open, so flicking back to an animation you already looked at is instant. They are
+rendered to fit the space the preview panel actually has — capped at 900px, and quantised so
+that dragging a window edge does not throw away a rendered animation — and the displayed
+frame is scaled up as well as down, so the image fills the panel instead of sitting small in
+the middle of it. It also
 means the preview shows exactly what the export will contain. The built-in renderer is the
 fallback, used when it is the selected engine or when the CLI cannot render the model.
 

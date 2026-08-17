@@ -6,10 +6,12 @@ import pytest
 from PIL import Image
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from src.core.spine import cli_backend
 from src.widgets.spine_to_gif_widget import (ENGINE_BUILTIN, ENGINE_CLI, PREVIEW_FPS,
+                                              PREVIEW_MAX, PREVIEW_MIN, PREVIEW_STEP,
                                               SpineToGifWidget)
 
 
@@ -883,3 +885,82 @@ def test_toggling_pma_re_renders_the_preview(cli_widget, toy_project, qapp, fake
     qapp.processEvents()
     assert len(calls) == 2
     assert calls[1][1].pma is True
+
+
+# ── preview sizing: fill the panel instead of sitting small in it ────────
+
+def _sized_widget(w, width, height, qapp):
+    """Lay the widget out at a given size.
+
+    Children only get real geometry once the widget is shown, but a genuine
+    show() trips an RPC_E_CANTCALLOUT_ININPUTSYNCCALL fault in this environment,
+    so it is laid out without ever reaching a screen."""
+    w.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    w.show()
+    w.resize(width, height)
+    qapp.processEvents()
+    return w
+
+
+def test_render_size_follows_the_panel(widget, qapp):
+    _sized_widget(widget, 1280, 800, qapp)
+    small = widget._preview_render_size()
+    _sized_widget(widget, 1920, 1080, qapp)
+    large = widget._preview_render_size()
+    assert large > small
+    assert PREVIEW_MIN <= small <= PREVIEW_MAX
+    assert PREVIEW_MIN <= large <= PREVIEW_MAX
+
+
+def test_render_size_is_clamped_at_both_ends(widget, qapp):
+    _sized_widget(widget, 700, 500, qapp)
+    assert widget._preview_render_size() >= PREVIEW_MIN
+    _sized_widget(widget, 3840, 2160, qapp)
+    assert widget._preview_render_size() == PREVIEW_MAX
+
+
+def test_render_size_is_quantised(widget, qapp):
+    _sized_widget(widget, 1500, 900, qapp)
+    before = widget._preview_render_size()
+    # A nudge smaller than one step must not change the answer, or every drag
+    # of a window edge would throw away a rendered animation.
+    _sized_widget(widget, 1500 + PREVIEW_STEP // 4, 900, qapp)
+    assert widget._preview_render_size() == before
+    assert before % PREVIEW_STEP == 0 or before in (PREVIEW_MIN, PREVIEW_MAX)
+
+
+def test_render_size_is_part_of_the_preview_key(widget, qapp, tmp_path):
+    widget.skeleton_path = tmp_path / "m.json"
+    _sized_widget(widget, 1280, 800, qapp)
+    small = widget._preview_key("walk")
+    _sized_widget(widget, 2200, 1300, qapp)
+    large = widget._preview_key("walk")
+    assert small != large
+
+
+def test_a_small_frame_is_enlarged_to_fill_the_panel(widget, qapp):
+    _sized_widget(widget, 1600, 900, qapp)
+    source = QPixmap(120, 90)
+    source.fill(Qt.GlobalColor.red)
+    widget._set_preview_pixmap(source, "test")
+
+    shown = widget.preview_label.pixmap()
+    panel = widget.preview_label.size()
+    assert shown.width() > source.width()      # used to be left at 120px
+    # Fills the limiting dimension, give or take rounding.
+    assert (shown.width() >= panel.width() - 2 or shown.height() >= panel.height() - 2)
+    # Aspect ratio is preserved.
+    assert shown.width() / shown.height() == pytest.approx(120 / 90, rel=0.02)
+
+
+def test_resizing_refits_without_re_reading_the_frame(widget, qapp):
+    _sized_widget(widget, 1600, 900, qapp)
+    source = QPixmap(120, 90)
+    source.fill(Qt.GlobalColor.red)
+    widget._set_preview_pixmap(source, "test")
+    first = widget.preview_label.pixmap().width()
+
+    _sized_widget(widget, 1000, 700, qapp)
+    assert widget.preview_label.pixmap().width() != first
+    # The unscaled frame is kept, so the refit is not a rescale of a rescale.
+    assert widget._current_pixmap.size() == source.size()
