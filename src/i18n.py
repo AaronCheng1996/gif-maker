@@ -51,6 +51,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "🖼️ Image Merge":                     "🖼️ 圖片合併",
         "🦴 Spine to GIF":                    "🦴 Spine 轉 GIF",
         "✂ Crop GIF":                        "✂ 裁切 GIF",
+        "🧩 Atlas Unpack":                    "🧩 圖集還原",
         "🌳 Tree":                            "🌳 樹狀圖",
         "🖼 Canvas":                          "🖼 畫布",
 
@@ -127,6 +128,23 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Load Images":                       "載入圖片",
         "Output":                            "輸出",
         "Save PNG":                          "儲存 PNG",
+
+        # ── Atlas Unpack tab ──────────────────────────────────────────────────
+        "Diced Atlas":                       "切格圖集",
+        "📂 Open Ripped Folder…":            "📂 開啟解包資料夾…",
+        "Open Ripped Folder":                "開啟解包資料夾",
+        "📦 Open Unity .assets…":            "📦 開啟 Unity .assets…",
+        "Open Unity .assets":                "開啟 Unity .assets",
+        "Nothing loaded":                    "尚未載入",
+        "Scanning…":                         "掃描中…",
+        "Filter by name":                    "依名稱篩選",
+        "Extract":                           "還原匯出",
+        "💾 Extract":                        "💾 還原匯出",
+        "💾 Extract {n} images":             "💾 還原匯出 {n} 張",
+        "Select Output Folder":              "選擇輸出資料夾",
+        "Nothing diced was found here":      "這裡沒有找到切格圖集",
+        "Preview available after extracting": "匯出後才能預覽",
+        "Open a ripped folder or a Unity .assets file": "開啟解包資料夾或 Unity .assets 檔案",
 
         # ── Spine to GIF tab ──────────────────────────────────────────────────
         "Spine Project":                     "Spine 專案",

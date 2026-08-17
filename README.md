@@ -180,6 +180,30 @@ semi-transparent pixels from 94 to 21 out of 255. Both engines honour the flag (
 the CLI, skipping the second multiply in the built-in draw loop), and the checkbox is there to
 override a model that declares it wrongly.
 
+### Atlas Unpack
+
+Rebuilds pictures a game stored as a *diced* texture atlas. Some engines cut every image into a
+grid of cells, throw away the cells that repeat and pack the survivors into one sheet — forty
+expression variants of a character then cost barely more than one. The sheet looks like noise,
+because cells next to each other in it come from unrelated parts of the picture, and the images
+only come back with the table that says which cell goes where.
+
+Two systems are handled, chosen from what you point the tab at:
+
+| | **Naninovel SpriteDicing** | **Utage `DicingTextures`** |
+|---|---|---|
+| Point it at | a folder of asset-ripper output | the game's `.assets` file or a bundle |
+| Table lives in | a mesh on each Sprite, so the exported `.json` is enough | a ScriptableObject rippers usually skip |
+| Requires | nothing | [UnityPy](https://pypi.org/project/UnityPy/) |
+
+The exported `.json` records only a numeric id for the sheet a sprite came from, and the exported
+PNGs carry no id at all, so when a folder holds more than one sheet the pairing is settled by
+rebuilding a sample against each and keeping the one that leaves no seams.
+
+That same measurement guards the output: a picture is written only if its cell borders are no more
+visible than the picture's own texture. Pairing a sprite with the wrong sheet is not subtle — on a
+real model it overshoots by tens of levels — so a scrambled rebuild is reported rather than saved.
+
 ### Crop GIF
 
 Trims finished animations to a rectangle. Because the preview here *is* the file,
