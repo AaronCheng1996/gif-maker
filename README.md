@@ -180,6 +180,26 @@ semi-transparent pixels from 94 to 21 out of 255. Both engines honour the flag (
 the CLI, skipping the second multiply in the built-in draw loop), and the checkbox is there to
 override a model that declares it wrongly.
 
+### GIF to Video
+
+Re-encodes a finished GIF as H.264 or VP9 to make it smaller. A GIF holds 256 colours per frame
+and compresses each frame on its own; the same animation as H.264 typically lands three to eight
+times smaller while still looking like the GIF it came from. Measured on a 7.5 MB, 134-frame GIF:
+2.8 MB at the "High" preset, 1.9 MB at "Balanced", 1.2 MB at "Small".
+
+**H.264 has no alpha channel**, and animations exported from Spine are routinely a third
+transparent, so that transparency has to become some colour on the way to MP4. The tab makes that
+decision visible rather than surprising: the file list marks which entries carry transparency, and
+the preview shows the selected frame already composited onto the chosen background. Where the
+transparency has to survive, the VP9/WebM option keeps it — roughly half the saving, still
+smaller than the GIF.
+
+Worth knowing before reaching for this: **a transcode is capped by its source.** Against the
+frames a Spine model actually rendered, a GIF scores 17.2 dB PSNR and so does every video made
+from it, however many bits it is given; encoding those same frames straight to H.264 reaches
+35.4 dB at the same file size. So this tab is the right tool for a GIF you already have — if the
+animation is still in Spine, the Spine to GIF tab exports MP4 directly and does it far better.
+
 ### Atlas Unpack
 
 Rebuilds pictures a game stored as a *diced* texture atlas. Some engines cut every image into a

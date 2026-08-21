@@ -8,7 +8,8 @@ from PyQt6.QtCore import Qt, QTimer
 from .core import MaterialManager, GifBuilder, GroupManager, CompositionGroup
 from .widgets import (AppTheme, PreviewPageWidget, TileSplitterPage, BatchProcessorWidget,
                       GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget, ImageMergeWidget,
-                      SpineToGifWidget, CropGifWidget, AtlasUnpackWidget)
+                      SpineToGifWidget, CropGifWidget, AtlasUnpackWidget,
+                      GifToMp4Widget)
 from .i18n import tr, set_language
 from . import settings as AppSettings
 from .main_window import (MaterialsPanelMixin, ComposerPanelMixin, TemplateMixin,
@@ -181,6 +182,7 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         # ── Tab 8: Crop GIF (trims finished animation files) ──────────────────
         self.crop_gif = CropGifWidget()
         self.atlas_unpack = AtlasUnpackWidget()
+        self.gif_to_mp4 = GifToMp4Widget()
 
         # ── Top-level QTabWidget ───────────────────────────────────────────────
         self.tool_tabs = QTabWidget()
@@ -195,6 +197,7 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         self.tool_tabs.addTab(self.spine_to_gif,         tr("🦴 Spine to GIF"))
         self.tool_tabs.addTab(self.crop_gif,             tr("✂ Crop GIF"))
         self.tool_tabs.addTab(self.atlas_unpack,         tr("🧩 Atlas Unpack"))
+        self.tool_tabs.addTab(self.gif_to_mp4,           tr("🎬 GIF to Video"))
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
@@ -241,7 +244,7 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
     def closeEvent(self, event):
         """Handle application closing - perform emergency auto-save"""
         # Background render threads must finish before their widget is destroyed.
-        for tab_name in ('spine_to_gif', 'crop_gif', 'atlas_unpack'):
+        for tab_name in ('spine_to_gif', 'crop_gif', 'atlas_unpack', 'gif_to_mp4'):
             tab = getattr(self, tab_name, None)
             if tab is not None:
                 tab.stop_workers()

@@ -52,6 +52,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "🦴 Spine to GIF":                    "🦴 Spine 轉 GIF",
         "✂ Crop GIF":                        "✂ 裁切 GIF",
         "🧩 Atlas Unpack":                    "🧩 圖集還原",
+        "🎬 GIF to Video":                    "🎬 GIF 轉影片",
         "🌳 Tree":                            "🌳 樹狀圖",
         "🖼 Canvas":                          "🖼 畫布",
 
@@ -128,6 +129,21 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Load Images":                       "載入圖片",
         "Output":                            "輸出",
         "Save PNG":                          "儲存 PNG",
+
+        # ── GIF to Video tab ──────────────────────────────────────────────────
+        "📂 Add Files…":                     "📂 加入檔案…",
+        "Remove":                            "移除",
+        "Add a GIF to see how it will look":  "加入 GIF 以預覽轉檔後的樣子",
+        "This file could not be read":       "無法讀取這個檔案",
+        "Transparent becomes:":              "透明處填成：",
+        "Pick…":                             "選色…",
+        "Background Colour":                 "背景色",
+        "Resize width to":                   "縮放寬度至",
+        "Save Beside Source":                "存到來源旁",
+        "Choose Folder…":                    "選擇資料夾…",
+        "🎬 Convert":                        "🎬 開始轉檔",
+        "How to Install FFmpeg…":            "如何安裝 FFmpeg…",
+        "ffmpeg found — ready to convert.":  "已找到 ffmpeg，可以轉檔。",
 
         # ── Atlas Unpack tab ──────────────────────────────────────────────────
         "Diced Atlas":                       "切格圖集",
