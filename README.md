@@ -52,6 +52,9 @@ Groups can be nested via `SubGroupEntry`, enabling reusable animation clips insi
 - Nest groups inside other groups via SubGroupEntry with individual loop count and offset
 - Multi-layer composition via LayerBlockEntry (composite several timelines at each frame)
 - Collapse and expand entries inline
+- Clear a group with one button: it empties the group without deleting it, says what is
+  about to go, warns when the group is referenced from more than one place (they share the
+  same contents), and is undoable
 
 ### Preview
 

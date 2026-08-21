@@ -282,6 +282,26 @@ class GroupCompositionWidget(QWidget):
                                 return True
         return False
 
+    def _reference_count(self, gid: int) -> int:
+        """How many places in the tree point at this group.
+
+        Sub-group entries share one group object rather than copying it, so
+        emptying a group empties it everywhere it appears — worth saying out loud
+        before doing it."""
+        if not self._gm:
+            return 0
+        count = 0
+        for group in self._gm.groups:
+            for entry in group.entries:
+                if is_sub_group_entry(entry) and entry.group_id == gid:
+                    count += 1
+                if is_layer_block_entry(entry):
+                    for tl in entry.timelines:
+                        for slot in tl:
+                            if is_group_slot(slot) and slot.group_id == gid:
+                                count += 1
+        return count
+
     def _get_orphan_gids(self) -> List[int]:
         """Return group IDs not referenced anywhere (safe to delete)."""
         if not self._gm:
@@ -441,6 +461,17 @@ class GroupCompositionWidget(QWidget):
             btn.setToolTip(tip)
             btn.clicked.connect(fn)
             hl.addWidget(btn)
+
+        group_obj = self._gm.get_group(gid) if self._gm else None
+        entry_count = len(group_obj.entries) if group_obj else 0
+        clear_btn = _small_btn("🗑", _T.ERROR, width=30)
+        clear_btn.setToolTip(
+            "Empty this group — remove every frame, sub-group and layer block "
+            "inside it.\nThe group itself stays, and Undo brings the contents back."
+            if entry_count else "This group is already empty")
+        clear_btn.setEnabled(entry_count > 0)
+        clear_btn.clicked.connect(lambda _=None, g=gid: self._cmd_clear_group(g))
+        hl.addWidget(clear_btn)
 
         # Top-level: delete button for non-root groups
         if parent_gid is None and not is_root:
@@ -998,6 +1029,42 @@ class GroupCompositionWidget(QWidget):
             if root is not None:
                 self.current_group_changed.emit(root)
         self.refresh()
+
+    def _cmd_clear_group(self, gid: int):
+        """Empty a group without deleting it.
+
+        Confirmed rather than instant, because one click can throw away a lot of
+        arranging — but it goes through the ordinary change signal, so Undo puts
+        it all back."""
+        if not self._gm:
+            return
+        group = self._gm.get_group(gid)
+        if not group or not group.entries:
+            return
+
+        frames = sum(1 for e in group.entries if is_frame_entry(e))
+        subgroups = sum(1 for e in group.entries if is_sub_group_entry(e))
+        blocks = sum(1 for e in group.entries if is_layer_block_entry(e))
+        parts = [f"{n} {name}" for n, name in
+                 ((frames, "frame(s)"), (subgroups, "sub-group entr(ies)"),
+                  (blocks, "layer block(s)")) if n]
+
+        message = f"Remove {', '.join(parts)} from \"{group.name}\"?"
+        references = self._reference_count(gid)
+        if references > 1:
+            message += (f"\n\nThis group appears {references} times in the tree, "
+                        "and they all share these contents — every one of them "
+                        "will be emptied.")
+        message += "\n\nUndo (Ctrl+Z) restores it."
+
+        reply = QMessageBox.question(
+            self.window(), "Clear Group", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        group.entries.clear()
+        self._notify()
 
     def _notify(self):
         self.entries_changed.emit()
