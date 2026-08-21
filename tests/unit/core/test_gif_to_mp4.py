@@ -193,3 +193,50 @@ def test_without_a_limit_the_source_size_is_kept(toy_gif, tmp_path):
     info = gif_to_mp4.get_animation_info(out)
     assert (info["width"], info["height"]) == (64, 48)
 
+
+# ── aspect ratio ─────────────────────────────────────────────────────────
+
+@needs_ffmpeg
+def test_both_paths_pin_the_pixel_aspect(tmp_path):
+    """Guards the bug where output was tagged 4:3 and players squashed it."""
+    for codec in gif_to_mp4.CODECS:
+        cmd = gif_to_mp4.build_command("in.gif", tmp_path / "o", codec=codec)
+        assert "setsar=1" in " ".join(cmd)
+
+
+@pytest.fixture()
+def tall_gif(tmp_path):
+    """Portrait, so a wrongly-declared 4:3 aspect would be obvious."""
+    frames = []
+    for i in range(4):
+        frame = Image.new("RGB", (64, 128), (20, 20, 20))
+        frame.paste(Image.new("RGB", (20, 20), (220, 60 + i * 30, 40)), (10, 10 + i * 8))
+        frames.append(frame.convert("P", palette=Image.Palette.ADAPTIVE, colors=32))
+    out = tmp_path / "tall.gif"
+    frames[0].save(out, save_all=True, append_images=frames[1:], duration=80, loop=0)
+    return out
+
+
+@needs_ffmpeg
+def test_the_output_declares_square_pixels(tall_gif, tmp_path):
+    """scale2ref carries the colour source's 4:3 aspect over unless it is pinned.
+
+    The stored size stayed right, so only checking width and height missed this:
+    the file said 'display me as 4:3' and players obliged."""
+    for codec in gif_to_mp4.CODECS:
+        out = tmp_path / f"a.{gif_to_mp4.extension_for(codec)}"
+        gif_to_mp4.convert_to_video(tall_gif, out, codec=codec, crf=30)
+        info = gif_to_mp4.get_animation_info(out)
+        assert info["sar"] == "1:1", f"{codec} tagged the pixels {info['sar']}"
+        assert (info["width"], info["height"]) == (64, 128)
+
+
+@needs_ffmpeg
+def test_the_displayed_shape_matches_the_source(tall_gif, tmp_path):
+    """Stored size times pixel aspect has to come back to the source's shape."""
+    out = tmp_path / "shape.mp4"
+    gif_to_mp4.convert_to_video(tall_gif, out, crf=30)
+    info = gif_to_mp4.get_animation_info(out)
+    num, _, den = info["sar"].partition(":")
+    displayed = info["width"] * (int(num) / int(den))
+    assert displayed / info["height"] == pytest.approx(64 / 128, rel=0.01)

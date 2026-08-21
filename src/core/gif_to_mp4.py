@@ -80,12 +80,13 @@ def get_animation_info(input_path) -> dict:
     try:
         result = subprocess.run(
             [str(probe), "-v", "error", "-select_streams", "v:0", "-count_frames",
-             "-show_entries", "stream=width,height,nb_read_frames,avg_frame_rate",
+             "-show_entries",
+             "stream=width,height,nb_read_frames,avg_frame_rate,sample_aspect_ratio",
              "-of", "default=noprint_wrappers=1", str(input_path)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         text = result.stdout.decode(errors="ignore")
     except (OSError, subprocess.SubprocessError):
-        return {"width": 0, "height": 0, "frames": 0, "fps": 0.0}
+        return {"width": 0, "height": 0, "frames": 0, "fps": 0.0, "sar": "1:1"}
 
     def field(name: str, default: int = 0) -> int:
         m = re.search(rf"^{name}=(\d+)", text, re.MULTILINE)
@@ -95,8 +96,13 @@ def get_animation_info(input_path) -> dict:
     m = re.search(r"^avg_frame_rate=(\d+)/(\d+)", text, re.MULTILINE)
     if m and int(m.group(2)):
         fps = int(m.group(1)) / int(m.group(2))
+    # A sample aspect other than 1:1 means players will stretch the picture,
+    # which looks like squashing plus letterbox bars even when the stored
+    # dimensions are correct.
+    m = re.search(r"^sample_aspect_ratio=(\S+)", text, re.MULTILINE)
+    sar = m.group(1) if m and m.group(1) != "N/A" else "1:1"
     return {"width": field("width"), "height": field("height"),
-            "frames": field("nb_read_frames"), "fps": fps}
+            "frames": field("nb_read_frames"), "fps": fps, "sar": sar}
 
 
 def _scale_chain(fps: float, width: int) -> str:
@@ -128,7 +134,7 @@ def build_command(input_path, output_path, *, codec: str = H264, crf: int = DEFA
     if codec == VP9_ALPHA:
         # VP9 stores the alpha as a side stream, so the pixel format has to say
         # so both going into the encoder and coming out of it.
-        cmd += ["-vf", f"{chain},format=yuva420p",
+        cmd += ["-vf", f"{chain},setsar=1,format=yuva420p",
                 "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
                 "-crf", str(crf), "-b:v", "0", "-row-mt", "1"]
     else:
@@ -139,7 +145,12 @@ def build_command(input_path, output_path, *, codec: str = H264, crf: int = DEFA
                 "-filter_complex",
                 f"[0:v]{chain},format=rgba[fg];"
                 f"[1:v][fg]scale2ref[bg][fg2];"
-                f"[bg][fg2]overlay=shortest=1,format=yuv420p[v]",
+                # setsar is not optional: scale2ref matches the colour source's
+                # pixel dimensions to the animation but carries its own aspect
+                # over, and lavfi's colour source is 4:3. Without this the file
+                # claims non-square pixels, and players squash the picture and
+                # letterbox it even though the stored size is right.
+                f"[bg][fg2]overlay=shortest=1,setsar=1,format=yuv420p[v]",
                 "-map", "[v]",
                 "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
