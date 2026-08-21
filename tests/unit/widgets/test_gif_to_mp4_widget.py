@@ -235,3 +235,103 @@ def test_a_failure_is_reported_rather_than_silently_dropped(widget, clear_gif, t
 def test_stop_workers_is_idempotent(widget):
     widget.stop_workers()
     widget.stop_workers()
+
+
+# ── saying what the settings actually are ────────────────────────────────
+
+def test_the_recipe_line_states_the_defaults(widget, qapp):
+    text = widget.recipe_label.text()
+    assert "MP4 (H.264)" in text
+    assert "Balanced" in text
+    assert "original size kept" in text
+    assert "transparent → white" in text
+    assert "saved beside each source" in text
+
+
+def test_the_recipe_follows_the_codec(widget, qapp):
+    widget.codec_combo.setCurrentText(gif_to_mp4.VP9_ALPHA)
+    qapp.processEvents()
+    text = widget.recipe_label.text()
+    assert "WebM (VP9)" in text
+    assert "transparency kept" in text
+    assert "transparent →" not in text
+
+
+def test_the_recipe_follows_the_quality_and_background(widget, qapp):
+    widget.quality_combo.setCurrentIndex(0)
+    widget.bg_combo.setCurrentIndex(1)          # black
+    qapp.processEvents()
+    text = widget.recipe_label.text()
+    assert "Near-identical" in text
+    assert "transparent → black" in text
+
+
+def test_the_recipe_follows_the_output_folder(widget, tmp_path, monkeypatch, qapp):
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+    widget.choose_output_folder()
+    qapp.processEvents()
+    assert str(tmp_path) in widget.recipe_label.text()
+
+
+# ── size handling, which is what a width box gets wrong ──────────────────
+
+def test_by_default_no_width_limit_is_applied(widget, clear_gif, qapp):
+    widget.add_paths([str(clear_gif)])
+    qapp.processEvents()
+    assert widget.width_cap() == 0
+    assert widget.sources[0].output_size(0) == (64, 48)
+    # No arrow in the row: nothing is being resized.
+    assert "→" not in widget.file_list.item(0).text()
+
+
+def test_a_width_limit_never_enlarges(widget, clear_gif, qapp):
+    """The spinbox sits at 800; a 64px GIF must not be blown up to it."""
+    widget.add_paths([str(clear_gif)])
+    widget.resize_checkbox.setChecked(True)
+    qapp.processEvents()
+    assert widget.width_cap() == 800
+    assert widget.sources[0].output_size(800) == (64, 48)
+    assert "→" not in widget.file_list.item(0).text()
+
+
+def test_a_width_limit_shrinks_and_the_row_says_so(widget, tmp_path, qapp):
+    """The spinbox floor is 64px, so the source has to be wider than that."""
+    wide = _gif(tmp_path / "wide.gif", transparent=False, size=(256, 192))
+    widget.add_paths([str(wide)])
+    widget.resize_checkbox.setChecked(True)
+    widget.width_spinbox.setValue(128)
+    qapp.processEvents()
+
+    assert widget.width_cap() == 128
+    assert widget.sources[0].output_size(128) == (128, 96)
+    assert "256×192 → 128×96" in widget.file_list.item(0).text()
+    assert "shrink to 128px if wider" in widget.recipe_label.text()
+
+
+def test_output_size_is_rounded_down_to_even(widget, tmp_path, qapp):
+    """4:2:0 cannot hold an odd edge, so it is dropped — and shown as dropped."""
+    odd = _gif(tmp_path / "odd.gif", transparent=False, size=(65, 49))
+    widget.add_paths([str(odd)])
+    qapp.processEvents()
+    assert widget.sources[0].output_size(0) == (64, 48)
+    assert "65×49 → 64×48" in widget.file_list.item(0).text()
+
+
+@needs_ffmpeg
+def test_the_advertised_size_is_the_size_produced(widget, clear_gif, tmp_path,
+                                                  monkeypatch, qapp):
+    """Whatever the row promises has to be what lands on disk."""
+    out = tmp_path / "out"
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(out))
+    widget.add_paths([str(clear_gif)])
+    widget.resize_checkbox.setChecked(True)
+    widget.width_spinbox.setValue(800)          # larger than the source
+    widget.choose_output_folder()
+    qapp.processEvents()
+    promised = widget.sources[0].output_size(widget.width_cap())
+
+    widget.convert()
+    assert widget._worker.wait(120000)
+    qapp.processEvents()
+    info = gif_to_mp4.get_animation_info(out / "clear.mp4")
+    assert (info["width"], info["height"]) == promised

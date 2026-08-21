@@ -100,12 +100,17 @@ def get_animation_info(input_path) -> dict:
 
 
 def _scale_chain(fps: float, width: int) -> str:
-    """Frame rate and size, ending with the even dimensions both codecs demand."""
+    """Frame rate and size, ending with the even dimensions both codecs demand.
+
+    A width limit only ever shrinks. Blowing a 640px GIF up to 800 costs bitrate
+    and adds blur without adding detail that was never in the source, so the
+    limit is applied as a cap rather than a target."""
     steps = []
     if fps > 0:
         steps.append(f"fps={fps}")
     if width > 0:
-        steps.append(f"scale={width}:-1:flags=lanczos")
+        # The comma inside min() has to be escaped or it reads as a filter break.
+        steps.append(rf"scale=w='min(iw\,{width})':h=-1:flags=lanczos")
     steps.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
     return ",".join(steps)
 

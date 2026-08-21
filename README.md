@@ -197,6 +197,12 @@ the preview shows the selected frame already composited onto the chosen backgrou
 transparency has to survive, the VP9/WebM option keeps it — roughly half the saving, still
 smaller than the GIF.
 
+Files keep the size they already have unless you say otherwise, and when a width limit is
+set it is a **cap, not a target** — anything already narrower is left alone rather than
+being enlarged into blur. A one-line summary above the Convert button states the whole
+recipe (format, quality, sizing, background, destination), and each row shows the size it
+will come out at, including the even-number rounding that 4:2:0 forces.
+
 Worth knowing before reaching for this: **a transcode is capped by its source.** Against the
 frames a Spine model actually rendered, a GIF scores 17.2 dB PSNR and so does every video made
 from it, however many bits it is given; encoding those same frames straight to H.264 reaches

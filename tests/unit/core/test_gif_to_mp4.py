@@ -68,8 +68,16 @@ def test_crf_and_resize_reach_the_command(tmp_path):
     cmd = gif_to_mp4.build_command("in.gif", tmp_path / "o.mp4", crf=31, width=640, fps=12)
     assert cmd[cmd.index("-crf") + 1] == "31"
     joined = " ".join(cmd)
-    assert "scale=640:-1" in joined
+    # A width is an upper limit, not a target, so it is expressed with min().
+    assert r"min(iw\,640)" in joined
     assert "fps=12" in joined
+
+
+@needs_ffmpeg
+def test_no_width_means_no_scaling_step(tmp_path):
+    joined = " ".join(gif_to_mp4.build_command("in.gif", tmp_path / "o.mp4"))
+    assert "min(iw" not in joined
+    assert "lanczos" not in joined
 
 
 @needs_ffmpeg
@@ -159,3 +167,29 @@ def test_output_defaults_to_the_source_name(toy_gif):
     produced = gif_to_mp4.convert_to_video(toy_gif, crf=30)
     assert produced.endswith(".mp4")
     assert toy_gif.with_suffix(".mp4").exists()
+
+
+@needs_ffmpeg
+def test_a_width_limit_never_enlarges_a_smaller_file(toy_gif, tmp_path):
+    """Blowing a 64px source up to 800 would cost bitrate and add only blur."""
+    out = tmp_path / "capped.mp4"
+    gif_to_mp4.convert_to_video(toy_gif, out, width=800, crf=30)
+    assert gif_to_mp4.get_animation_info(out)["width"] == 64
+
+
+@needs_ffmpeg
+def test_a_width_limit_does_shrink_a_larger_file(toy_gif, tmp_path):
+    out = tmp_path / "shrunk.mp4"
+    gif_to_mp4.convert_to_video(toy_gif, out, width=32, crf=30)
+    info = gif_to_mp4.get_animation_info(out)
+    assert info["width"] == 32
+    assert info["height"] == 24          # 64x48 keeps its 4:3
+
+
+@needs_ffmpeg
+def test_without_a_limit_the_source_size_is_kept(toy_gif, tmp_path):
+    out = tmp_path / "same.mp4"
+    gif_to_mp4.convert_to_video(toy_gif, out, crf=30)
+    info = gif_to_mp4.get_animation_info(out)
+    assert (info["width"], info["height"]) == (64, 48)
+

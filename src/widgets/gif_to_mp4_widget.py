@@ -14,7 +14,7 @@ For anything where the transparency has to survive, the VP9/WebM option keeps
 it — about half the saving, but still smaller than the GIF.
 """
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QListWidget, QListWidgetItem, QComboBox, QSpinBox,
@@ -80,11 +80,26 @@ class SourceFile:
         except OSError:
             return 0.0
 
-    def label(self) -> str:
+    def output_size(self, width_cap: int) -> Tuple[int, int]:
+        """What this file will come out as. The cap only ever shrinks.
+
+        Both codecs need even dimensions in 4:2:0, so an odd edge loses its last
+        row or column — worth showing rather than letting it be noticed later."""
+        w, h = self.width, self.height
+        if width_cap and w > width_cap:
+            h = max(1, round(h * width_cap / w))
+            w = width_cap
+        return w - w % 2, h - h % 2
+
+    def label(self, width_cap: int = 0) -> str:
         if self.error:
             return f"{self.path.name}\n⚠ unreadable — {self.error[:60]}"
         alpha = "  ·  has transparency" if self.transparent else ""
-        return (f"{self.path.name}\n{self.width}×{self.height}  ·  {self.frames} frames"
+        out_w, out_h = self.output_size(width_cap)
+        size = f"{self.width}×{self.height}"
+        if (out_w, out_h) != (self.width, self.height):
+            size += f" → {out_w}×{out_h}"
+        return (f"{self.path.name}\n{size}  ·  {self.frames} frames"
                 f"  ·  {self.size_mb:.1f} MB{alpha}")
 
 
@@ -232,6 +247,7 @@ class GifToMp4Widget(QWidget):
             self.quality_combo.addItem(f"{label}  (crf {crf})", crf)
         self.quality_combo.setCurrentIndex(
             [c for _, c in gif_to_mp4.QUALITY_PRESETS].index(gif_to_mp4.DEFAULT_CRF))
+        self.quality_combo.currentIndexChanged.connect(self._on_settings_changed)
         quality_row.addWidget(self.quality_combo, stretch=1)
         s.addLayout(quality_row)
 
@@ -250,7 +266,11 @@ class GifToMp4Widget(QWidget):
         s.addLayout(bg_row)
 
         resize_row = QHBoxLayout()
-        self.resize_checkbox = QCheckBox(tr("Resize width to"))
+        self.resize_checkbox = QCheckBox(tr("Shrink if wider than"))
+        self.resize_checkbox.setToolTip(
+            "Off by default: every file keeps the size it already has.\n"
+            "When on, this is an upper limit — anything already narrower is left "
+            "alone rather than being blown up.")
         self.resize_checkbox.toggled.connect(self._on_resize_toggled)
         resize_row.addWidget(self.resize_checkbox)
         self.width_spinbox = QSpinBox()
@@ -259,9 +279,19 @@ class GifToMp4Widget(QWidget):
         self.width_spinbox.setValue(800)
         self.width_spinbox.setSuffix(" px")
         self.width_spinbox.setEnabled(False)
+        self.width_spinbox.valueChanged.connect(self._on_settings_changed)
         resize_row.addWidget(self.width_spinbox)
         resize_row.addStretch()
         s.addLayout(resize_row)
+
+        # One plain sentence for what pressing Convert will actually do — the
+        # controls above are easy to read past.
+        self.recipe_label = QLabel("")
+        self.recipe_label.setWordWrap(True)
+        self.recipe_label.setStyleSheet(
+            f"color: {_T.TEXT}; font-size: 11px; background: {_T.CARD}; "
+            f"border: 1px solid {_T.BORDER}; border-radius: 3px; padding: 5px;")
+        s.addWidget(self.recipe_label)
 
         self.dest_label = QLabel("")
         self.dest_label.setWordWrap(True)
@@ -351,7 +381,7 @@ class GifToMp4Widget(QWidget):
         self.file_list.blockSignals(True)
         self.file_list.clear()
         for source in self.sources:
-            item = QListWidgetItem(source.label())
+            item = QListWidgetItem(source.label(self.width_cap()))
             item.setData(Qt.ItemDataRole.UserRole, source)
             if source.error:
                 item.setForeground(QColor(_T.ERROR))
@@ -444,6 +474,7 @@ class GifToMp4Widget(QWidget):
         value = self.bg_combo.currentData()
         if value:
             self._background = value
+        self._update_recipe()
         self._refresh_preview()
 
     def pick_background(self):
@@ -454,6 +485,7 @@ class GifToMp4Widget(QWidget):
         if self.bg_combo.findData(self._background) < 0:
             self.bg_combo.addItem(self._background, self._background)
         self.bg_combo.setCurrentIndex(self.bg_combo.findData(self._background))
+        self._update_recipe()
         self._refresh_preview()
 
     def _on_codec_changed(self, codec: str):
@@ -461,10 +493,34 @@ class GifToMp4Widget(QWidget):
         for w in (self.bg_caption, self.bg_combo, self.bg_pick_btn):
             w.setEnabled(not keeps_alpha)
         self._update_dest_label()
+        self._update_recipe()
         self._refresh_preview()
 
     def _on_resize_toggled(self, checked: bool):
         self.width_spinbox.setEnabled(checked)
+        self._on_settings_changed()
+
+    def width_cap(self) -> int:
+        """The width limit in force, or 0 when files keep their own size."""
+        return self.width_spinbox.value() if self.resize_checkbox.isChecked() else 0
+
+    def _on_settings_changed(self, *_):
+        """Re-state the recipe and the per-file sizes after any setting moves."""
+        self._update_recipe()
+        self._rebuild_list()
+
+    def _update_recipe(self):
+        codec = self.codec_combo.currentText()
+        cap = self.width_cap()
+        parts = [
+            "MP4 (H.264)" if codec == gif_to_mp4.H264 else "WebM (VP9)",
+            self.quality_combo.currentText().split("  (")[0],
+            f"shrink to {cap}px if wider" if cap else "original size kept",
+            ("transparency kept" if codec == gif_to_mp4.VP9_ALPHA
+             else f"transparent → {self._background}"),
+            str(self.out_dir) if self.out_dir else "saved beside each source",
+        ]
+        self.recipe_label.setText("  ·  ".join(parts))
 
     def use_source_folder(self):
         self.out_dir = None
@@ -481,6 +537,7 @@ class GifToMp4Widget(QWidget):
         ext = gif_to_mp4.extension_for(self.codec_combo.currentText())
         where = str(self.out_dir) if self.out_dir else "beside each source file"
         self.dest_label.setText(f"Writing <name>.{ext} to {where}")
+        self._update_recipe()
 
     # ── conversion ───────────────────────────────────────────────────────
 
@@ -503,7 +560,7 @@ class GifToMp4Widget(QWidget):
         self._worker = _ConvertWorker(
             jobs, self.out_dir, self.codec_combo.currentText(),
             self.quality_combo.currentData(), self._background, 0.0,
-            self.width_spinbox.value() if self.resize_checkbox.isChecked() else 0, self)
+            self.width_cap(), self)
         self._worker.file_started.connect(self._on_file_started)
         self._worker.file_progress.connect(self.progress_bar.setValue)
         self._worker.file_done.connect(self._on_file_done)
