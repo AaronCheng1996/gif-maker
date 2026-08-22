@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from ..core.gif_optimizer import optimize_gif_lossy, GifOptimizationError, is_gifsicle_available
 from .theme import AppTheme as _T
+from . import ui
 
 
 class _OptimizePreviewWorker(QThread):
@@ -75,7 +76,7 @@ class GifOptimizerWidget(QWidget):
         layout.setSpacing(8)
 
         title = QLabel("GIF Optimizer (Lossy)")
-        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title.setStyleSheet(ui.TITLE_QSS)
         layout.addWidget(title)
 
         desc = QLabel(

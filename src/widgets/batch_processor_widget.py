@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
 from .theme import AppTheme as _T
+from . import ui
 
 
 class _BatchWorker(QObject):
@@ -65,7 +66,7 @@ class BatchProcessorWidget(QWidget):
         
         # Title
         title_label = QLabel("Batch GIF Generator")
-        title_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title_label.setStyleSheet(ui.TITLE_QSS)
         layout.addWidget(title_label)
         
         # Description
@@ -327,11 +328,7 @@ class BatchProcessorWidget(QWidget):
         
         self.process_btn = QPushButton("Start Batch Processing")
         self.process_btn.clicked.connect(self.start_batch_processing)
-        self.process_btn.setStyleSheet(
-            f"font-weight: bold; font-size: 13px; padding: 8px 20px; "
-            f"background-color: {_T.ACCENT_DARK}; color: white; "
-            f"border: 1px solid {_T.ACCENT}; border-radius: 4px;"
-        )
+        self.process_btn.setStyleSheet(ui.GO_QSS)
         action_layout.addWidget(self.process_btn)
         
         layout.addLayout(action_layout)

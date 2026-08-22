@@ -39,6 +39,7 @@ from ..core.video_to_gif import (
     find_ffmpeg,
 )
 from .theme import AppTheme as _T
+from . import ui
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -758,7 +759,7 @@ class ClipToGifWidget(QWidget):
         cl.setContentsMargins(8, 8, 8, 8)
 
         title = QLabel("Clip to GIF")
-        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title.setStyleSheet(ui.TITLE_QSS)
         cl.addWidget(title)
 
         desc = QLabel(

@@ -22,6 +22,7 @@ from ..core.cropping import CropError, crop_animation_file, is_noop, pixel_box
 from ..core.video_to_gif import extract_preview_frames
 from .crop_overlay import CropOverlayLabel
 from .theme import AppTheme as _T
+from . import ui
 
 PREVIEW_MAX = 720
 SUPPORTED = "Animations (*.gif *.png *.webp *.apng *.mp4 *.mov *.webm *.mkv);;All files (*)"
@@ -191,7 +192,7 @@ class CropGifWidget(QWidget):
     # ── UI ───────────────────────────────────────────────────────────────
 
     def _init_ui(self):
-        layout = QHBoxLayout(self)
+        layout = ui.tab_layout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._create_left_panel())
         splitter.addWidget(self._create_center_panel())
@@ -201,10 +202,10 @@ class CropGifWidget(QWidget):
 
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         title = QLabel(tr("Files"))
-        title.setStyleSheet(f"font-weight: 600; font-size: 14px; color: {_T.TEXT}; padding: 4px 0;")
+        title.setStyleSheet(ui.TITLE_QSS)
         v.addWidget(title)
 
         self.add_btn = QPushButton(tr("📂 Add Animations…"))
@@ -234,7 +235,7 @@ class CropGifWidget(QWidget):
 
     def _create_center_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         self.preview = CropOverlayLabel()
         self.preview.setText(tr("Add an animation to crop"))
@@ -267,7 +268,7 @@ class CropGifWidget(QWidget):
 
     def _create_right_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         crop_group = QGroupBox(tr("Crop Region"))
         cg = QVBoxLayout()
@@ -329,9 +330,7 @@ class CropGifWidget(QWidget):
         v.addWidget(self.progress_bar)
 
         self.crop_btn = QPushButton(tr("✂ Crop"))
-        self.crop_btn.setStyleSheet(
-            "font-weight: 600; font-size: 13px; background-color: #1f6b40; "
-            "color: #c8f0d8; border: 1px solid #2d8a54; border-radius: 4px; padding: 6px 14px;")
+        self.crop_btn.setStyleSheet(ui.GO_QSS)
         self.crop_btn.clicked.connect(self.run_crop)
         v.addWidget(self.crop_btn)
         return panel

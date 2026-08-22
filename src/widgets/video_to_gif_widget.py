@@ -22,6 +22,7 @@ from ..core.video_to_gif import (
     find_ffmpeg,
 )
 from .theme import AppTheme as _T
+from . import ui
 
 
 def _fmt_size(byte_count: int) -> str:
@@ -190,7 +191,7 @@ class VideoToGifWidget(QWidget):
         layout.setSpacing(8)
 
         title = QLabel("Video → GIF Converter")
-        title.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title.setStyleSheet(ui.TITLE_QSS)
         layout.addWidget(title)
 
         desc = QLabel(

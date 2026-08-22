@@ -451,11 +451,11 @@ class GroupCompositionWidget(QWidget):
         # Action buttons
         for label, tip, fn, color in [
             ("+Frame", "Add frame(s) from selected materials",
-             lambda _=None, g=gid: self._cmd_add_frame(g), "#2d6a3f"),
+             lambda _=None, g=gid: self._cmd_add_frame(g), _T.ADD_FRAME),
             ("+Group", "Add sub-group entry",
-             lambda _=None, g=gid: self._cmd_add_subgroup(g), "#1a4a8c"),
+             lambda _=None, g=gid: self._cmd_add_subgroup(g), _T.ADD_GROUP),
             ("+Layer", "Add layer-block entry",
-             lambda _=None, g=gid: self._cmd_add_layerblock(g), "#5a1a80"),
+             lambda _=None, g=gid: self._cmd_add_layerblock(g), _T.ADD_LAYER),
         ]:
             btn = _action_btn(label, color)
             btn.setToolTip(tip)
@@ -719,7 +719,7 @@ class GroupCompositionWidget(QWidget):
         hl.addWidget(tl_lbl)
         hl.addStretch()
 
-        add_tl = _action_btn("+Timeline", "#5a1a80")
+        add_tl = _action_btn("+Timeline", _T.ADD_LAYER)
         add_tl.clicked.connect(
             lambda _=None, e=entry, pg=parent_gid: self._cmd_add_timeline(e, pg)
         )

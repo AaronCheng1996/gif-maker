@@ -31,6 +31,7 @@ from ..core import gif_to_mp4
 from ..core.video_to_gif import (VideoConversionError, get_ffmpeg_install_info,
                                  is_ffmpeg_available)
 from .theme import AppTheme as _T
+from . import ui
 
 
 def _pil_to_pixmap(img: Image.Image) -> QPixmap:
@@ -170,7 +171,7 @@ class GifToMp4Widget(QWidget):
     # ── UI ───────────────────────────────────────────────────────────────
 
     def _init_ui(self):
-        layout = QHBoxLayout(self)
+        layout = ui.tab_layout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._create_left_panel())
         splitter.addWidget(self._create_right_panel())
@@ -181,10 +182,10 @@ class GifToMp4Widget(QWidget):
 
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         title = QLabel(tr("Animations"))
-        title.setStyleSheet(f"font-weight: 600; font-size: 14px; color: {_T.TEXT}; padding: 4px 0;")
+        title.setStyleSheet(ui.TITLE_QSS)
         v.addWidget(title)
 
         buttons = QHBoxLayout()
@@ -213,7 +214,7 @@ class GifToMp4Widget(QWidget):
 
     def _create_right_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         self.preview_label = QLabel(tr("Add a GIF to see how it will look"))
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -311,6 +312,7 @@ class GifToMp4Widget(QWidget):
         v.addWidget(settings)
 
         self.convert_btn = QPushButton(tr("🎬 Convert"))
+        self.convert_btn.setStyleSheet(ui.GO_QSS)
         self.convert_btn.clicked.connect(self.convert)
         v.addWidget(self.convert_btn)
 

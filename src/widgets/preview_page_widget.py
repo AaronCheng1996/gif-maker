@@ -5,6 +5,7 @@ from PIL import Image
 from typing import List, Tuple
 
 from .theme import AppTheme as _T
+from . import ui
 
 
 class PreviewPageWidget(QWidget):
@@ -43,7 +44,7 @@ class PreviewPageWidget(QWidget):
         # 標題
         title_label = QLabel("Preview")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title_label.setStyleSheet(ui.TITLE_QSS)
         layout.addWidget(title_label)
         
         # 控制按鈕

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Set
 
 from .theme import AppTheme as _T
+from . import ui
 
 
 class TileEditorWidget(QWidget):
@@ -28,7 +29,7 @@ class TileEditorWidget(QWidget):
         layout.setSpacing(5)
         
         title_label = QLabel("Tile Splitter")
-        title_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e4e8f4;")
+        title_label.setStyleSheet(ui.TITLE_QSS)
         layout.addWidget(title_label)
         
         # Load images section (compact)

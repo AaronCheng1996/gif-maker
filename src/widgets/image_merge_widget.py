@@ -20,6 +20,7 @@ from ..core.image_loader import MaterialManager
 from ..core.composition_group import FrameEntry
 from ..core.gif_builder import GifBuilder
 from .theme import AppTheme as _T
+from . import ui
 from .canvas_editor import CanvasEditorWidget
 
 _NEW_IMAGE_STAGGER = 20  # px offset applied to each successively loaded image
@@ -50,7 +51,7 @@ class ImageMergeWidget(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        layout = QHBoxLayout(self)
+        layout = ui.tab_layout(self)
 
         layout.addWidget(self._create_left_panel())
         self.canvas = CanvasEditorWidget()
@@ -60,10 +61,10 @@ class ImageMergeWidget(QWidget):
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
         panel.setMaximumWidth(260)
-        vlayout = QVBoxLayout(panel)
+        vlayout = ui.panel_layout(panel)
 
         title = QLabel(tr("Images"))
-        title.setStyleSheet(f"font-weight: 600; font-size: 14px; color: {_T.TEXT}; padding: 4px 0;")
+        title.setStyleSheet(ui.TITLE_QSS)
         vlayout.addWidget(title)
 
         self.load_btn = QPushButton(tr("Load Images"))
@@ -91,7 +92,7 @@ class ImageMergeWidget(QWidget):
     def _create_right_panel(self) -> QWidget:
         panel = QWidget()
         panel.setMaximumWidth(220)
-        vlayout = QVBoxLayout(panel)
+        vlayout = ui.panel_layout(panel)
 
         settings_group = QGroupBox(tr("Output"))
         settings_layout = QVBoxLayout()
@@ -125,10 +126,7 @@ class ImageMergeWidget(QWidget):
         vlayout.addStretch()
 
         self.export_btn = QPushButton(tr("💾 Export PNG"))
-        self.export_btn.setStyleSheet(
-            "font-weight: 600; font-size: 13px; background-color: #1f6b40; "
-            "color: #c8f0d8; border: 1px solid #2d8a54; border-radius: 4px; padding: 6px 14px;"
-        )
+        self.export_btn.setStyleSheet(ui.GO_QSS)
         self.export_btn.clicked.connect(self.export_png)
         vlayout.addWidget(self.export_btn)
 

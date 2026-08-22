@@ -34,6 +34,7 @@ from PIL import Image
 from ..i18n import tr
 from ..core import dicing
 from .theme import AppTheme as _T
+from . import ui
 
 PREVIEW_MAX = 640
 UNITY_SUFFIXES = (".assets", ".bundle", ".unity3d")
@@ -200,7 +201,7 @@ class AtlasUnpackWidget(QWidget):
     # ── UI ───────────────────────────────────────────────────────────────
 
     def _init_ui(self):
-        layout = QHBoxLayout(self)
+        layout = ui.tab_layout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._create_left_panel())
         splitter.addWidget(self._create_right_panel())
@@ -211,10 +212,10 @@ class AtlasUnpackWidget(QWidget):
 
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         title = QLabel(tr("Diced Atlas"))
-        title.setStyleSheet(f"font-weight: 600; font-size: 14px; color: {_T.TEXT}; padding: 4px 0;")
+        title.setStyleSheet(ui.TITLE_QSS)
         v.addWidget(title)
 
         self.open_folder_btn = QPushButton(tr("📂 Open Ripped Folder…"))
@@ -263,7 +264,7 @@ class AtlasUnpackWidget(QWidget):
 
     def _create_right_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         self.preview_label = QLabel(tr("Open a ripped folder or a Unity .assets file"))
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -288,6 +289,7 @@ class AtlasUnpackWidget(QWidget):
         g.addWidget(hint)
 
         self.extract_btn = QPushButton(tr("💾 Extract"))
+        self.extract_btn.setStyleSheet(ui.GO_QSS)
         self.extract_btn.clicked.connect(self.extract)
         g.addWidget(self.extract_btn)
 

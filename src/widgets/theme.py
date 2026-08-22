@@ -71,6 +71,22 @@ class AppTheme:
     CLONE_BTN        = "#7aabf0"
     SEP_COLOR        = "#282b38"
 
+    # Primary action button ("Convert", "Crop", "Export") — the one green
+    # button a tab ends with. Was written out by hand in three tabs.
+    GO_BG            = "#1f6b40"
+    GO_BORDER        = "#2d8a54"
+    GO_TEXT          = "#c8f0d8"
+
+    # Canvas chrome
+    CHECKER_LIGHT    = "#33374a"
+    CHECKER_DARK     = "#262a38"
+    SELECTION        = "#ff9d3d"   # Godot-style orange selection outline
+
+    # Composition action buttons, by what they add
+    ADD_FRAME        = "#2d6a3f"
+    ADD_GROUP        = "#1a4a8c"
+    ADD_LAYER        = "#5a1a80"
+
     # ── Global Stylesheet ────────────────────────────────────────────────────
     QSS = f"""
 /* ── Foundations ─────────────────────────────────────────────────────────── */

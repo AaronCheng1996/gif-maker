@@ -42,6 +42,7 @@ from ..core.spine import (RenderSettings, SpineProject, SpineRenderer,
                           atlas_is_premultiplied, load_project)
 from ..core.spine import cli_backend
 from .theme import AppTheme as _T
+from . import ui
 
 # Preview frames are rendered to fit the space the preview actually has, rather
 # than to a fixed size that leaves a small image marooned in a large panel.
@@ -338,7 +339,7 @@ class SpineToGifWidget(QWidget):
     # ── UI ───────────────────────────────────────────────────────────────
 
     def _init_ui(self):
-        layout = QHBoxLayout(self)
+        layout = ui.tab_layout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._create_left_panel())
         splitter.addWidget(self._create_center_panel())
@@ -353,10 +354,10 @@ class SpineToGifWidget(QWidget):
 
     def _create_left_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         title = QLabel(tr("Spine Project"))
-        title.setStyleSheet(f"font-weight: 600; font-size: 14px; color: {_T.TEXT}; padding: 4px 0;")
+        title.setStyleSheet(ui.TITLE_QSS)
         v.addWidget(title)
 
         self.open_btn = QPushButton(tr("📂 Open Spine Project…"))
@@ -432,7 +433,7 @@ class SpineToGifWidget(QWidget):
 
     def _create_center_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         self.preview_label = QLabel(tr("Open a Spine project to preview"))
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -470,7 +471,7 @@ class SpineToGifWidget(QWidget):
 
     def _create_right_panel(self) -> QWidget:
         panel = QWidget()
-        v = QVBoxLayout(panel)
+        v = ui.panel_layout(panel)
 
         engine_group = QGroupBox(tr("Export Engine"))
         eg = QVBoxLayout()
@@ -587,9 +588,7 @@ class SpineToGifWidget(QWidget):
         v.addWidget(self.progress_bar)
 
         self.export_btn = QPushButton(tr("💾 Export GIF"))
-        self.export_btn.setStyleSheet(
-            "font-weight: 600; font-size: 13px; background-color: #1f6b40; "
-            "color: #c8f0d8; border: 1px solid #2d8a54; border-radius: 4px; padding: 6px 14px;")
+        self.export_btn.setStyleSheet(ui.GO_QSS)
         self.export_btn.clicked.connect(self.export_gif)
         v.addWidget(self.export_btn)
 
