@@ -238,7 +238,8 @@ real model it overshoots by tens of levels — so a scrambled rebuild is reporte
 Trims finished animations to a rectangle. Because the preview here *is* the file,
 what you see is exactly what gets written — no render step, no guessing at framing.
 
-- Add GIF/APNG/WebP files (or videos, cropped through ffmpeg) and drag a rectangle over the real frames, with playback to check the crop across the whole animation
+- Add GIF/APNG/WebP **or video** files and drag a rectangle over the real frames, with playback to check the crop across the whole animation
+- Video is decoded through ffmpeg for the preview, sampled at 10fps for up to 12 seconds; because the rectangle is stored as fractions of the frame, a sampled preview places it just as precisely as the full file would, and the pixel readout still reflects the video's true size
 - The region is also editable as exact X/Y/width/height pixel values, kept in sync with the rectangle
 - One rectangle applies to every file in the list, which suits a folder exported from the same model
 - Writes `<name>_cropped.gif` beside each source by default; optionally into a chosen folder, or overwriting the originals after a confirmation

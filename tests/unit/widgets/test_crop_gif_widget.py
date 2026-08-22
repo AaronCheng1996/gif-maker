@@ -4,7 +4,11 @@ from PIL import Image
 
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from src.core.video_to_gif import is_ffmpeg_available
 from src.widgets.crop_gif_widget import CropGifWidget
+
+needs_ffmpeg = pytest.mark.skipif(not is_ffmpeg_available(),
+                                  reason="ffmpeg is not installed")
 
 
 @pytest.fixture(scope="module")
@@ -39,6 +43,18 @@ def _make_gif(path, size=(80, 40), frames=3):
         im.paste(Image.new("RGBA", (size[0] // 2, size[1]), (255, 30 * i, 0, 255)), (0, 0))
         imgs.append(im.convert("P"))
     imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=90, loop=0)
+    return path
+
+
+def _make_mp4(path, size=(120, 90), frames=12):
+    """A real short video, so the ffmpeg decode path is genuinely exercised."""
+    from src.core import gif_to_mp4
+    # A distinct name: `path.with_suffix(".gif")` would collide with a GIF the
+    # caller may have made under the same stem.
+    seed = path.with_name(path.stem + "__seed.gif")
+    _make_gif(seed, size=size, frames=frames)
+    gif_to_mp4.convert_to_video(seed, path, crf=30)
+    seed.unlink()
     return path
 
 
@@ -112,12 +128,23 @@ def test_advancing_wraps_around(widget, qapp, tmp_path, monkeypatch):
     assert widget._frame_index == 0
 
 
-def test_video_files_report_no_preview(widget, qapp, tmp_path, monkeypatch):
-    fake = tmp_path / "clip.mp4"
+@needs_ffmpeg
+def test_a_video_gets_a_draggable_preview_like_a_gif(widget, qapp, tmp_path, monkeypatch):
+    """Video used to be listed but never shown, so the box could not be placed."""
+    clip = _make_mp4(tmp_path / "clip.mp4")
+    _add(widget, qapp, monkeypatch, [clip])
+
+    assert widget.source_size == (120, 90)      # the container's real size
+    assert widget.frames, "no frames decoded for the video"
+    assert widget.preview.pixmap() is not None
+
+
+def test_an_unreadable_video_is_reported(widget, qapp, tmp_path, monkeypatch):
+    fake = tmp_path / "broken.mp4"
     fake.write_bytes(b"stub")
     _add(widget, qapp, monkeypatch, [fake])
     assert widget.source_size is None
-    assert "video" in widget.preview.text().lower()
+    assert widget.frames == []
 
 
 # ── crop fields ──────────────────────────────────────────────────────────
@@ -249,3 +276,35 @@ def test_cropping_without_files_does_nothing(widget):
 def test_stop_workers_is_idempotent(widget):
     widget.stop_workers()
     widget.stop_workers()
+
+
+@needs_ffmpeg
+def test_the_same_rectangle_crops_a_gif_and_a_video_alike(widget, qapp, tmp_path,
+                                                          monkeypatch):
+    """One rectangle, two very different pipelines — Pillow and ffmpeg."""
+    from src.core.cropping import crop_animation_file
+
+    gif = _make_gif(tmp_path / "pair.gif", size=(120, 90), frames=8)
+    mp4 = _make_mp4(tmp_path / "pair.mp4", size=(120, 90), frames=8)
+    crop = (0.25, 0.20, 0.50, 0.60)
+
+    out_gif = crop_animation_file(gif, crop, output_path=str(tmp_path / "a.gif"))
+    out_mp4 = crop_animation_file(mp4, crop, output_path=str(tmp_path / "a.mp4"))
+
+    from src.core import gif_to_mp4
+    with Image.open(out_gif) as im:
+        gif_size = im.size
+    info = gif_to_mp4.get_animation_info(out_mp4)
+    assert gif_size == (info["width"], info["height"]) == (60, 54)
+    # Cropping must not disturb the pixel aspect, or players letterbox it.
+    assert info["sar"] == "1:1"
+
+
+@needs_ffmpeg
+def test_a_video_preview_is_sampled_not_fully_decoded(widget, qapp, tmp_path,
+                                                      monkeypatch):
+    """A long clip must not turn into thousands of pixmaps in memory."""
+    clip = _make_mp4(tmp_path / "long.mp4", size=(64, 64), frames=200)
+    _add(widget, qapp, monkeypatch, [clip])
+    assert widget.frames
+    assert len(widget.frames) <= 200

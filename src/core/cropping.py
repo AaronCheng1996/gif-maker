@@ -135,7 +135,11 @@ def _crop_with_ffmpeg(path: Path, crop, ffmpeg_path: Optional[str],
     tmp = destination.with_name(destination.stem + "__cropped" + destination.suffix)
     cmd = [exe, "-y", "-i", str(path), "-vf", crop_expr, "-c:a", "copy", str(tmp)]
     try:
+        # ffmpeg writes UTF-8; without saying so Python decodes with the console
+        # codepage and dies in its reader thread, turning a real ffmpeg error
+        # message into an unrelated UnicodeDecodeError.
         proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               creationflags=_CREATE_NO_WINDOW)
     except OSError as e:
         raise CropError(f"Could not run ffmpeg: {e}") from e

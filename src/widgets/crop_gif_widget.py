@@ -17,13 +17,20 @@ from PyQt6.QtGui import QImage, QPixmap
 from PIL import Image, ImageSequence
 
 from ..i18n import tr
+from ..core import gif_to_mp4
 from ..core.cropping import CropError, crop_animation_file, is_noop, pixel_box
+from ..core.video_to_gif import extract_preview_frames
 from .crop_overlay import CropOverlayLabel
 from .theme import AppTheme as _T
 
 PREVIEW_MAX = 720
 SUPPORTED = "Animations (*.gif *.png *.webp *.apng *.mp4 *.mov *.webm *.mkv);;All files (*)"
 VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
+# Video is sampled rather than fully decoded: the rectangle is stored as
+# fractions, so a shorter, slower preview places it just as precisely.
+PREVIEW_VIDEO_FPS = 10.0
+PREVIEW_VIDEO_SECONDS = 12.0
+
 
 
 def _pil_to_pixmap(img: Image.Image) -> QPixmap:
@@ -47,25 +54,52 @@ class _FrameLoader(QThread):
 
     def run(self):
         try:
-            with Image.open(self.path) as src:
-                width, height = src.size
-                scale = min(PREVIEW_MAX / max(width, height), 1.0)
-                size = (max(1, int(width * scale)), max(1, int(height * scale)))
-                pixmaps, durations = [], []
-                for frame in ImageSequence.Iterator(src):
-                    durations.append(frame.info.get("duration", 100))
-                    rgba = frame.convert("RGBA")
-                    if scale < 1.0:
-                        rgba = rgba.resize(size, Image.Resampling.BILINEAR)
-                    pixmaps.append(_pil_to_pixmap(rgba))
-                    if len(pixmaps) >= 400:   # plenty for a preview
-                        break
+            if self.path.suffix.lower() in VIDEO_SUFFIXES:
+                pixmaps, durations, width, height = self._load_video()
+            else:
+                pixmaps, durations, width, height = self._load_image()
             if not pixmaps:
                 self.failed.emit(str(self.path), "No frames found")
                 return
             self.done.emit(str(self.path), pixmaps, durations, width, height)
         except Exception as e:
             self.failed.emit(str(self.path), str(e))
+
+    def _load_image(self):
+        with Image.open(self.path) as src:
+            width, height = src.size
+            scale = min(PREVIEW_MAX / max(width, height), 1.0)
+            size = (max(1, int(width * scale)), max(1, int(height * scale)))
+            pixmaps, durations = [], []
+            for frame in ImageSequence.Iterator(src):
+                durations.append(frame.info.get("duration", 100))
+                rgba = frame.convert("RGBA")
+                if scale < 1.0:
+                    rgba = rgba.resize(size, Image.Resampling.BILINEAR)
+                pixmaps.append(_pil_to_pixmap(rgba))
+                if len(pixmaps) >= 400:   # plenty for a preview
+                    break
+        return pixmaps, durations, width, height
+
+    def _load_video(self):
+        """Decode a video through ffmpeg so it gets the same draggable preview.
+
+        The crop rectangle is stored as fractions of the frame, so a sampled,
+        downscaled preview positions it just as accurately as the full file
+        would — but the true dimensions still have to come from the container,
+        because that is what the pixel readout reports."""
+        info = gif_to_mp4.get_animation_info(self.path)
+        width, height = info.get("width", 0), info.get("height", 0)
+        if not width or not height:
+            raise RuntimeError("ffmpeg could not read this video's dimensions")
+
+        fps = min(info.get("fps") or PREVIEW_VIDEO_FPS, PREVIEW_VIDEO_FPS)
+        frames = extract_preview_frames(
+            str(self.path), fps=fps, max_width=PREVIEW_MAX,
+            max_duration=PREVIEW_VIDEO_SECONDS)
+        pixmaps = [_pil_to_pixmap(img) for img, _ in frames]
+        durations = [ms for _, ms in frames]
+        return pixmaps, durations, width, height
 
 
 class _CropWorker(QThread):
@@ -325,12 +359,6 @@ class CropGifWidget(QWidget):
             return
         self.pause_playback()
         path = self.files[row]
-        if path.suffix.lower() in VIDEO_SUFFIXES:
-            # Pillow cannot decode video; cropping still works through ffmpeg.
-            self._clear_preview()
-            self.preview.setText(tr("No preview for video files — cropping still works"))
-            self.info_label.setText(path.name)
-            return
         self.info_label.setText(tr("Loading…"))
         self._loader = _FrameLoader(path, self)
         self._loader.done.connect(self._on_frames_loaded)
