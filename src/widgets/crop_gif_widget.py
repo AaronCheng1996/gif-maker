@@ -32,7 +32,6 @@ PREVIEW_VIDEO_FPS = 10.0
 PREVIEW_VIDEO_SECONDS = 12.0
 
 
-
 def _pil_to_pixmap(img: Image.Image) -> QPixmap:
     if img.mode != "RGBA":
         img = img.convert("RGBA")
@@ -41,6 +40,30 @@ def _pil_to_pixmap(img: Image.Image) -> QPixmap:
     pixmap = QPixmap.fromImage(qimg)
     del data
     return pixmap
+
+
+class _CropSpinBox(QSpinBox):
+    """A pixel field that lets a number be typed before it is acted on.
+
+    Qt commits and clamps on every keystroke by default, which makes replacing
+    one number with another unreliable: the old digits are still there while the
+    new ones arrive, the intermediate value is clamped to the frame size, and
+    what lands is neither number. Tracking is off so the value settles on Enter
+    or focus-out, and a click selects the field so typing replaces it."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setKeyboardTracking(False)
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        QTimer.singleShot(0, self.selectAll)
+
+    def mousePressEvent(self, event):
+        had_focus = self.hasFocus()
+        super().mousePressEvent(event)
+        if not had_focus:
+            QTimer.singleShot(0, self.selectAll)
 
 
 class _FrameLoader(QThread):
@@ -107,10 +130,9 @@ class _CropWorker(QThread):
     done = pyqtSignal(list, list)
     error = pyqtSignal(str)
 
-    def __init__(self, jobs: List[Tuple[str, str]], crop, ffmpeg_path=None, parent=None):
+    def __init__(self, jobs, ffmpeg_path=None, parent=None):
         super().__init__(parent)
-        self.jobs = jobs            # [(source, destination)]
-        self.crop = crop
+        self.jobs = jobs            # [(source, destination, crop)]
         self.ffmpeg_path = ffmpeg_path
         self._cancelled = False
 
@@ -121,13 +143,13 @@ class _CropWorker(QThread):
         written, failures = [], []
         total = len(self.jobs)
         try:
-            for i, (src, dst) in enumerate(self.jobs):
+            for i, (src, dst, crop) in enumerate(self.jobs):
                 if self._cancelled:
                     break
                 self.progress.emit(i, total, Path(src).name)
                 try:
                     written.append(crop_animation_file(
-                        src, self.crop, ffmpeg_path=self.ffmpeg_path, output_path=dst))
+                        src, crop, ffmpeg_path=self.ffmpeg_path, output_path=dst))
                 except Exception as e:
                     failures.append((Path(src).name, str(e)))
             self.progress.emit(total, total, "")
@@ -145,6 +167,14 @@ class CropGifWidget(QWidget):
         self.source_size: Optional[Tuple[int, int]] = None
         self.last_dir = ""
         self.last_output_dir = ""
+
+        # Each file keeps its own rectangle, in source pixels rather than
+        # fractions: a batch is usually the same shot at the same size, and a
+        # proportional rectangle would give every differently-sized file a
+        # differently-sized result.
+        self._crops: dict = {}          # str(path) -> (x, y, w, h) in pixels
+        self._sizes: dict = {}          # str(path) -> (width, height)
+        self._shared_size: Optional[Tuple[int, int]] = None
 
         self._loader: Optional[_FrameLoader] = None
         self._worker: Optional[_CropWorker] = None
@@ -251,6 +281,15 @@ class CropGifWidget(QWidget):
         self.reset_btn.clicked.connect(self.preview.reset_crop)
         cg.addWidget(self.reset_btn)
 
+        self.same_size_checkbox = QCheckBox(tr("Same size for every file"))
+        self.same_size_checkbox.setChecked(True)
+        self.same_size_checkbox.setToolTip(
+            "Keep the rectangle the same number of pixels on every file, so a "
+            "batch comes out at one size. Each file still remembers where its "
+            "own rectangle sits. Untick to let each file keep its own size too.")
+        self.same_size_checkbox.toggled.connect(self._on_same_size_toggled)
+        cg.addWidget(self.same_size_checkbox)
+
         crop_group.setLayout(cg)
         v.addWidget(crop_group)
 
@@ -300,10 +339,13 @@ class CropGifWidget(QWidget):
     def _make_spin(self, label: str, layout) -> QSpinBox:
         row = QHBoxLayout()
         row.addWidget(QLabel(tr(label)))
-        spin = QSpinBox()
+        spin = _CropSpinBox()
         spin.setRange(0, 100000)
         spin.setSuffix(" px")
-        spin.valueChanged.connect(self._on_spin_changed)
+        # editingFinished, not valueChanged: with per-keystroke updates the
+        # rectangle was rewritten mid-word and clamped the half-typed number,
+        # so replacing 200 with 1000 passed through 1000200 and came out wrong.
+        spin.editingFinished.connect(self._on_spin_committed)
         row.addWidget(spin)
         layout.addLayout(row)
         return spin
@@ -374,6 +416,8 @@ class CropGifWidget(QWidget):
         self._frame_index = 0
         self.preview.set_preview_pixmap(self.frames[0])
         self.info_label.setText(f"{width}×{height} · {len(pixmaps)} frames")
+        self._sizes[path] = (width, height)
+        self._restore_crop_for_current()
         self._update_frame_label()
         self._sync_spinboxes()
 
@@ -383,7 +427,25 @@ class CropGifWidget(QWidget):
     # ── crop rectangle ───────────────────────────────────────────────────
 
     def _on_crop_changed(self):
+        self._remember_crop()
         self._sync_spinboxes()
+
+    def _restore_crop_for_current(self):
+        """Put back whatever rectangle this file should start with."""
+        row = self.file_list.currentRow()
+        if not (0 <= row < len(self.files)):
+            return
+        x, y, w, h = self.crop_for(self.files[row])
+        self._updating_fields = True
+        try:
+            self.preview.set_crop_rect(x, y, w, h)
+        finally:
+            self._updating_fields = False
+        self._remember_crop()
+
+    def _on_same_size_toggled(self, checked: bool):
+        if checked:
+            self._remember_crop()      # adopt the current rectangle as the size
 
     def _sync_spinboxes(self):
         """Mirror the dragged rectangle into the pixel fields."""
@@ -407,8 +469,8 @@ class CropGifWidget(QWidget):
         finally:
             self._updating_fields = False
 
-    def _on_spin_changed(self, _value: int):
-        """Typed pixel values feed back into the rectangle."""
+    def _on_spin_committed(self):
+        """A finished edit feeds the typed pixels back into the rectangle."""
         if self._updating_fields or self.source_size is None:
             return
         w, h = self.source_size
@@ -422,6 +484,68 @@ class CropGifWidget(QWidget):
 
     def active_crop(self):
         return self.preview.crop_rect()
+
+    # ── per-file crop rectangles ─────────────────────────────────────────
+
+    def size_of(self, path: Path) -> Optional[Tuple[int, int]]:
+        """Frame size of a queued file, read once and remembered.
+
+        Needed for every file, not just the previewed one: a pixel rectangle has
+        to be turned back into fractions against each file's own dimensions."""
+        key = str(path)
+        if key not in self._sizes:
+            size = None
+            try:
+                if path.suffix.lower() in VIDEO_SUFFIXES:
+                    info = gif_to_mp4.get_animation_info(path)
+                    if info.get("width") and info.get("height"):
+                        size = (info["width"], info["height"])
+                else:
+                    with Image.open(path) as im:
+                        size = im.size
+            except Exception:
+                size = None
+            self._sizes[key] = size
+        return self._sizes[key]
+
+    def _remember_crop(self):
+        """Store the rectangle against the current file, in source pixels."""
+        row = self.file_list.currentRow()
+        if not (0 <= row < len(self.files)) or self.source_size is None:
+            return
+        w, h = self.source_size
+        left, top, right, bottom = pixel_box(w, h, self.preview.crop_rect())
+        box = (left, top, right - left, bottom - top)
+        self._crops[str(self.files[row])] = box
+        if self.same_size_checkbox.isChecked():
+            self._shared_size = (box[2], box[3])
+
+    def crop_for(self, path: Path):
+        """The normalised rectangle to apply to one file.
+
+        Falls back to this file's own remembered box, then to the shared pixel
+        size placed where it last sat, then to the whole frame."""
+        size = self.size_of(path)
+        if size is None:
+            return (0.0, 0.0, 1.0, 1.0)
+        w, h = size
+        box = self._crops.get(str(path))
+        if box is None:
+            if self._shared_size is None:
+                return (0.0, 0.0, 1.0, 1.0)
+            box = self._placed_shared_box(w, h)
+        x, y, bw, bh = box
+        bw = max(1, min(bw, w))
+        bh = max(1, min(bh, h))
+        x = max(0, min(x, w - bw))
+        y = max(0, min(y, h - bh))
+        return (x / w, y / h, bw / w, bh / h)
+
+    def _placed_shared_box(self, w: int, h: int):
+        """The shared pixel size, centred, clipped to a frame of w x h."""
+        sw, sh = self._shared_size
+        sw, sh = max(1, min(sw, w)), max(1, min(sh, h))
+        return ((w - sw) // 2, (h - sh) // 2, sw, sh)
 
     # ── playback ─────────────────────────────────────────────────────────
 
@@ -494,14 +618,15 @@ class CropGifWidget(QWidget):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        jobs = [(str(p), str(self._destination_for(p))) for p in self.files]
+        jobs = [(str(p), str(self._destination_for(p)), self.crop_for(p))
+                for p in self.files]
         self.progress_bar.setVisible(True)
         self.progress_bar.setMaximum(len(jobs))
         self.progress_bar.setValue(0)
         self.crop_btn.setEnabled(False)
         self.result_label.setText("")
 
-        self._worker = _CropWorker(jobs, crop, parent=self)
+        self._worker = _CropWorker(jobs, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.done.connect(self._on_done)
         self._worker.error.connect(self._on_error)

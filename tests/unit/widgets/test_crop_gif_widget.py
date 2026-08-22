@@ -2,6 +2,7 @@
 import pytest
 from PIL import Image
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from src.core.video_to_gif import is_ffmpeg_available
@@ -160,13 +161,28 @@ def test_spinboxes_mirror_the_dragged_rectangle(widget, qapp, tmp_path, monkeypa
 
 
 def test_typing_pixel_values_moves_the_rectangle(widget, qapp, tmp_path, monkeypatch):
+    """The fields commit on editingFinished, which is what leaving one does."""
     _add(widget, qapp, monkeypatch, [_make_gif(tmp_path / "a.gif")])
     widget.spin_x.setValue(8)
     widget.spin_w.setValue(40)
+    widget.spin_w.editingFinished.emit()
     qapp.processEvents()
     x, _y, w, _h = widget.preview.crop_rect()
     assert round(x, 3) == 0.1
     assert round(w, 3) == 0.5
+
+
+def test_half_typed_numbers_do_not_reach_the_rectangle(widget, qapp, tmp_path,
+                                                       monkeypatch):
+    """Typing 1000 over 200 used to pass through 1000200 and get clamped."""
+    _add(widget, qapp, monkeypatch, [_make_gif(tmp_path / "a.gif", size=(80, 40))])
+    before = widget.preview.crop_rect()
+    widget.spin_w.setValue(60)          # a value change on its own commits nothing
+    qapp.processEvents()
+    assert widget.preview.crop_rect() == before
+    widget.spin_w.editingFinished.emit()
+    qapp.processEvents()
+    assert widget.preview.crop_rect() != before
 
 
 def test_reset_restores_the_full_frame(widget, qapp, tmp_path, monkeypatch):
@@ -308,3 +324,115 @@ def test_a_video_preview_is_sampled_not_fully_decoded(widget, qapp, tmp_path,
     _add(widget, qapp, monkeypatch, [clip])
     assert widget.frames
     assert len(widget.frames) <= 200
+
+
+# ── edge handles ─────────────────────────────────────────────────────────
+
+def _press_release(overlay, qapp, x, y, to_x, to_y):
+    from PyQt6.QtCore import QPointF, QEvent
+    from PyQt6.QtGui import QMouseEvent
+    def ev(kind, px, py):
+        return QMouseEvent(kind, QPointF(px, py), Qt.MouseButton.LeftButton,
+                           Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    overlay.mousePressEvent(ev(QEvent.Type.MouseButtonPress, x, y))
+    overlay.mouseMoveEvent(ev(QEvent.Type.MouseMove, to_x, to_y))
+    overlay.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, to_x, to_y))
+    qapp.processEvents()
+
+
+def test_dragging_an_edge_of_a_full_frame_rect_resizes_it(widget, qapp, tmp_path,
+                                                          monkeypatch):
+    """It used to throw the rectangle away and start drawing a new region."""
+    _add(widget, qapp, monkeypatch, [_make_gif(tmp_path / "a.gif", size=(200, 100))])
+    widget.preview.resize(400, 200)
+    qapp.processEvents()
+    assert widget.preview.crop_rect() == (0.0, 0.0, 1.0, 1.0)
+
+    img = widget.preview.image_rect()
+    # Grab the right edge and pull it inwards.
+    _press_release(widget.preview, qapp,
+                   img.right(), img.center().y(),
+                   img.left() + img.width() * 0.6, img.center().y())
+
+    x, y, w, h = widget.preview.crop_rect()
+    assert round(x, 2) == 0.0 and round(y, 2) == 0.0    # the other edges held
+    assert 0.4 < w < 0.8, f"right edge did not resize, width is {w}"
+    assert round(h, 2) == 1.0
+
+
+# ── one size across a batch, positions per file ──────────────────────────
+
+def test_a_batch_keeps_one_pixel_size_across_different_frame_sizes(widget, qapp,
+                                                                   tmp_path, monkeypatch):
+    """Proportional rectangles gave every size of file a different result."""
+    small = _make_gif(tmp_path / "small.gif", size=(100, 100))
+    large = _make_gif(tmp_path / "large.gif", size=(400, 400))
+    _add(widget, qapp, monkeypatch, [small, large])
+
+    widget.file_list.setCurrentRow(0)
+    qapp.processEvents()
+    widget.preview.set_crop_rect(0.1, 0.1, 0.5, 0.5)      # 50x50 of a 100px frame
+    qapp.processEvents()
+
+    for path in (small, large):
+        x, y, w, h = widget.crop_for(path)
+        fw, fh = widget.size_of(path)
+        assert round(w * fw) == 50, f"{path.name} came out {round(w * fw)}px wide"
+        assert round(h * fh) == 50
+
+
+def test_each_file_remembers_where_its_own_rectangle_sits(widget, qapp, tmp_path,
+                                                          monkeypatch):
+    a = _make_gif(tmp_path / "a.gif", size=(200, 200))
+    b = _make_gif(tmp_path / "b.gif", size=(200, 200))
+    _add(widget, qapp, monkeypatch, [a, b])
+
+    widget.file_list.setCurrentRow(0)
+    qapp.processEvents()
+    widget.preview.set_crop_rect(0.0, 0.0, 0.5, 0.5)
+    qapp.processEvents()
+
+    widget.file_list.setCurrentRow(1)
+    qapp.processEvents()
+    if widget._loader is not None:
+        widget._loader.wait(60000)
+    qapp.processEvents()
+    widget.preview.set_crop_rect(0.5, 0.5, 0.5, 0.5)
+    qapp.processEvents()
+
+    ax, ay, _, _ = widget.crop_for(a)
+    bx, by, _, _ = widget.crop_for(b)
+    assert (round(ax, 2), round(ay, 2)) == (0.0, 0.0)
+    assert (round(bx, 2), round(by, 2)) == (0.5, 0.5)
+
+
+def test_an_unvisited_file_inherits_the_shared_size(widget, qapp, tmp_path, monkeypatch):
+    """The point of a batch: set the size once, every file gets it."""
+    a = _make_gif(tmp_path / "a.gif", size=(200, 200))
+    b = _make_gif(tmp_path / "b.gif", size=(300, 150))
+    _add(widget, qapp, monkeypatch, [a, b])
+
+    widget.file_list.setCurrentRow(0)
+    qapp.processEvents()
+    widget.preview.set_crop_rect(0.0, 0.0, 0.4, 0.4)      # 80x80
+    qapp.processEvents()
+
+    x, y, w, h = widget.crop_for(b)          # never selected
+    bw, bh = widget.size_of(b)
+    assert (round(w * bw), round(h * bh)) == (80, 80)
+
+
+def test_a_shared_size_larger_than_a_frame_is_clipped(widget, qapp, tmp_path, monkeypatch):
+    big = _make_gif(tmp_path / "big.gif", size=(400, 400))
+    tiny = _make_gif(tmp_path / "tiny.gif", size=(60, 60))
+    _add(widget, qapp, monkeypatch, [big, tiny])
+
+    widget.file_list.setCurrentRow(0)
+    qapp.processEvents()
+    widget.preview.set_crop_rect(0.0, 0.0, 0.5, 0.5)      # 200x200
+    qapp.processEvents()
+
+    x, y, w, h = widget.crop_for(tiny)
+    tw, th = widget.size_of(tiny)
+    assert round(w * tw) <= tw and round(h * th) <= th
+    assert 0.0 <= x and x + w <= 1.0001

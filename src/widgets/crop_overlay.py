@@ -179,15 +179,18 @@ class CropOverlayLabel(QLabel):
         edges = self._edges_at(pos)
         rect = self._crop_pixels()
         full_frame = (self._crop.width() >= 0.999 and self._crop.height() >= 0.999)
-        if full_frame:
-            # A full-frame rect has nowhere to move, so the first drag should
-            # draw a region rather than silently do nothing.
+        if edges:
+            # Grabbing an edge always resizes, including on a full-frame rect:
+            # pulling one side in is the usual way to start, and treating it as
+            # "draw a new region" threw the whole rectangle away instead.
+            self._drag_mode, self._drag_edges = _RESIZE, edges
+        elif full_frame:
+            # Pressing inside a full-frame rect cannot move it anywhere, so the
+            # drag draws a region rather than silently doing nothing.
             self._drag_mode, self._drag_edges = _NEW, 0
             nx = (pos.x() - img.x()) / max(img.width(), 1)
             ny = (pos.y() - img.y()) / max(img.height(), 1)
             self._crop = _clamp_rect(QRectF(nx, ny, MIN_NORM, MIN_NORM))
-        elif edges:
-            self._drag_mode, self._drag_edges = _RESIZE, edges
         elif rect is not None and rect.contains(pos):
             self._drag_mode, self._drag_edges = _MOVE, 0
         else:

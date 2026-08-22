@@ -241,11 +241,12 @@ what you see is exactly what gets written — no render step, no guessing at fra
 - Add GIF/APNG/WebP **or video** files and drag a rectangle over the real frames, with playback to check the crop across the whole animation
 - Video is decoded through ffmpeg for the preview, sampled at 10fps for up to 12 seconds; because the rectangle is stored as fractions of the frame, a sampled preview places it just as precisely as the full file would, and the pixel readout still reflects the video's true size
 - The region is also editable as exact X/Y/width/height pixel values, kept in sync with the rectangle
-- One rectangle applies to every file in the list, which suits a folder exported from the same model
+- Across a batch the rectangle keeps its **pixel size**, not its proportions, so files of different frame sizes still come out identical — while each file remembers where its own rectangle sits, so one can be nudged without disturbing the rest (untick "Same size for every file" to let sizes vary too)
 - Writes `<name>_cropped.gif` beside each source by default; optionally into a chosen folder, or overwriting the originals after a confirmation
 
-The crop is stored proportionally, so a batch of differently-sized files each keep
-the same relative region rather than an identical pixel size.
+The pixel fields commit when you leave them rather than on every keystroke: with
+per-keystroke updates, replacing 200 with 1000 passed through 1000200, got clamped
+to the frame, and landed on neither number.
 
 ### Image Merge
 
