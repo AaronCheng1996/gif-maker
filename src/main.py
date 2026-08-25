@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
-                              QTabWidget, QStackedWidget, QStatusBar, QLabel, QSplitter)
+                              QStackedWidget, QStatusBar, QLabel, QSplitter)
 from PyQt6.QtCore import Qt, QTimer
 
 from .core import MaterialManager, GifBuilder, GroupManager, CompositionGroup
@@ -10,6 +10,7 @@ from .widgets import (AppTheme, PreviewPageWidget, TileSplitterPage, BatchProces
                       GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget, ImageMergeWidget,
                       SpineToGifWidget, CropGifWidget, AtlasUnpackWidget,
                       GifToMp4Widget)
+from .widgets.tab_rail import ToolTabs
 from .i18n import tr, set_language
 from . import settings as AppSettings
 from .main_window import (MaterialsPanelMixin, ComposerPanelMixin, TemplateMixin,
@@ -184,9 +185,8 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         self.atlas_unpack = AtlasUnpackWidget()
         self.gif_to_mp4 = GifToMp4Widget()
 
-        # ── Top-level QTabWidget ───────────────────────────────────────────────
-        self.tool_tabs = QTabWidget()
-        self.tool_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        # ── Top-level tab strip ───────────────────────────────────────────────
+        self.tool_tabs = ToolTabs()
         self.tool_tabs.addTab(self._composer_splitter,   tr("🎬 Composer"))
         self.tool_tabs.addTab(self._tile_outer_splitter, tr("✂️ Tile Splitter"))
         self.tool_tabs.addTab(self.batch_processor,      tr("⚡ Batch Processor"))

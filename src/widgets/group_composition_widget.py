@@ -136,7 +136,18 @@ class GroupCompositionWidget(QWidget):
         self._collapsed: set = set()
         self._building = False
         self._selected_entry: Optional[tuple] = None  # (parent_group_id, entry_idx)
+        # Rebuilding the tree resets the scroll position, so it is put back once
+        # the new widgets have been laid out. The timer is parented to self so
+        # it dies with the widget: a bare QTimer.singleShot outlives it and the
+        # callback then writes to a scrollbar whose C++ half is already gone.
+        self._scroll_restore = QTimer(self)
+        self._scroll_restore.setSingleShot(True)
+        self._scroll_restore.timeout.connect(self._restore_scroll)
+        self._pending_scroll = 0
         self._init_ui()
+
+    def _restore_scroll(self):
+        self._scroll.verticalScrollBar().setValue(self._pending_scroll)
 
     # ── Public setters ────────────────────────────────────────────────────────
 
@@ -261,7 +272,8 @@ class GroupCompositionWidget(QWidget):
                         layout.insertWidget(insert_at, w)
                         insert_at += 1
 
-            QTimer.singleShot(0, lambda v=pos: vbar.setValue(v))
+            self._pending_scroll = pos
+            self._scroll_restore.start(0)
         finally:
             self._building = False
 

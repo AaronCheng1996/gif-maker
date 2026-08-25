@@ -330,6 +330,35 @@ QTabBar::tab:disabled {{
     color: {TEXT_HINT};
 }}
 
+/* ── ToolTabs rail (wrapping replacement for QTabBar) ─────────────────────── */
+QWidget#tabRail {{
+    background-color: {PANEL};
+    border-bottom: 1px solid {BORDER};
+}}
+QPushButton#tabButton, QPushButton#tabOverflow {{
+    background-color: transparent;
+    color: {TEXT_DIM};
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0px 6px;
+    font-size: 12px;
+    text-align: center;
+}}
+QPushButton#tabButton:hover, QPushButton#tabOverflow:hover {{
+    color: {TEXT};
+    border-bottom: 2px solid {BORDER_MID};
+    background-color: {ELEVATED};
+}}
+QPushButton#tabButton:checked, QPushButton#tabOverflow:checked {{
+    color: {ACCENT};
+    border-bottom: 2px solid {ACCENT};
+    font-weight: 600;
+    background-color: {BG};
+}}
+QPushButton#tabOverflow {{
+    font-size: 15px;
+}}
+
 /* ── Scrollbars ──────────────────────────────────────────────────────────── */
 QScrollBar:vertical {{
     background-color: transparent;
