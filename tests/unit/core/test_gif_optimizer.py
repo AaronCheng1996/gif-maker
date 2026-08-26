@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import sys
 from unittest import mock
 
 import pytest
@@ -47,7 +48,7 @@ def test_optimize_with_gifsicle_calls_cli_when_available(tmp_path, sample_gif):
         m_tmpdir.return_value = _Tmp()
         # After calling optimize, our code will write to tmpdir/out2.gif.tmp
         # Prepare by creating that file after the subprocess mock "runs"
-        def _run_side_effect(cmd, check=True, stdout=None, stderr=None):
+        def _run_side_effect(cmd, **kwargs):
             tmp_out = tmpdir_path / (out.name + ".tmp")
             tmp_out.write_bytes(b"GIF89a")
             return mock.Mock(returncode=0, stdout=b"", stderr=b"")
@@ -62,6 +63,10 @@ def test_optimize_with_gifsicle_calls_cli_when_available(tmp_path, sample_gif):
     cmd = args[0]
     assert any(str(part).startswith("--lossy=") for part in cmd)
     assert "--colors" in cmd and "128" in cmd
+    if sys.platform == "win32":
+        # A packaged build has no console to inherit, so gifsicle would open
+        # one of its own and flash it at the user.
+        assert kwargs.get("creationflags", 0) & 0x08000000
 
 
 def test_overwrite_in_place(tmp_path, sample_gif):

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from .video_to_gif import VideoConversionError, find_ffmpeg
+from .proc import run_hidden, popen_hidden
 
 # Constant-rate-factor values, chosen by measuring how faithfully the result
 # reproduces the GIF it came from (crf 22 lands around 36 dB, crf 30 around 31).
@@ -78,7 +79,7 @@ def get_animation_info(input_path) -> dict:
     if not probe.exists():
         probe = Path(exe).with_name("ffprobe")
     try:
-        result = subprocess.run(
+        result = run_hidden(
             [str(probe), "-v", "error", "-select_streams", "v:0", "-count_frames",
              "-show_entries",
              "stream=width,height,nb_read_frames,avg_frame_rate,sample_aspect_ratio",
@@ -187,9 +188,9 @@ def convert_to_video(input_path, output_path=None, *, codec: str = H264,
     cmd = build_command(source, out, codec=codec, crf=crf, background=background,
                         fps=fps, width=width, preset=preset)
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, text=True,
-                                encoding="utf-8", errors="replace")
+        proc = popen_hidden(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, text=True,
+                            encoding="utf-8", errors="replace")
     except OSError as e:
         raise VideoConversionError(f"Could not run ffmpeg: {e}") from e
 

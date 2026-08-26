@@ -12,6 +12,8 @@ from typing import Optional
 
 from PIL import Image
 
+from .proc import run_hidden
+
 
 class VideoConversionError(Exception):
     """Raised when video-to-GIF conversion fails."""
@@ -150,7 +152,7 @@ def _ffmpeg() -> str:
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     """Run a subprocess, raising VideoConversionError on failure."""
     try:
-        return subprocess.run(
+        return run_hidden(
             cmd, check=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             **kwargs,
@@ -175,7 +177,7 @@ def get_video_info(input_path: str) -> dict:
         return {"width": 0, "height": 0, "fps": 0.0, "duration": 0.0,
                 "error": "ffmpeg not found"}
     try:
-        result = subprocess.run(
+        result = run_hidden(
             [exe, "-i", input_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
@@ -368,7 +370,7 @@ def convert_to_gif(
         if lossy > 0 and shutil.which("gifsicle"):
             lossy = max(0, min(200, lossy))
             try:
-                subprocess.run(
+                run_hidden(
                     ["gifsicle", f"--lossy={lossy}", "-O3", tmp_gif, "-o", tmp_gif],
                     check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 )

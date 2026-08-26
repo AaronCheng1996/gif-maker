@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from ..proc import popen_hidden
+
 EXE_NAME = "SpineViewerCLI.exe" if sys.platform == "win32" else "SpineViewerCLI"
 
 # Formats the CLI accepts for -f. GIF is what this app cares about, but the
@@ -38,7 +40,6 @@ _COMMON_DIRS = [
     Path("C:/Program Files (x86)/SpineViewer"),
 ]
 
-_CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 class SpineCliError(Exception):
@@ -104,7 +105,7 @@ def _run(args: List[str], cli_path: str, timeout: Optional[int] = None,
     code is what decides success."""
     cmd = [cli_path] + args
     try:
-        proc = subprocess.Popen(
+        proc = popen_hidden(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -112,7 +113,6 @@ def _run(args: List[str], cli_path: str, timeout: Optional[int] = None,
             text=True,
             encoding="utf-8",
             errors="replace",
-            creationflags=_CREATE_NO_WINDOW,
         )
     except OSError as e:
         raise SpineCliError(f"Could not run SpineViewerCLI: {e}") from e
@@ -306,7 +306,7 @@ def render_frame_sequence(skeleton_path, output_dir, animation: str,
     args.append("--no-progress")
 
     try:
-        proc = subprocess.Popen(
+        proc = popen_hidden(
             [cli_path] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -314,7 +314,6 @@ def render_frame_sequence(skeleton_path, output_dir, animation: str,
             text=True,
             encoding="utf-8",
             errors="replace",
-            creationflags=_CREATE_NO_WINDOW,
         )
     except OSError as e:
         raise SpineCliError(f"Could not run SpineViewerCLI: {e}") from e

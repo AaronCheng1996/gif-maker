@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ..core.proc import run_hidden, popen_hidden
 from ..core.video_to_gif import (
     VideoConversionError,
     convert_to_gif,
@@ -413,7 +414,7 @@ class _CancellablePreviewWorker(QThread):
         if self._cancelled:
             raise InterruptedError()
         with self._lock:
-            self._proc = subprocess.Popen(
+            self._proc = popen_hidden(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
         proc = self._proc
@@ -481,7 +482,7 @@ class _CancellablePreviewWorker(QThread):
                 if self._lossy > 0 and shutil.which("gifsicle"):
                     self.progress.emit("Optimising with gifsicle…")
                     try:
-                        subprocess.run(
+                        run_hidden(
                             ["gifsicle", f"--lossy={self._lossy}", "-O3",
                              tmp_gif, "-o", tmp_gif],
                             check=True,

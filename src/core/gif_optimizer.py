@@ -8,6 +8,8 @@ from typing import Optional
 
 from PIL import Image
 
+from .proc import run_hidden
+
 
 class GifOptimizationError(Exception):
     """Raised when GIF optimization fails."""
@@ -37,7 +39,7 @@ def _optimize_with_gifsicle(input_path: str, output_path: str, lossy: int, color
     cmd += [input_path, "-o", output_path]
 
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        run_hidden(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as e:
         raise GifOptimizationError(
             f"gifsicle failed (code {e.returncode}): {e.stderr.decode(errors='ignore').strip()}"

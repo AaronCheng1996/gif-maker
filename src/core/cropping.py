@@ -6,16 +6,16 @@ formats (gif/apng/webp) go through Pillow; video formats go through ffmpeg.
 """
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from PIL import Image, ImageSequence
 
+from .proc import run_hidden
+
 PIL_FORMATS = {".gif", ".png", ".webp"}
 VIDEO_FORMATS = {".mp4", ".mov", ".webm", ".mkv"}
 
-_CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 class CropError(Exception):
@@ -138,9 +138,8 @@ def _crop_with_ffmpeg(path: Path, crop, ffmpeg_path: Optional[str],
         # ffmpeg writes UTF-8; without saying so Python decodes with the console
         # codepage and dies in its reader thread, turning a real ffmpeg error
         # message into an unrelated UnicodeDecodeError.
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace",
-                              creationflags=_CREATE_NO_WINDOW)
+        proc = run_hidden(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
     except OSError as e:
         raise CropError(f"Could not run ffmpeg: {e}") from e
     if proc.returncode != 0 or not tmp.exists():
