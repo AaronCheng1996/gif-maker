@@ -15,7 +15,7 @@ def qapp():
 
 LABELS = ["Composer", "Tile Splitter", "Batch Processor", "GIF Optimizer",
           "Video to GIF", "Clip to GIF", "Image Merge", "Spine to GIF",
-          "Crop GIF", "Atlas Unpack", "GIF to Video"]
+          "Crop GIF", "GIF to Video"]
 
 
 def _rail(qapp, labels=LABELS, width=1600):

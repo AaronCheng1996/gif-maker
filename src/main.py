@@ -8,8 +8,8 @@ from PyQt6.QtCore import Qt, QTimer
 from .core import MaterialManager, GifBuilder, GroupManager, CompositionGroup
 from .widgets import (AppTheme, PreviewPageWidget, TileSplitterPage, BatchProcessorWidget,
                       GifOptimizerWidget, VideoToGifWidget, ClipToGifWidget, ImageMergeWidget,
-                      SpineToGifWidget, CropGifWidget, AtlasUnpackWidget,
-                      GifToMp4Widget)
+                      SpineToGifWidget, CropGifWidget,
+                      GifToMp4Widget, VideoConcatWidget)
 from .widgets.tab_rail import ToolTabs
 from .i18n import tr, set_language
 from . import settings as AppSettings
@@ -182,8 +182,12 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
 
         # ── Tab 8: Crop GIF (trims finished animation files) ──────────────────
         self.crop_gif = CropGifWidget()
-        self.atlas_unpack = AtlasUnpackWidget()
+
+        # ── Tab 9: GIF to Video (re-encodes a finished animation smaller) ─────
         self.gif_to_mp4 = GifToMp4Widget()
+
+        # ── Tab 10: Video Concat (joins clips end to end) ─────────────────────
+        self.video_concat = VideoConcatWidget()
 
         # ── Top-level tab strip ───────────────────────────────────────────────
         self.tool_tabs = ToolTabs()
@@ -196,8 +200,8 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         self.tool_tabs.addTab(self.image_merge,          tr("🖼️ Image Merge"))
         self.tool_tabs.addTab(self.spine_to_gif,         tr("🦴 Spine to GIF"))
         self.tool_tabs.addTab(self.crop_gif,             tr("✂ Crop GIF"))
-        self.tool_tabs.addTab(self.atlas_unpack,         tr("🧩 Atlas Unpack"))
         self.tool_tabs.addTab(self.gif_to_mp4,           tr("🎬 GIF to Video"))
+        self.tool_tabs.addTab(self.video_concat,         tr("🔗 Video Concat"))
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
@@ -244,7 +248,7 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
     def closeEvent(self, event):
         """Handle application closing - perform emergency auto-save"""
         # Background render threads must finish before their widget is destroyed.
-        for tab_name in ('spine_to_gif', 'crop_gif', 'atlas_unpack', 'gif_to_mp4'):
+        for tab_name in ('spine_to_gif', 'crop_gif', 'gif_to_mp4', 'video_concat'):
             tab = getattr(self, tab_name, None)
             if tab is not None:
                 tab.stop_workers()

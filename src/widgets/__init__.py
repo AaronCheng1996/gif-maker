@@ -9,8 +9,8 @@ from .video_to_gif_widget import VideoToGifWidget
 from .clip_to_gif_widget import ClipToGifWidget
 from .spine_to_gif_widget import SpineToGifWidget
 from .crop_gif_widget import CropGifWidget
-from .atlas_unpack_widget import AtlasUnpackWidget
 from .gif_to_mp4_widget import GifToMp4Widget
+from .video_concat_widget import VideoConcatWidget
 from .image_merge_widget import ImageMergeWidget
 from .group_editor_dialog import GroupEditorDialog
 from .material_selector_dialog import MaterialSelectorDialog
@@ -32,8 +32,8 @@ __all__ = [
     'ClipToGifWidget',
     'SpineToGifWidget',
     'CropGifWidget',
-    'AtlasUnpackWidget',
     'GifToMp4Widget',
+    'VideoConcatWidget',
     'ImageMergeWidget',
     'GroupEditorDialog',
     'MaterialSelectorDialog',

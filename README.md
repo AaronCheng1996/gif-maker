@@ -209,29 +209,32 @@ from it, however many bits it is given; encoding those same frames straight to H
 35.4 dB at the same file size. So this tab is the right tool for a GIF you already have — if the
 animation is still in Spine, the Spine to GIF tab exports MP4 directly and does it far better.
 
-### Atlas Unpack
+### Video Concat
 
-Rebuilds pictures a game stored as a *diced* texture atlas. Some engines cut every image into a
-grid of cells, throw away the cells that repeat and pack the survivors into one sheet — forty
-expression variants of a character then cost barely more than one. The sheet looks like noise,
-because cells next to each other in it come from unrelated parts of the picture, and the images
-only come back with the table that says which cell goes where.
+Plays several clips one after another as a single file. Not an editor &mdash; no timeline, no
+trimming, no transitions. Add GIFs and videos, put them in order, join.
 
-Two systems are handled, chosen from what you point the tab at:
+The work is in what happens when the parts do not match, because ffmpeg's concat filter refuses
+inputs that disagree on size, pixel format or sample aspect, and a sequence built from a GIF, a
+phone clip and a screen capture agrees on none of them:
 
-| | **Naninovel SpriteDicing** | **Utage `DicingTextures`** |
-|---|---|---|
-| Point it at | a folder of asset-ripper output | the game's `.assets` file or a bundle |
-| Table lives in | a mesh on each Sprite, so the exported `.json` is enough | a ScriptableObject rippers usually skip |
-| Requires | nothing | [UnityPy](https://pypi.org/project/UnityPy/) |
+- **Size** is padded, never stretched. A clip of a different shape is fitted inside the output
+  frame and the remainder filled &mdash; scaling a 4:3 clip into a 16:9 slot to make the numbers
+  line up distorts everyone in it. The frame is taken from the first clip by default, or sized to
+  hold the largest.
+- **Sample aspect** is forced to 1:1 on every part, because one file claiming non-square pixels
+  plays the whole join back squashed even when the stored dimensions are right.
+- **Frame rate** levels up rather than down by default, so the smoothest clip keeps its motion
+  instead of being decimated to match the worst one.
+- **Sound** survives only if every clip has some. Joining a silent clip to one with audio drifts
+  out of sync from that seam onwards, so it is all or nothing, and the summary says which happened.
 
-The exported `.json` records only a numeric id for the sheet a sprite came from, and the exported
-PNGs carry no id at all, so when a folder holds more than one sheet the pairing is settled by
-rebuilding a sample against each and keeping the one that leaves no seams.
+Output is MP4 (H.264) or GIF, and both are laid over a solid colour. Transparent padding looked
+tempting for GIF, but GIF resolves a transparent pixel by showing whatever was underneath it, so
+the bars beside a portrait clip filled with the previous clip's background instead of going blank.
 
-That same measurement guards the output: a picture is written only if its cell borders are no more
-visible than the picture's own texture. Pairing a sprite with the wrong sheet is not subtle — on a
-real model it overshoots by tens of levels — so a scrambled rebuild is reported rather than saved.
+Selecting a clip previews it inside the frame the join will produce, bars and all &mdash; a padded
+clip is much easier to catch by eye than to read out of a settings panel.
 
 ### Crop GIF
 
@@ -364,6 +367,7 @@ src/
     template_manager.py         Template serialization and application
     batch_processor.py          Batch processing pipeline (reused by cli.py)
     cropping.py                 Crops animation files to a rectangle (Pillow, or ffmpeg for video)
+    concat.py                   Joins clips end to end; normalises size, aspect and frame rate first
     spine/                      Self-contained Spine 4.x runtime (numpy + Pillow, no PyQt6)
       atlas.py                  Texture atlas parser (4.1 bounds/offsets and legacy formats)
       skeleton.py               Bones, slots, skins, world transforms, update cache
@@ -387,6 +391,7 @@ src/
     spine_to_gif_widget.py      Spine to GIF tool UI (animation list, preview, export)
     crop_gif_widget.py          Crop GIF tool UI (file list, frame preview, batch crop)
     crop_overlay.py             Preview label with a draggable crop rectangle
+    video_concat_widget.py      Video Concat tool UI (ordered clip list, padding preview)
     image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog
