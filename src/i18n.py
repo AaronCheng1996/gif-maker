@@ -43,16 +43,16 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
 
         # ── Tabs ──────────────────────────────────────────────────────────────
         "🎬 Composer":                        "🎬 合成器",
-        "✂️ Tile Splitter":                   "✂️ 切割工具",
-        "⚡ Batch Processor":                 "⚡ 批次處理",
+        "🧩 Tile Splitter":                   "🧩 切割工具",
+        "⚡ Batch Export":                 "⚡ 批次輸出",
         "🔧 GIF Optimizer":                   "🔧 GIF 最佳化",
         "🎥 Video to GIF":                    "🎥 影片轉 GIF",
         "🎞️ Clip to GIF":                     "🎞️ 剪輯轉 GIF",
         "🖼️ Image Merge":                     "🖼️ 圖片合併",
-        "🦴 Spine to GIF":                    "🦴 Spine 轉 GIF",
-        "✂ Crop GIF":                        "✂ 裁切 GIF",
-        "🎬 GIF to Video":                    "🎬 GIF 轉影片",
-        "🔗 Video Concat":                    "🔗 影片拼接",
+        "🦴 Spine Export":                    "🦴 Spine 輸出",
+        "✂️ Crop":                        "✂️ 裁切",
+        "📦 GIF to Video":                    "📦 GIF 轉影片",
+        "🔗 Join":                    "🔗 拼接",
         "🌳 Tree":                            "🌳 樹狀圖",
         "🖼 Canvas":                          "🖼 畫布",
 

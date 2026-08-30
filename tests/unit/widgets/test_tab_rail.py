@@ -13,9 +13,9 @@ def qapp():
     yield app
 
 
-LABELS = ["Composer", "Tile Splitter", "Batch Processor", "GIF Optimizer",
-          "Video to GIF", "Clip to GIF", "Image Merge", "Spine to GIF",
-          "Crop GIF", "GIF to Video"]
+LABELS = ["Composer", "Tile Splitter", "Image Merge", "Batch Export",
+          "Spine Export", "Video to GIF", "Clip to GIF", "Crop", "Join",
+          "GIF Optimizer", "GIF to Video"]
 
 
 def _rail(qapp, labels=LABELS, width=1600):

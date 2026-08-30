@@ -94,7 +94,7 @@ class TestTr:
     def test_tab_names_translate(self):
         set_language("zh_TW")
         assert "合成器" in tr("🎬 Composer")
-        assert "批次處理" in tr("⚡ Batch Processor")
+        assert "批次輸出" in tr("⚡ Batch Export")
 
     def test_all_zh_tw_values_are_non_empty(self):
         """Sanity-check: every translated value should be a non-empty string."""

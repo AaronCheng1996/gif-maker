@@ -191,17 +191,23 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
 
         # ── Top-level tab strip ───────────────────────────────────────────────
         self.tool_tabs = ToolTabs()
+        # Left to right is the order work travels in: assemble material, bring
+        # a source in, edit what came out, then shrink it for delivery.
+        # ── assemble ──────────────────────────────────────────────────────────
         self.tool_tabs.addTab(self._composer_splitter,   tr("🎬 Composer"))
-        self.tool_tabs.addTab(self._tile_outer_splitter, tr("✂️ Tile Splitter"))
-        self.tool_tabs.addTab(self.batch_processor,      tr("⚡ Batch Processor"))
-        self.tool_tabs.addTab(self.gif_optimizer,        tr("🔧 GIF Optimizer"))
+        self.tool_tabs.addTab(self._tile_outer_splitter, tr("🧩 Tile Splitter"))
+        self.tool_tabs.addTab(self.image_merge,          tr("🖼️ Image Merge"))
+        self.tool_tabs.addTab(self.batch_processor,      tr("⚡ Batch Export"))
+        # ── bring a source in ─────────────────────────────────────────────────
+        self.tool_tabs.addTab(self.spine_to_gif,         tr("🦴 Spine Export"))
         self.tool_tabs.addTab(self.video_to_gif,         tr("🎥 Video to GIF"))
         self.tool_tabs.addTab(self.clip_to_gif,          tr("🎞️ Clip to GIF"))
-        self.tool_tabs.addTab(self.image_merge,          tr("🖼️ Image Merge"))
-        self.tool_tabs.addTab(self.spine_to_gif,         tr("🦴 Spine to GIF"))
-        self.tool_tabs.addTab(self.crop_gif,             tr("✂ Crop GIF"))
-        self.tool_tabs.addTab(self.gif_to_mp4,           tr("🎬 GIF to Video"))
-        self.tool_tabs.addTab(self.video_concat,         tr("🔗 Video Concat"))
+        # ── edit a finished animation ─────────────────────────────────────────
+        self.tool_tabs.addTab(self.crop_gif,             tr("✂️ Crop"))
+        self.tool_tabs.addTab(self.video_concat,         tr("🔗 Join"))
+        # ── shrink it for delivery ────────────────────────────────────────────
+        self.tool_tabs.addTab(self.gif_optimizer,        tr("🔧 GIF Optimizer"))
+        self.tool_tabs.addTab(self.gif_to_mp4,           tr("📦 GIF to Video"))
 
         self.tool_tabs.currentChanged.connect(self._on_tool_tab_changed)
 
@@ -212,17 +218,21 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         return wrapper
 
     def _on_tool_tab_changed(self, index: int):
-        """Dynamically move the shared Material Library into the active tab's splitter."""
-        if index == 0:   # Composer
-            self._composer_splitter.insertWidget(0, self._material_lib_panel)
+        """Move the shared Material Library into the active tab's splitter.
+
+        Keyed off which widget the tab holds rather than its position, because
+        the tabs get reordered and an index test fails silently when they do —
+        the library simply stops following, with nothing to show it broke."""
+        page = self.tool_tabs.widget(index)
+        host = {id(self._composer_splitter): self._composer_splitter,
+                id(self._tile_outer_splitter): self._tile_outer_splitter}.get(id(page))
+        if host is not None:
+            host.insertWidget(0, self._material_lib_panel)
             self._material_lib_panel.show()
-            self._composer_splitter.setSizes([320, 1280])
-        elif index == 1:  # Tile Splitter
-            self._tile_outer_splitter.insertWidget(0, self._material_lib_panel)
-            self._material_lib_panel.show()
-            self._tile_outer_splitter.setSizes([320, 1280])
+            host.setSizes([320, 1280])
         else:
-            # Batch / Optimizer — hide the panel (collapses in current splitter)
+            # Every other tool brings its own list; the shared panel would only
+            # take up room, so it collapses out of whichever splitter holds it.
             self._material_lib_panel.hide()
 
     def show_main_page(self):

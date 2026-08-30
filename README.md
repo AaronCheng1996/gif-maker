@@ -86,7 +86,7 @@ All operations apply to the currently selected group.
 - Import and export templates as JSON files
 - Templates store frame sequences, offsets, group references, and encoding settings
 
-### Batch Processor
+### Batch Export
 
 - Select multiple source images and a template
 - Configure tile-split settings (grid or size)
@@ -120,7 +120,7 @@ All operations apply to the currently selected group.
 - Same FPS / width / color / dither / gifsicle-lossy options as Video to GIF
 - Requires ffmpeg — see "External Tool Dependencies" below
 
-### Spine to GIF
+### Spine Export
 
 Turns the usual "open a viewer, export MP4, convert it to GIF, repeat for every
 animation" routine into: open the model, select the animations, click once.
@@ -207,9 +207,9 @@ Worth knowing before reaching for this: **a transcode is capped by its source.**
 frames a Spine model actually rendered, a GIF scores 17.2 dB PSNR and so does every video made
 from it, however many bits it is given; encoding those same frames straight to H.264 reaches
 35.4 dB at the same file size. So this tab is the right tool for a GIF you already have — if the
-animation is still in Spine, the Spine to GIF tab exports MP4 directly and does it far better.
+animation is still in Spine, the Spine Export tab writes MP4 directly and does it far better.
 
-### Video Concat
+### Join
 
 Plays several clips one after another as a single file. Still not an editor &mdash; no tracks, no
 transitions, no effects &mdash; but two things a join needs constantly earned their room.
@@ -234,7 +234,7 @@ the bars beside a portrait clip filled with the previous clip's background inste
 The preview shows the scrubbed frame inside the frame the join will produce, bars and all, and
 says whether the playhead is inside the trim.
 
-### Crop GIF
+### Crop
 
 Trims finished animations to a rectangle. Because the preview here *is* the file,
 what you see is exactly what gets written — no render step, no guessing at framing.
@@ -304,7 +304,7 @@ The executable is created at `dist/GIF-Maker.exe`. See `build_instructions.md` f
 ## Batch CLI (no GUI)
 
 For scripting/automation pipelines, `src/cli.py` reuses the same `BatchProcessor` as the
-Batch Processor tab — no PyQt6 import required:
+Batch Export tab — no PyQt6 import required:
 
 ```bash
 python -m src.cli --images sheet1.png sheet2.png --template my_template.json --output-dir out/
@@ -386,10 +386,10 @@ src/
     gif_optimizer_widget.py     GIF optimizer UI
     video_to_gif_widget.py      Video to GIF tool UI (multi-file batch conversion)
     clip_to_gif_widget.py       Clip to GIF tool UI (single-video visual range selector, Smart Loop)
-    spine_to_gif_widget.py      Spine to GIF tool UI (animation list, preview, export)
-    crop_gif_widget.py          Crop GIF tool UI (file list, frame preview, batch crop)
+    spine_to_gif_widget.py      Spine Export tool UI (animation list, preview, export)
+    crop_gif_widget.py          Crop tool UI (file list, frame preview, batch crop)
     crop_overlay.py             Preview label with a draggable crop rectangle
-    video_concat_widget.py      Video Concat tool UI (library, timeline, per-segment trim)
+    video_concat_widget.py      Join tool UI (library, timeline, per-segment trim)
     image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog

@@ -224,10 +224,13 @@ def test_image_merge_tab_is_wired_into_main_window(qapp):
 
     window = MainWindow()
     assert isinstance(window.image_merge, ImageMergeWidget)
-    assert window.tool_tabs.widget(6) is window.image_merge
+    # By identity, not by position: the tabs get reordered.
+    index = window.tool_tabs.indexOf(window.image_merge)
+    assert index >= 0
+    assert window.tool_tabs.widget(index) is window.image_merge
 
     # Switching to and away from it shouldn't touch the shared material library panel.
-    window._on_tool_tab_changed(6)
+    window._on_tool_tab_changed(index)
     assert window._material_lib_panel.isHidden()
 
 
@@ -253,3 +256,28 @@ def test_spine_to_gif_tab_is_wired_into_main_window(qapp):
     # widget directly — building extra MainWindows there just to drive render
     # threads is wasteful and destabilises the Qt event loop across tests.
 
+
+def test_every_tab_name_has_a_translation(qapp):
+    """A rename that forgets i18n leaves a tab in English for zh users, which
+    nothing else in the suite would notice."""
+    from src.i18n import set_language, tr
+
+    window = MainWindow()                      # built while the language is en,
+    labels = [window.tool_tabs.tabText(i)      # so these are the lookup keys
+              for i in range(window.tool_tabs.count())]
+    set_language("zh_TW")
+    try:
+        untranslated = [t for t in labels if tr(t) == t]
+        assert not untranslated, f"no zh_TW translation for: {untranslated}"
+    finally:
+        set_language("en")
+
+
+def test_the_tabs_run_from_assembling_to_shrinking(qapp):
+    """Order is meaning here: work travels left to right, and the tools that
+    shrink a finished file sit at the end."""
+    window = MainWindow()
+    order = [window.tool_tabs.indexOf(w) for w in (
+        window._composer_splitter, window.image_merge, window.spine_to_gif,
+        window.crop_gif, window.video_concat, window.gif_to_mp4)]
+    assert order == sorted(order), f"tabs are out of stage order: {order}"
