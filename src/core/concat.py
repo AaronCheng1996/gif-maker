@@ -119,18 +119,66 @@ def probe(path) -> dict:
     return info
 
 
+class Segment:
+    """One entry on the timeline: a file, and optionally a slice of it.
+
+    The same file can appear more than once with different in and out points,
+    which is why the timeline is a list of these rather than a list of paths —
+    a library entry is the material, a segment is a use of it.
+
+    `end` of 0 means "run to the end of the source", so a freshly added segment
+    needs no probing to be valid and stays correct if the file is replaced.
+    """
+
+    def __init__(self, path, start: float = 0.0, end: float = 0.0,
+                 info: Optional[dict] = None):
+        self.path = Path(path)
+        self.start = max(0.0, float(start))
+        self.end = max(0.0, float(end))
+        self.info = probe(self.path) if info is None else info
+
+    @property
+    def source_duration(self) -> float:
+        return float(self.info.get("duration") or 0.0)
+
+    @property
+    def out_point(self) -> float:
+        end = self.end if self.end > 0 else self.source_duration
+        return min(end, self.source_duration) if self.source_duration else end
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.out_point - self.start)
+
+    @property
+    def trimmed(self) -> bool:
+        return self.start > 0.0 or 0.0 < self.end < self.source_duration - 1e-6
+
+    def label(self) -> str:
+        if not self.trimmed:
+            return self.path.name
+        return f"{self.path.name}  [{self.start:.2f}s – {self.out_point:.2f}s]"
+
+
+def as_segments(items: Sequence) -> List[Segment]:
+    """Accept a timeline of Segments, or bare paths for the untrimmed case."""
+    return [i if isinstance(i, Segment) else Segment(i) for i in items]
+
+
 def _even(n: int) -> int:
     """H.264's 4:2:0 chroma cannot describe odd dimensions."""
     return max(2, n - (n % 2))
 
 
-def plan(infos: Sequence[dict], *, size_mode: str = MATCH_FIRST,
+def plan(segments: Sequence[Segment], *, size_mode: str = MATCH_FIRST,
          fps: float = 0.0) -> dict:
     """Work out the one geometry and frame rate every part will be brought to.
 
     Returned separately from the command so the UI can say what will happen
     before anything runs — which parts get padded, and whether sound survives.
     """
+    segments = as_segments(segments)
+    infos = [s.info for s in segments]
     usable = [i for i in infos if i.get("width") and i.get("height")]
     if not usable:
         raise ConcatError("None of these files could be read by ffmpeg")
@@ -156,17 +204,20 @@ def plan(infos: Sequence[dict], *, size_mode: str = MATCH_FIRST,
         "height": height,
         "fps": round(rate, 3),
         "keep_audio": keep_audio,
-        "duration": sum(i.get("duration") or 0.0 for i in infos),
+        # Trimmed lengths, not source lengths: this is what the progress bar
+        # measures against, and it is what the join will actually last.
+        "duration": sum(s.duration for s in segments),
         "padded": [bool(i.get("width")) and
                    (i["width"], i["height"]) != (width, height) for i in infos],
     }
 
 
-def build_command(paths: Sequence, output_path, *, layout: dict,
+def build_command(segments: Sequence, output_path, *, layout: dict,
                   output: str = MP4, background: str = "black",
                   crf: int = DEFAULT_CRF, preset: str = "medium") -> List[str]:
     """The ffmpeg invocation for one join. Separated out so it can be tested."""
-    if not paths:
+    segments = as_segments(segments)
+    if not segments:
         raise ConcatError("Nothing to join")
 
     w, h, fps = layout["width"], layout["height"], layout["fps"]
@@ -174,20 +225,38 @@ def build_command(paths: Sequence, output_path, *, layout: dict,
 
     cmd = [_ffmpeg(), "-y", "-hide_banner", "-nostdin",
            "-progress", "pipe:1", "-nostats"]
-    for p in paths:
-        cmd += ["-i", str(p)]
+    for seg in segments:
+        # Seeking before -i rather than trimming in the filter graph: ffmpeg
+        # then only decodes the part that is wanted, which is the difference
+        # between reading a whole hour-long capture and reading four seconds
+        # of it. The same file can appear repeatedly with different points.
+        if seg.start > 0:
+            cmd += ["-ss", f"{seg.start:.3f}"]
+        if seg.duration > 0 and seg.trimmed:
+            cmd += ["-t", f"{seg.duration:.3f}"]
+        cmd += ["-i", str(seg.path)]
 
     parts = []
-    for i in range(len(paths)):
+    for i in range(len(segments)):
+        # setpts is what makes a trimmed part safe to concatenate: concat
+        # expects every input to start at zero, and a part taken from the middle
+        # of a file otherwise arrives carrying the timestamps it had there.
         parts.append(
-            f"[{i}:v]fps={fps},"
+            f"[{i}:v]setpts=PTS-STARTPTS,fps={fps},"
             f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={background},"
             f"setsar=1,format=rgba[v{i}]")
+        if audio:
+            # concat refuses audio inputs that disagree on rate or layout just
+            # as it refuses mismatched video, so they are levelled here too.
+            parts.append(
+                f"[{i}:a]asetpts=PTS-STARTPTS,"
+                f"aformat=sample_fmts=fltp:sample_rates=48000:"
+                f"channel_layouts=stereo[a{i}]")
 
-    labels = "".join(f"[v{i}]" + (f"[{i}:a]" if audio else "")
-                     for i in range(len(paths)))
-    parts.append(f"{labels}concat=n={len(paths)}:v=1:a={1 if audio else 0}"
+    labels = "".join(f"[v{i}]" + (f"[a{i}]" if audio else "")
+                     for i in range(len(segments)))
+    parts.append(f"{labels}concat=n={len(segments)}:v=1:a={1 if audio else 0}"
                  + ("[cat][aout]" if audio else "[cat]"))
 
     # Both outputs are laid over a solid colour, so the result is opaque.
@@ -198,7 +267,7 @@ def build_command(paths: Sequence, output_path, *, layout: dict,
     # letting ffmpeg drop the alpha itself fills with black rather than the
     # colour that was asked for, hence the explicit colour source.
     cmd += ["-f", "lavfi", "-i", f"color=c={background}:s={w}x{h}:r={fps}"]
-    parts.append(f"[{len(paths)}:v][cat]overlay=shortest=1,setsar=1[flat]")
+    parts.append(f"[{len(segments)}:v][cat]overlay=shortest=1,setsar=1[flat]")
 
     if output == GIF:
         # One palette for the whole join rather than one per part, or the
@@ -224,25 +293,31 @@ def build_command(paths: Sequence, output_path, *, layout: dict,
     return cmd
 
 
-def concat(paths: Sequence, output_path, *, output: str = MP4,
+def concat(segments: Sequence, output_path, *, output: str = MP4,
            size_mode: str = MATCH_FIRST, fps: float = 0.0,
            background: str = "black", crf: int = DEFAULT_CRF,
            preset: str = "medium",
            on_progress: Optional[Callable[[int], None]] = None,
            should_stop: Optional[Callable[[], bool]] = None) -> str:
-    """Join `paths`, in the order given, into one file. Returns the path written."""
-    sources = [Path(p) for p in paths]
-    if len(sources) < 2:
+    """Join the timeline, in the order given, into one file.
+
+    Takes `Segment`s, or bare paths when nothing is trimmed. Returns the path
+    written."""
+    timeline = as_segments(segments)
+    if len(timeline) < 2:
         raise ConcatError("Pick at least two files to join")
+    empty = [s.path.name for s in timeline if s.trimmed and s.duration <= 0]
+    if empty:
+        raise ConcatError("Nothing is left of " + ", ".join(empty[:5]))
 
     out = Path(output_path)
-    resolved = {s.resolve() for s in sources}
+    resolved = {s.path.resolve() for s in timeline}
     if out.resolve() in resolved:
         raise ConcatError("Refusing to overwrite one of the files being joined")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    layout = plan([probe(s) for s in sources], size_mode=size_mode, fps=fps)
-    cmd = build_command(sources, out, layout=layout, output=output,
+    layout = plan(timeline, size_mode=size_mode, fps=fps)
+    cmd = build_command(timeline, out, layout=layout, output=output,
                         background=background, crf=crf, preset=preset)
 
     try:

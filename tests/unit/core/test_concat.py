@@ -8,9 +8,13 @@ needs_ffmpeg = pytest.mark.skipif(not is_ffmpeg_available(),
                                   reason="ffmpeg is not installed")
 
 
-def _info(w, h, fps=10.0, duration=1.0, audio=False):
-    return {"width": w, "height": h, "fps": fps, "duration": duration,
-            "has_audio": audio, "sar": "1:1"}
+def _seg(w=160, h=120, *, fps=10.0, duration=1.0, audio=False,
+         name="a.gif", start=0.0, end=0.0):
+    """A segment with its probe results supplied, so no ffprobe run is needed."""
+    return concat.Segment(name, start=start, end=end,
+                          info={"width": w, "height": h, "fps": fps,
+                                "duration": duration, "has_audio": audio,
+                                "sar": "1:1"})
 
 
 def _make_gif(path, size=(160, 120), frames=10, rgb=(200, 40, 40)):
@@ -26,40 +30,79 @@ def _make_gif(path, size=(160, 120), frames=10, rgb=(200, 40, 40)):
     return path
 
 
+def _ramp_gif(path, frames=10, size=(120, 80)):
+    """Frame i is a distinct grey, so which part of the clip survived a trim can
+    be read straight off the pixels."""
+    images = [Image.new("RGB", size, (i * 25, i * 25, i * 25)) for i in range(frames)]
+    images[0].save(path, save_all=True, append_images=images[1:],
+                   duration=100, loop=0)
+    return path
+
+
+# ── segments ─────────────────────────────────────────────────────────────
+
+def test_an_untrimmed_segment_is_the_whole_clip():
+    s = _seg(duration=4.0)
+    assert s.duration == 4.0
+    assert s.trimmed is False
+    assert s.label() == "a.gif"
+
+
+def test_an_end_of_zero_means_run_to_the_end():
+    """So a freshly added segment is valid before anything has been probed."""
+    s = _seg(duration=4.0, start=1.0)
+    assert s.out_point == 4.0
+    assert s.duration == 3.0
+
+
+def test_trimming_both_ends():
+    s = _seg(duration=4.0, start=1.0, end=3.0)
+    assert s.duration == 2.0
+    assert s.trimmed is True
+    assert "1.00s" in s.label() and "3.00s" in s.label()
+
+
+def test_an_out_point_past_the_end_is_clamped():
+    assert _seg(duration=2.0, end=9.0).duration == 2.0
+
+
+def test_a_segment_cannot_have_negative_length():
+    assert _seg(duration=4.0, start=3.0, end=1.0).duration == 0.0
+
+
 # ── plan ─────────────────────────────────────────────────────────────────
 
 def test_the_first_file_sets_the_frame_by_default():
-    layout = concat.plan([_info(160, 120), _info(320, 240)])
+    layout = concat.plan([_seg(160, 120), _seg(320, 240)])
     assert (layout["width"], layout["height"]) == (160, 120)
 
 
 def test_fitting_the_largest_takes_the_widest_and_the_tallest():
     """Not the largest single file — a wide clip and a tall one both have to fit."""
-    layout = concat.plan([_info(320, 100), _info(100, 400)],
+    layout = concat.plan([_seg(320, 100), _seg(100, 400)],
                          size_mode=concat.MATCH_LARGEST)
     assert (layout["width"], layout["height"]) == (320, 400)
 
 
 def test_dimensions_come_out_even():
     """4:2:0 chroma cannot describe an odd width, and H.264 refuses one."""
-    layout = concat.plan([_info(161, 121)])
+    layout = concat.plan([_seg(161, 121)])
     assert layout["width"] % 2 == 0 and layout["height"] % 2 == 0
 
 
 def test_the_frame_rate_levels_up_not_down():
     """Matching the worst clip would throw away motion the others recorded."""
-    layout = concat.plan([_info(160, 120, fps=10), _info(160, 120, fps=30)])
+    layout = concat.plan([_seg(fps=10), _seg(fps=30)])
     assert layout["fps"] == 30
 
 
 def test_an_explicit_frame_rate_wins():
-    layout = concat.plan([_info(160, 120, fps=30)], fps=12)
-    assert layout["fps"] == 12
+    assert concat.plan([_seg(fps=30)], fps=12)["fps"] == 12
 
 
 def test_sound_survives_only_when_every_clip_has_some():
-    both = concat.plan([_info(8, 8, audio=True), _info(8, 8, audio=True)])
-    mixed = concat.plan([_info(8, 8, audio=True), _info(8, 8, audio=False)])
+    both = concat.plan([_seg(audio=True), _seg(audio=True)])
+    mixed = concat.plan([_seg(audio=True), _seg(audio=False)])
     assert both["keep_audio"] is True
     # Concatenating a silent clip against one with audio drifts out of sync from
     # the seam onwards, so the honest choice is all or nothing.
@@ -67,41 +110,45 @@ def test_sound_survives_only_when_every_clip_has_some():
 
 
 def test_it_reports_which_clips_will_be_padded():
-    layout = concat.plan([_info(160, 120), _info(100, 200), _info(160, 120)])
+    layout = concat.plan([_seg(160, 120), _seg(100, 200), _seg(160, 120)])
     assert layout["padded"] == [False, True, False]
 
 
-def test_duration_is_the_sum_of_the_parts():
-    layout = concat.plan([_info(8, 8, duration=1.5), _info(8, 8, duration=2.0)])
+def test_the_planned_length_counts_trims_not_sources():
+    """The progress bar measures against this, and so does the summary."""
+    layout = concat.plan([_seg(duration=10.0, start=8.0),      # 2s
+                          _seg(duration=10.0, end=1.5)])       # 1.5s
     assert layout["duration"] == pytest.approx(3.5)
 
 
 def test_unreadable_input_is_refused_rather_than_guessed_at():
     with pytest.raises(concat.ConcatError, match="None of these files"):
-        concat.plan([{"width": 0, "height": 0}])
+        concat.plan([concat.Segment("x.gif", info={"width": 0, "height": 0})])
 
 
 # ── build_command ────────────────────────────────────────────────────────
 
-def _command(paths, out, **kw):
-    layout = kw.pop("layout", None) or concat.plan([_info(160, 120)] * len(paths))
-    return concat.build_command(paths, out, layout=layout, **kw)
+def _chain(cmd):
+    return cmd[cmd.index("-filter_complex") + 1]
+
+
+def _command(segments, out="out.mp4", **kw):
+    layout = kw.pop("layout", None) or concat.plan(segments)
+    return concat.build_command(segments, out, layout=layout, **kw)
 
 
 @needs_ffmpeg
 def test_every_input_is_normalised_before_being_joined():
-    cmd = _command(["a.gif", "b.mp4", "c.webm"], "out.mp4")
-    chain = cmd[cmd.index("-filter_complex") + 1]
+    cmd = _command([_seg(name="a.gif"), _seg(name="b.mp4"), _seg(name="c.webm")])
+    chain = _chain(cmd)
     for i in range(3):
-        assert f"[{i}:v]fps=" in chain
-        assert f"[v{i}]" in chain
+        assert f"[{i}:v]" in chain and f"[v{i}]" in chain
     assert "concat=n=3:v=1" in chain
 
 
 @needs_ffmpeg
 def test_clips_are_fitted_and_padded_never_stretched():
-    chain = _command(["a.gif", "b.gif"], "out.mp4")[
-        _command(["a.gif", "b.gif"], "out.mp4").index("-filter_complex") + 1]
+    chain = _chain(_command([_seg(), _seg()]))
     assert "force_original_aspect_ratio=decrease" in chain
     assert "pad=160:120" in chain
 
@@ -109,15 +156,42 @@ def test_clips_are_fitted_and_padded_never_stretched():
 @needs_ffmpeg
 def test_square_pixels_are_forced_on_every_part():
     """One part claiming non-square pixels plays the whole join back squashed."""
-    chain = _command(["a.gif", "b.gif"], "out.mp4")[
-        _command(["a.gif", "b.gif"], "out.mp4").index("-filter_complex") + 1]
-    assert chain.count("setsar=1") >= 2
+    assert _chain(_command([_seg(), _seg()])).count("setsar=1") >= 2
+
+
+@needs_ffmpeg
+def test_a_trimmed_segment_seeks_before_it_decodes():
+    """Seeking in the filter graph would decode the whole file to throw it away."""
+    cmd = _command([_seg(duration=60.0, start=10.0, end=14.0), _seg()])
+    assert "-ss" in cmd and cmd[cmd.index("-ss") + 1] == "10.000"
+    assert "-t" in cmd and cmd[cmd.index("-t") + 1] == "4.000"
+
+
+@needs_ffmpeg
+def test_an_untrimmed_segment_seeks_nowhere():
+    assert "-ss" not in _command([_seg(), _seg()])
+
+
+@needs_ffmpeg
+def test_a_trimmed_part_is_rebased_to_zero():
+    """concat expects every input at zero; a slice from the middle of a file
+    otherwise arrives carrying the timestamps it had there."""
+    assert "setpts=PTS-STARTPTS" in _chain(_command([_seg(start=1.0), _seg()]))
+
+
+@needs_ffmpeg
+def test_the_same_file_can_appear_twice_with_different_points():
+    segs = [_seg(name="clip.mp4", duration=10.0, end=2.0),
+            _seg(name="clip.mp4", duration=10.0, start=8.0)]
+    cmd = _command(segs)
+    assert cmd.count("clip.mp4") == 2, "each use needs its own input"
+    assert "concat=n=2" in _chain(cmd)
 
 
 @needs_ffmpeg
 def test_the_gif_path_builds_one_palette_for_the_whole_join():
-    cmd = _command(["a.gif", "b.gif"], "out.gif", output=concat.GIF)
-    chain = cmd[cmd.index("-filter_complex") + 1]
+    cmd = _command([_seg(), _seg()], "out.gif", output=concat.GIF)
+    chain = _chain(cmd)
     assert "palettegen" in chain and "paletteuse" in chain
     # A palette per part would shift the colours at every seam.
     assert chain.count("palettegen") == 1
@@ -126,9 +200,9 @@ def test_the_gif_path_builds_one_palette_for_the_whole_join():
 
 @needs_ffmpeg
 def test_the_mp4_path_encodes_h264():
-    cmd = _command(["a.gif", "b.gif"], "out.mp4", output=concat.MP4)
+    cmd = _command([_seg(), _seg()], output=concat.MP4)
     assert "libx264" in cmd
-    assert "yuv420p" in cmd[cmd.index("-filter_complex") + 1]
+    assert "yuv420p" in _chain(cmd)
 
 
 @needs_ffmpeg
@@ -136,30 +210,36 @@ def test_both_outputs_are_laid_over_a_solid_colour():
     """GIF resolves transparency by showing what was underneath, so padding a
     portrait clip with alpha filled the bars with the previous clip."""
     for output in (concat.MP4, concat.GIF):
-        cmd = _command(["a.gif", "b.gif"], "out", output=output, background="white")
+        cmd = _command([_seg(), _seg()], "out", output=output, background="white")
         assert "color=c=white" in " ".join(cmd)
-        assert "overlay=shortest=1" in cmd[cmd.index("-filter_complex") + 1]
+        assert "overlay=shortest=1" in _chain(cmd)
 
 
 @needs_ffmpeg
-def test_audio_is_mapped_only_when_it_is_being_kept():
-    silent = concat.plan([_info(8, 8), _info(8, 8)])
-    loud = concat.plan([_info(8, 8, audio=True), _info(8, 8, audio=True)])
+def test_audio_is_mapped_and_levelled_only_when_it_is_being_kept():
+    quiet = _command([_seg(), _seg()])
+    assert "-an" in quiet
+    assert "[aout]" not in " ".join(quiet)
 
-    quiet_cmd = _command(["a", "b"], "out.mp4", layout=silent)
-    assert "-an" in quiet_cmd
-    assert "[aout]" not in " ".join(quiet_cmd)
-
-    loud_cmd = _command(["a", "b"], "out.mp4", layout=loud)
-    assert "[aout]" in " ".join(loud_cmd)
-    assert "aac" in loud_cmd
+    loud = _command([_seg(audio=True), _seg(audio=True)])
+    assert "[aout]" in " ".join(loud)
+    assert "aac" in loud
+    # concat refuses audio that disagrees on rate or layout just as it refuses
+    # mismatched video.
+    assert "aformat=" in _chain(loud)
 
 
 # ── guards ───────────────────────────────────────────────────────────────
 
 def test_one_clip_is_not_a_join(tmp_path):
     with pytest.raises(concat.ConcatError, match="at least two"):
-        concat.concat([tmp_path / "a.gif"], tmp_path / "out.mp4")
+        concat.concat([_seg()], tmp_path / "out.mp4")
+
+
+def test_a_segment_trimmed_to_nothing_is_refused(tmp_path):
+    with pytest.raises(concat.ConcatError, match="Nothing is left"):
+        concat.concat([_seg(duration=4.0, start=2.0, end=2.0), _seg()],
+                      tmp_path / "out.mp4")
 
 
 def test_it_will_not_write_over_one_of_its_own_inputs(tmp_path):
@@ -168,6 +248,13 @@ def test_it_will_not_write_over_one_of_its_own_inputs(tmp_path):
     _make_gif(b)
     with pytest.raises(concat.ConcatError, match="Refusing"):
         concat.concat([a, b], a)
+
+
+def test_bare_paths_still_work_for_the_untrimmed_case(tmp_path):
+    a = _make_gif(tmp_path / "a.gif")
+    segments = concat.as_segments([a, a])
+    assert all(isinstance(s, concat.Segment) for s in segments)
+    assert not segments[0].trimmed
 
 
 # ── the real thing ───────────────────────────────────────────────────────
@@ -184,6 +271,40 @@ def test_the_join_lasts_as_long_as_its_parts_together(tmp_path):
     assert joined["duration"] == pytest.approx(parts, abs=0.15)
     assert (joined["width"], joined["height"]) == (160, 120)
     assert joined["sar"] == "1:1"
+
+
+@needs_ffmpeg
+def test_a_trim_actually_removes_that_part_of_the_clip(tmp_path):
+    """Reading the grey ramp back says which half of the source survived."""
+    ramp = _ramp_gif(tmp_path / "ramp.gif")            # 1.00s, greys 0..225
+    other = _make_gif(tmp_path / "other.gif", size=(120, 80), rgb=(0, 200, 0))
+
+    head_gone = concat.Segment(ramp, start=0.5)
+    out = tmp_path / "trimmed.gif"
+    concat.concat([head_gone, concat.Segment(other)], out, output=concat.GIF)
+
+    assert concat.probe(out)["duration"] == pytest.approx(
+        head_gone.duration + 1.0, abs=0.15)
+
+    greys = [f.convert("RGB").getpixel((60, 40))[0]
+             for f in ImageSequence.Iterator(Image.open(out))]
+    # The first half of the ramp is grey 0..100. The green clip reads 0 on the
+    # red channel, so only values strictly between say the ramp's own range
+    # would betray an untrimmed head.
+    assert not [g for g in greys if 0 < g < 100], \
+        f"the trimmed-off head is still in the join: {greys}"
+    assert [g for g in greys if g >= 100], "the kept tail is missing"
+
+
+@needs_ffmpeg
+def test_one_source_used_twice_at_different_points(tmp_path):
+    ramp = _ramp_gif(tmp_path / "ramp.gif")
+    head = concat.Segment(ramp, end=0.3)
+    tail = concat.Segment(ramp, start=0.7)
+    out = tmp_path / "bookends.mp4"
+    concat.concat([head, tail], out)
+    assert concat.probe(out)["duration"] == pytest.approx(
+        head.duration + tail.duration, abs=0.15)
 
 
 @needs_ffmpeg

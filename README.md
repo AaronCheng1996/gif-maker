@@ -211,30 +211,28 @@ animation is still in Spine, the Spine to GIF tab exports MP4 directly and does 
 
 ### Video Concat
 
-Plays several clips one after another as a single file. Not an editor &mdash; no timeline, no
-trimming, no transitions. Add GIFs and videos, put them in order, join.
+Plays several clips one after another as a single file. Still not an editor &mdash; no tracks, no
+transitions, no effects &mdash; but two things a join needs constantly earned their room.
 
-The work is in what happens when the parts do not match, because ffmpeg's concat filter refuses
-inputs that disagree on size, pixel format or sample aspect, and a sequence built from a GIF, a
-phone clip and a screen capture agrees on none of them:
+**The library is separate from the timeline.** Adding a file and using a file are different acts,
+so there is one list of material and a second list of uses. A clip can therefore appear on the
+timeline more than once &mdash; an intro reused as an outro, one shot cut into before and after
+&mdash; which a single list of paths cannot express at all. Double-click or drag from the library
+to place a segment; forgetting material leaves segments already placed alone.
 
-- **Size** is padded, never stretched. A clip of a different shape is fitted inside the output
-  frame and the remainder filled &mdash; scaling a 4:3 clip into a 16:9 slot to make the numbers
-  line up distorts everyone in it. The frame is taken from the first clip by default, or sized to
-  hold the largest.
-- **Sample aspect** is forced to 1:1 on every part, because one file claiming non-square pixels
-  plays the whole join back squashed even when the stored dimensions are right.
-- **Frame rate** levels up rather than down by default, so the smoothest clip keeps its motion
-  instead of being decimated to match the worst one.
-- **Sound** survives only if every clip has some. Joining a silent clip to one with audio drifts
-  out of sync from that seam onwards, so it is all or nothing, and the summary says which happened.
+**Segments carry their own in and out points.** Most clips need their head and tail taken off
+before they will join cleanly, and doing that in another tool first turns a one-step job into
+three. Trimming is per use rather than per file, so the same material can be cut differently in
+each place it appears. Scrub, set the in or out point from the playhead, or type the seconds.
+Trimmed segments seek before decoding, so taking four seconds out of an hour-long capture reads
+four seconds of it.
 
 Output is MP4 (H.264) or GIF, and both are laid over a solid colour. Transparent padding looked
 tempting for GIF, but GIF resolves a transparent pixel by showing whatever was underneath it, so
 the bars beside a portrait clip filled with the previous clip's background instead of going blank.
 
-Selecting a clip previews it inside the frame the join will produce, bars and all &mdash; a padded
-clip is much easier to catch by eye than to read out of a settings panel.
+The preview shows the scrubbed frame inside the frame the join will produce, bars and all, and
+says whether the playhead is inside the trim.
 
 ### Crop GIF
 
@@ -367,7 +365,7 @@ src/
     template_manager.py         Template serialization and application
     batch_processor.py          Batch processing pipeline (reused by cli.py)
     cropping.py                 Crops animation files to a rectangle (Pillow, or ffmpeg for video)
-    concat.py                   Joins clips end to end; normalises size, aspect and frame rate first
+    concat.py                   Joins timeline segments end to end; trims, then normalises size, aspect and rate
     spine/                      Self-contained Spine 4.x runtime (numpy + Pillow, no PyQt6)
       atlas.py                  Texture atlas parser (4.1 bounds/offsets and legacy formats)
       skeleton.py               Bones, slots, skins, world transforms, update cache
@@ -391,7 +389,7 @@ src/
     spine_to_gif_widget.py      Spine to GIF tool UI (animation list, preview, export)
     crop_gif_widget.py          Crop GIF tool UI (file list, frame preview, batch crop)
     crop_overlay.py             Preview label with a draggable crop rectangle
-    video_concat_widget.py      Video Concat tool UI (ordered clip list, padding preview)
+    video_concat_widget.py      Video Concat tool UI (library, timeline, per-segment trim)
     image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog
