@@ -121,6 +121,25 @@ def test_the_planned_length_counts_trims_not_sources():
     assert layout["duration"] == pytest.approx(3.5)
 
 
+def test_a_width_cap_only_ever_shrinks():
+    """The preview render leans on this; blowing a clip up would cost bitrate
+    and add blur without adding detail the source never had."""
+    small = concat.plan([_seg(320, 240)], max_width=1920)
+    assert (small["width"], small["height"]) == (320, 240)
+
+
+def test_a_width_cap_keeps_the_shape():
+    capped = concat.plan([_seg(1920, 1080)], max_width=640)
+    assert capped["width"] == 640
+    assert capped["height"] == pytest.approx(360, abs=2)
+
+
+def test_a_capped_frame_is_still_even():
+    """Odd dimensions survive neither H.264 nor the rounding on the way down."""
+    capped = concat.plan([_seg(1080, 1921)], max_width=641)
+    assert capped["width"] % 2 == 0 and capped["height"] % 2 == 0
+
+
 def test_unreadable_input_is_refused_rather_than_guessed_at():
     with pytest.raises(concat.ConcatError, match="None of these files"):
         concat.plan([concat.Segment("x.gif", info={"width": 0, "height": 0})])

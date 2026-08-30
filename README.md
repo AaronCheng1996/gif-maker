@@ -223,9 +223,54 @@ to place a segment; forgetting material leaves segments already placed alone.
 **Segments carry their own in and out points.** Most clips need their head and tail taken off
 before they will join cleanly, and doing that in another tool first turns a one-step job into
 three. Trimming is per use rather than per file, so the same material can be cut differently in
-each place it appears. Scrub, set the in or out point from the playhead, or type the seconds.
-Trimmed segments seek before decoding, so taking four seconds out of an hour-long capture reads
-four seconds of it.
+each place it appears. Trimmed segments seek before decoding, so taking four seconds out of an
+hour-long capture reads four seconds of it.
+
+The trim is a **filmstrip**, not a pair of numbers. What is actually being asked &mdash; does this
+clip start after the slate, does it end before the camera swings away &mdash; is a question about
+pictures, so the control is the pictures: the clip laid end to end, the kept span at full
+brightness, the discarded head and tail dimmed, a handle on each boundary and a playhead. The spin
+boxes are still there, because pictures are bad at exact numbers.
+
+**Preview plays the whole join** before anything is written, and plays every frame of it. The
+obvious implementation &mdash; flipping through the frames the filmstrip is already drawn from
+&mdash; is far too sparse to watch, because those are sampled across each whole source: a
+minute-long clip lands at two frames a second. Holding a real frame rate in memory is not an option
+either, since ten seconds of 480&times;360 comes to about 160 MB.
+
+So the preview is the join itself, built small and fast &mdash; 640px wide, ultrafast, crf 30
+&mdash; and played as a file. A twelve-second join renders in under half a second and comes out at
+the real 25fps rather than the strip's 12. It runs the same pipeline the export does, so it is a
+true check on order, trims, framing and padding; only encoding quality at full size is left for the
+real file to show. An unchanged timeline replays the file already built rather than rendering it
+again. Where QtMultimedia is missing, the tab falls back to flipping through the sampled frames.
+
+**Match the previous segment** searches the incoming clip for the frame that follows the outgoing
+one most cleanly, and starts there. Closeness is three measurements rather than one, because three
+different things go wrong at a cut: colour catches a change of scene, edges survive a slow exposure
+drift that would swamp a pixel difference, and comparing each frame with its own neighbour catches
+the case where two frames match perfectly but one is mid-pan and the other is a standstill. The
+result is reported in words &mdash; seamless, close, or no good match &mdash; because the score only
+means anything against the thresholds it was calibrated on.
+
+The rest is what happens when the parts do not match, because ffmpeg's concat filter refuses
+inputs that disagree on size, pixel format or sample aspect, and a sequence built from a GIF, a
+phone clip and a screen capture agrees on none of them:
+
+- **Size** is padded, never stretched. A clip of a different shape is fitted inside the output
+  frame and the remainder filled &mdash; scaling a 4:3 clip into a 16:9 slot to make the numbers
+  line up distorts everyone in it. The frame is taken from the first segment by default, or sized
+  to hold the largest.
+- **Sample aspect** is forced to 1:1 on every part, because one file claiming non-square pixels
+  plays the whole join back squashed even when the stored dimensions are right.
+- **Timestamps** are rebased to zero per segment. concat expects every input to start at zero, and
+  a slice taken from the middle of a file otherwise arrives carrying the timestamps it had there.
+- **Frame rate** levels up rather than down by default, so the smoothest clip keeps its motion
+  instead of being decimated to match the worst one.
+- **Sound** survives only if every clip has some, and is resampled to a common format because
+  concat refuses mismatched audio just as it refuses mismatched video. Joining a silent clip to
+  one with audio drifts out of sync from that seam onwards, so it is all or nothing and the
+  summary says which happened.
 
 Output is MP4 (H.264) or GIF, and both are laid over a solid colour. Transparent padding looked
 tempting for GIF, but GIF resolves a transparent pixel by showing whatever was underneath it, so
@@ -366,6 +411,7 @@ src/
     batch_processor.py          Batch processing pipeline (reused by cli.py)
     cropping.py                 Crops animation files to a rectangle (Pillow, or ffmpeg for video)
     concat.py                   Joins timeline segments end to end; trims, then normalises size, aspect and rate
+    seam.py                     Finds the frame that follows another most cleanly (colour, edges, motion)
     spine/                      Self-contained Spine 4.x runtime (numpy + Pillow, no PyQt6)
       atlas.py                  Texture atlas parser (4.1 bounds/offsets and legacy formats)
       skeleton.py               Bones, slots, skins, world transforms, update cache
@@ -389,7 +435,8 @@ src/
     spine_to_gif_widget.py      Spine Export tool UI (animation list, preview, export)
     crop_gif_widget.py          Crop tool UI (file list, frame preview, batch crop)
     crop_overlay.py             Preview label with a draggable crop rectangle
-    video_concat_widget.py      Join tool UI (library, timeline, per-segment trim)
+    video_concat_widget.py      Join tool UI (library, timeline, filmstrip trim, preview playback)
+    trim_bar.py                 Filmstrip with draggable in/out handles and a playhead
     image_merge_widget.py       Image Merge tool UI (stack images, flatten to PNG)
     settings_dialog.py          Settings dialog (language selection)
     group_editor_dialog.py      Group creation/edit dialog

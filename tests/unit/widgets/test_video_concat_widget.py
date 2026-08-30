@@ -326,3 +326,251 @@ def test_the_destination_follows_a_chosen_folder(widget, qapp, tmp_path,
 def test_stop_workers_is_idempotent(widget):
     widget.stop_workers()
     widget.stop_workers()
+
+
+# ── the filmstrip, the preview and the seam finder ───────────────────────
+
+def _moving_gif(path, frames=24, size=(160, 120)):
+    """A ball crossing the frame, so one moment is distinguishable from another."""
+    from PIL import ImageDraw
+    images = []
+    for i in range(frames):
+        im = Image.new("RGB", size, (20, 20 + i * 4, 60))
+        d = ImageDraw.Draw(im)
+        x = 8 + (size[0] - 24) * i / (frames - 1)
+        d.ellipse([x, size[1] / 2 - 10, x + 16, size[1] / 2 + 6],
+                  fill=(240, 190, 60))
+        images.append(im)
+    images[0].save(path, save_all=True, append_images=images[1:],
+                   duration=100, loop=0)
+    return path
+
+
+def _settle(widget, qapp, limit=200):
+    """Pump until the background frame loads have finished."""
+    for _ in range(limit):
+        qapp.processEvents()
+        loading = widget._loader is not None and widget._loader.isRunning()
+        if not loading and not widget._pending:
+            qapp.processEvents()
+            return
+        if widget._loader is not None:
+            widget._loader.wait(200)
+    raise AssertionError("frames never finished loading")
+
+
+def _two_moving(widget, qapp, tmp_path, monkeypatch):
+    a = _moving_gif(tmp_path / "a.gif")
+    b = _moving_gif(tmp_path / "b.gif")
+    _add(widget, qapp, monkeypatch, [a, b])
+    widget.library_list.selectAll()
+    widget.add_selected_to_timeline()
+    _settle(widget, qapp)
+    return a, b
+
+
+def test_the_filmstrip_shows_the_selected_clip(widget, qapp, tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    widget.timeline_list.setCurrentRow(0)
+    _settle(widget, qapp)
+    assert widget.trim_bar._frames, "the bar never received the clip"
+    assert widget.trim_bar._duration > 0
+
+
+def test_dragging_the_bar_trims_the_segment(widget, qapp, tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    widget.timeline_list.setCurrentRow(0)
+    _settle(widget, qapp)
+
+    widget._on_bar_start(0.5)
+    assert widget.segments[0].start == pytest.approx(0.5)
+    assert widget.segments[0].trimmed
+    assert "0.50s" in widget.timeline_list.item(0).text()
+
+
+def test_the_preview_plays_only_what_is_kept(widget, qapp, tmp_path, monkeypatch):
+    """The fallback strip, which is what a build without QtMultimedia flips."""
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    widget.timeline_list.setCurrentRow(0)
+    _settle(widget, qapp)
+
+    whole = len(widget._build_play_list())
+    widget.segments[0].start = 1.0          # drop the first second of clip one
+    trimmed = len(widget._build_play_list())
+    assert 0 < trimmed < whole, "trimming did not shorten the preview"
+
+
+def test_the_fallback_runs_and_stops(widget, qapp, tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    widget._start_frame_preview()
+    _settle(widget, qapp)
+    assert widget._playing
+    assert widget.preview.pixmap() is not None and not widget.preview.pixmap().isNull()
+
+    widget.stop_preview()
+    assert not widget._playing
+    assert not widget._play_timer.isActive()
+
+
+def test_the_fallback_loops_rather_than_ending_on_a_frozen_frame(widget, qapp,
+                                                                 tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    widget._start_frame_preview()
+    _settle(widget, qapp)
+    widget._play_index = len(widget._play_list) - 1
+    widget._advance_playback()
+    assert widget._play_index == 0
+    widget.stop_preview()
+
+
+# ── the rendered preview ─────────────────────────────────────────────────
+
+class _FakeWorker:
+    """Stands in for the render so the tests exercise the decision, not ffmpeg."""
+    last = None
+
+    def __init__(self, segments, destination, options, parent=None):
+        _FakeWorker.last = self
+        self.segments, self.destination, self.options = segments, destination, options
+        self.cancelled = False
+        self.progress = _Signal()
+        self.done = _Signal()
+        self.error = _Signal()
+        self.finished = _Signal()
+
+    def cancel(self):
+        self.cancelled = True
+
+    def wait(self, _ms=0):
+        return True
+
+    def start(self):
+        pass
+
+
+class _Signal:
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot):
+        self._slots.append(slot)
+
+    def emit(self, *args):
+        for slot in list(self._slots):
+            slot(*args)
+
+
+def _fake_render(widget, monkeypatch):
+    import src.widgets.video_concat_widget as mod
+    monkeypatch.setattr(mod, "_JoinWorker", _FakeWorker)
+    if widget._player is None:              # a build without QtMultimedia
+        widget._player = type("P", (), {"setSource": lambda *a: None,
+                                        "play": lambda *a: None,
+                                        "stop": lambda *a: None})()
+        widget.video = widget.preview
+
+
+def test_the_preview_is_rendered_small_and_fast(widget, qapp, tmp_path, monkeypatch):
+    """A preview that took as long as the export would not be used."""
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    _fake_render(widget, monkeypatch)
+
+    widget.start_preview()
+    opts = _FakeWorker.last.options
+    assert opts["max_width"] == mod_preview_width()
+    assert opts["preset"] == "ultrafast"
+    assert opts["crf"] >= 28, "a preview does not need archival quality"
+    # and it is the real pipeline, so the framing settings come along
+    assert opts["size_mode"] == widget.size_combo.currentText()
+    assert opts["background"] == widget._background_value()
+
+
+def mod_preview_width():
+    from src.widgets.video_concat_widget import PREVIEW_WIDTH
+    return PREVIEW_WIDTH
+
+
+def test_an_unchanged_timeline_replays_what_was_already_built(widget, qapp,
+                                                              tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    _fake_render(widget, monkeypatch)
+
+    widget.start_preview()
+    built = _FakeWorker.last
+    fake_file = tmp_path / "preview.mp4"
+    fake_file.write_bytes(b"stub")
+    built.done.emit(str(fake_file))
+    built.finished.emit()
+    widget.stop_preview()
+
+    _FakeWorker.last = None
+    widget.start_preview()
+    assert _FakeWorker.last is None, "an unchanged timeline should not re-render"
+    assert widget._playing
+
+
+def test_changing_a_trim_makes_the_preview_stale(widget, qapp, tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    _fake_render(widget, monkeypatch)
+
+    widget.start_preview()
+    fake_file = tmp_path / "preview.mp4"
+    fake_file.write_bytes(b"stub")
+    _FakeWorker.last.done.emit(str(fake_file))
+    _FakeWorker.last.finished.emit()
+    widget.stop_preview()
+
+    widget.segments[0].start = 0.5          # the join is now a different join
+    _FakeWorker.last = None
+    widget.start_preview()
+    assert _FakeWorker.last is not None, "a changed timeline must be rebuilt"
+
+
+def test_one_segment_is_not_a_preview(widget, qapp, tmp_path, monkeypatch):
+    a = _moving_gif(tmp_path / "a.gif")
+    _add(widget, qapp, monkeypatch, [a])
+    _select_library(widget, 0)
+    widget.add_selected_to_timeline()
+    _fake_render(widget, monkeypatch)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+
+    _FakeWorker.last = None
+    widget.start_preview()
+    assert _FakeWorker.last is None
+
+
+def test_matching_is_offered_only_where_there_is_something_to_match(widget, qapp,
+                                                                    tmp_path, monkeypatch):
+    _two_moving(widget, qapp, tmp_path, monkeypatch)
+    widget.timeline_list.setCurrentRow(0)
+    _settle(widget, qapp)
+    assert not widget.match_btn.isEnabled(), "nothing precedes the first segment"
+
+    widget.timeline_list.setCurrentRow(1)
+    _settle(widget, qapp)
+    assert widget.match_btn.isEnabled()
+
+
+def test_matching_starts_the_clip_where_the_last_one_left_off(widget, qapp,
+                                                              tmp_path, monkeypatch):
+    """Both segments are the same footage, so the frame that follows the first
+    one's out point is the one at that same time in the second."""
+    a = _moving_gif(tmp_path / "a.gif")
+    _add(widget, qapp, monkeypatch, [a])
+    _select_library(widget, 0)
+    widget.add_selected_to_timeline()
+    _select_library(widget, 0)
+    widget.add_selected_to_timeline()
+    _settle(widget, qapp)
+
+    widget.segments[0].end = 1.2            # first segment stops at 1.2s
+    widget.timeline_list.setCurrentRow(1)
+    _settle(widget, qapp)
+
+    widget.match_previous()
+    _settle(widget, qapp)
+
+    found = widget.segments[1].start
+    assert found == pytest.approx(1.2, abs=0.25), \
+        f"expected the cut near 1.2s, got {found:.2f}s"
+    assert "Matched" in widget.scrub_label.text()

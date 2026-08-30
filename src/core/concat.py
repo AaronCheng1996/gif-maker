@@ -171,7 +171,7 @@ def _even(n: int) -> int:
 
 
 def plan(segments: Sequence[Segment], *, size_mode: str = MATCH_FIRST,
-         fps: float = 0.0) -> dict:
+         fps: float = 0.0, max_width: int = 0) -> dict:
     """Work out the one geometry and frame rate every part will be brought to.
 
     Returned separately from the command so the UI can say what will happen
@@ -188,6 +188,13 @@ def plan(segments: Sequence[Segment], *, size_mode: str = MATCH_FIRST,
         height = max(i["height"] for i in usable)
     else:
         width, height = usable[0]["width"], usable[0]["height"]
+
+    if max_width and width > max_width:
+        # Only ever downwards, and the height follows so nothing is distorted.
+        # Used for the preview render, which wants the real timing and framing
+        # at a size that encodes in a moment.
+        height = max(1, round(height * max_width / width))
+        width = max_width
     width, height = _even(width), _even(height)
 
     rate = fps if fps > 0 else max((i.get("fps") or 0.0) for i in usable)
@@ -296,7 +303,7 @@ def build_command(segments: Sequence, output_path, *, layout: dict,
 def concat(segments: Sequence, output_path, *, output: str = MP4,
            size_mode: str = MATCH_FIRST, fps: float = 0.0,
            background: str = "black", crf: int = DEFAULT_CRF,
-           preset: str = "medium",
+           preset: str = "medium", max_width: int = 0,
            on_progress: Optional[Callable[[int], None]] = None,
            should_stop: Optional[Callable[[], bool]] = None) -> str:
     """Join the timeline, in the order given, into one file.
@@ -316,7 +323,7 @@ def concat(segments: Sequence, output_path, *, output: str = MP4,
         raise ConcatError("Refusing to overwrite one of the files being joined")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    layout = plan(timeline, size_mode=size_mode, fps=fps)
+    layout = plan(timeline, size_mode=size_mode, fps=fps, max_width=max_width)
     cmd = build_command(timeline, out, layout=layout, output=output,
                         background=background, crf=crf, preset=preset)
 

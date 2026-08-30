@@ -53,6 +53,20 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "✂️ Crop":                        "✂️ 裁切",
         "📦 GIF to Video":                    "📦 GIF 轉影片",
         "🔗 Join":                    "🔗 拼接",
+        "▶ Preview the join":                   "▶ 預覽拼接結果",
+        "■ Stop":                               "■ 停止",
+        "Building preview…":
+            "正在建立預覽…",
+        "Previewing the whole join — {total:.1f}s at {w}px wide":
+            "預覽完整拼接——{total:.1f} 秒，寬 {w}px",
+        "🔎 Match the previous segment":         "🔎 對齊前一個片段",
+        "Matched at {t:.2f}s — {quality}":      "對齊於 {t:.2f} 秒——{quality}",
+        "Previewing {done:.1f}s / {total:.1f}s": "預覽中 {done:.1f} / {total:.1f} 秒",
+        "seamless":                             "完全連貫",
+        "close":                                "接近",
+        "no good match":                        "找不到合適的畫面",
+        "Could not read one of the clips.":     "其中一個片段無法讀取。",
+        "No frame to match against.":           "沒有可供對齊的畫面。",
         "🌳 Tree":                            "🌳 樹狀圖",
         "🖼 Canvas":                          "🖼 畫布",
 
