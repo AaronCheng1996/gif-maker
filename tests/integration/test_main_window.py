@@ -281,3 +281,114 @@ def test_the_tabs_run_from_assembling_to_shrinking(qapp):
         window._composer_splitter, window.image_merge, window.spine_to_gif,
         window.crop_gif, window.video_concat, window.gif_to_mp4)]
     assert order == sorted(order), f"tabs are out of stage order: {order}"
+
+
+# ── Add to Group picker: where it opens ──────────────────────────────────────
+
+def _window_with_a_material():
+    """A MainWindow with one material, selected in the library list."""
+    from PIL import Image
+
+    window = MainWindow()
+    window.material_manager.add_material(Image.new("RGBA", (8, 8), (255, 0, 0, 255)), "a")
+    window.refresh_materials_list()
+    window.materials_list.setCurrentRow(0)
+    return window
+
+
+@pytest.fixture()
+def picker(monkeypatch):
+    """Answer the Add to Group dialog, recording what it was opened on.
+
+    Returns (calls, reply): append-only record of each dialog, and a dict whose
+    "row" says which group the next one picks."""
+    from src.main_window import materials_panel_mixin as mpm
+
+    calls = []
+    reply = {"row": 0}
+
+    def get_item(_parent, _title, _label, items, current, _editable, *a, **k):
+        calls.append({"items": list(items), "current": current})
+        return items[reply["row"]], True
+
+    monkeypatch.setattr(mpm.QInputDialog, "getItem", get_item)
+    return calls, reply
+
+
+def test_the_group_picker_opens_on_the_selected_group(qapp, picker):
+    """Nothing added yet, so the ★ group is the best guess — and it is what the
+    button's own label promises."""
+    from src.core.composition_group import CompositionGroup
+
+    calls, _reply = picker
+    window = _window_with_a_material()
+    walk = window.group_manager.add_group(CompositionGroup(name="Walk"))
+    window.current_group_id = walk
+
+    window.add_materials_to_existing_group()
+
+    assert calls[0]["current"] == walk
+
+
+def test_the_group_picker_remembers_where_the_last_batch_went(qapp, picker):
+    from src.core.composition_group import CompositionGroup
+
+    calls, reply = picker
+    window = _window_with_a_material()
+    walk = window.group_manager.add_group(CompositionGroup(name="Walk"))
+    reply["row"] = walk
+    window.add_materials_to_existing_group()
+
+    window.current_group_id = window.group_manager.get_root_group_id()
+    window.add_materials_to_existing_group()
+
+    assert calls[1]["current"] == walk
+    assert len(window.group_manager.get_group(walk).entries) == 2
+
+
+def test_a_remembered_group_that_is_gone_is_not_trusted(qapp, picker):
+    """Group ids are list positions, so a deletion can leave the remembered one
+    pointing past the end."""
+    from src.core.composition_group import CompositionGroup
+
+    calls, reply = picker
+    window = _window_with_a_material()
+    walk = window.group_manager.add_group(CompositionGroup(name="Walk"))
+    reply["row"] = walk
+    window.add_materials_to_existing_group()
+
+    window.group_manager.remove_group(walk)
+    window.current_group_id = window.group_manager.get_root_group_id()
+    reply["row"] = 0
+    window.add_materials_to_existing_group()
+
+    assert calls[1]["current"] == window.group_manager.get_root_group_id()
+
+
+def test_cancelling_the_group_picker_changes_nothing(qapp, monkeypatch):
+    from src.main_window import materials_panel_mixin as mpm
+
+    window = _window_with_a_material()
+    monkeypatch.setattr(mpm.QInputDialog, "getItem", lambda *a, **k: ("", False))
+
+    window.add_materials_to_existing_group()
+
+    assert window.last_add_group_id is None
+    assert window.group_manager.get_group(window.current_group_id).entries == []
+
+
+def test_two_groups_sharing_a_name_go_to_the_row_that_was_picked(qapp, picker):
+    """The dialog answers with text, so the labels carry the id as well."""
+    from src.core.composition_group import CompositionGroup
+
+    calls, reply = picker
+    window = _window_with_a_material()
+    first = window.group_manager.add_group(CompositionGroup(name="Idle"))
+    second = window.group_manager.add_group(CompositionGroup(name="Idle"))
+    reply["row"] = second
+
+    window.add_materials_to_existing_group()
+
+    assert calls[0]["items"][second] == f"[{second}] Idle"
+    assert len(window.group_manager.get_group(second).entries) == 1
+    assert window.group_manager.get_group(first).entries == []

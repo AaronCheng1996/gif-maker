@@ -38,6 +38,10 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
         self.last_export_dir = ""
         self.last_template_dir = ""
 
+        # Group the Add to Group picker last put materials in, so a run of
+        # batches into the same group does not re-pick it every time.
+        self.last_add_group_id: Optional[int] = None
+
         # Template storage: {name: template_dict}
         self.templates = {}
         # Template preview thumbnails: {name: QIcon}, kept in memory only (not persisted)

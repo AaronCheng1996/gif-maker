@@ -341,6 +341,19 @@ class MaterialsPanelMixin:
         else:
             QMessageBox.warning(self, "Warning", "Please select at least one material!")
 
+    def _add_to_group_default_row(self, groups: List) -> int:
+        """Which row the Add to Group picker should open on.
+
+        Materials arrive in batches and a run of them usually goes to the same
+        group, so the last group added to is a better guess than the top of the
+        list — which was always Root, and re-picking it was most of what the
+        dialog cost. A group id is a list position, so one remembered from
+        before a deletion has to be range-checked rather than trusted."""
+        for gid in (self.last_add_group_id, self.current_group_id):
+            if gid is not None and 0 <= gid < len(groups):
+                return gid
+        return 0
+
     def add_materials_to_existing_group(self):
         """Add selected materials as FrameEntry to an existing group (group-led model)."""
         material_indices = self._get_selected_material_indices()
@@ -351,14 +364,20 @@ class MaterialsPanelMixin:
         if not groups:
             QMessageBox.information(self, "Info", "Create a group first (e.g. Add as New Group).")
             return
-        names = [g.name for g in groups]
-        item, ok = QInputDialog.getItem(self, "Add to Group", "Select group to add materials to:", names, 0, False)
+        # Numbered like the composer's own group picker: two groups may share a
+        # name, and the reply comes back as text, so the label has to say which.
+        names = [f"[{i}] {g.name}" for i, g in enumerate(groups)]
+        item, ok = QInputDialog.getItem(
+            self, "Add to Group", "Select group to add materials to:",
+            names, self._add_to_group_default_row(groups), False
+        )
         if not ok:
             return
         idx = names.index(item)
         group = self.group_manager.get_group(idx)
         if not group:
             return
+        self.last_add_group_id = idx
         original = len(group.entries)
         for m in material_indices:
             group.entries.append(FrameEntry(material_index=m, x=0, y=0))
