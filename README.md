@@ -49,9 +49,12 @@ Groups can be nested via `SubGroupEntry`, enabling reusable animation clips insi
 - Visual tree editor (`GroupCompositionWidget`) shows the group hierarchy
 - Add materials to the currently selected group, create a new merged group, or create one group per material
 - Set per-entry duration and x/y offset
+- Set the last frame's duration from the group header — that frame is the pause before the
+  group loops, so changing it no longer means scrolling past every frame in the group
 - Nest groups inside other groups via SubGroupEntry with individual loop count and offset
 - Multi-layer composition via LayerBlockEntry (composite several timelines at each frame)
-- Collapse and expand entries inline
+- Collapse and expand a group inline; a nested reference is a single header row with a jump
+  to the section that owns its frames, so opening a group never opens its other references
 - Clear a group with one button: it empties the group without deleting it, says what is
   about to go, warns when the group is referenced from more than one place (they share the
   same contents), and is undoable

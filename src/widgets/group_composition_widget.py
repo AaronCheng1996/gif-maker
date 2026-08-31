@@ -3,7 +3,10 @@ Group Composition Widget - Group-led composition editor
 
 Collapsible group tree with:
 - Click anywhere on a group header to select it (Preview / Export target)
-- Sub-group headers expose editable loop-count, x, y offset
+- A group's frames are shown in its own top-level section; nested references are
+  single header rows exposing loop-count, x, y offset, and a jump to that section
+- Group headers carry both the default frame duration and the last frame's, which
+  is the pause before the group loops
 - FrameEntry rows have large thumbnails (≈¼ of row width)
 - LayerBlock timelines show slot rows with full x/y editing
 """
@@ -30,6 +33,10 @@ from .theme import AppTheme as _T
 
 # Thumbnail dimensions (frame entries & layer-block slot rows)
 _TW, _TH = 100, 70
+
+# Width of a millisecond spinbox. Measured against the app stylesheet: below
+# this the text is clipped, and a pause of "2000ms" reads back as "2000n".
+_DUR_W = 106
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -104,6 +111,23 @@ def _spinbox(lo: int, hi: int, val: int, suffix: str = "", w: int = 60) -> QSpin
     return s
 
 
+def _set_spin_quietly(spin: Optional[QSpinBox], value: int) -> None:
+    """Move a spinbox to a value without firing its valueChanged handler.
+
+    Two spinboxes can show the same duration (a frame row and the "last" box in
+    its group header), and each has to follow the other without writing the
+    model twice. The target may also belong to an already-rebuilt tree, whose
+    C++ half is gone — touching that raises rather than returning None."""
+    if spin is None:
+        return
+    try:
+        spin.blockSignals(True)
+        spin.setValue(value)
+        spin.blockSignals(False)
+    except RuntimeError:
+        pass
+
+
 def _lbl(text: str, style: str = f"color: {_T.TEXT_DIM}; font-size: 10px;") -> QLabel:
     l = QLabel(text)
     l.setStyleSheet(style)
@@ -136,6 +160,13 @@ class GroupCompositionWidget(QWidget):
         self._collapsed: set = set()
         self._building = False
         self._selected_entry: Optional[tuple] = None  # (parent_group_id, entry_idx)
+        # Live widget registries, rebuilt by refresh(). Editing a duration must
+        # not rebuild the tree — that would delete the spinbox being typed into
+        # — so the other view of the same number is moved directly instead.
+        self._row_dur_spin: dict = {}    # (group_id, entry_idx) -> frame row's ⏱
+        self._tail_spin: dict = {}       # group_id -> its header's "last" ⏱
+        self._top_sections: dict = {}    # group_id -> its top-level section widget
+        self._pending_reveal: Optional[int] = None
         # Rebuilding the tree resets the scroll position, so it is put back once
         # the new widgets have been laid out. The timer is parented to self so
         # it dies with the widget: a bare QTimer.singleShot outlives it and the
@@ -147,6 +178,15 @@ class GroupCompositionWidget(QWidget):
         self._init_ui()
 
     def _restore_scroll(self):
+        gid, self._pending_reveal = self._pending_reveal, None
+        if gid is not None:
+            section = self._top_sections.get(gid)
+            if section is not None:
+                try:
+                    self._scroll.ensureWidgetVisible(section, 0, 40)
+                    return
+                except RuntimeError:
+                    pass          # rebuilt again before this ran
         self._scroll.verticalScrollBar().setValue(self._pending_scroll)
 
     # ── Public setters ────────────────────────────────────────────────────────
@@ -234,6 +274,10 @@ class GroupCompositionWidget(QWidget):
             vbar = self._scroll.verticalScrollBar()
             pos = vbar.value()
 
+            self._row_dur_spin.clear()
+            self._tail_spin.clear()
+            self._top_sections.clear()
+
             layout = self._inner_layout
             while layout.count() > 1:
                 item = layout.takeAt(0)
@@ -249,6 +293,7 @@ class GroupCompositionWidget(QWidget):
                     w = self._build_group_section(
                         root, depth=0, parent_gid=None, entry_idx=None, is_root=True
                     )
+                    self._top_sections[root] = w
                     layout.insertWidget(insert_at, w)
                     insert_at += 1
 
@@ -269,6 +314,7 @@ class GroupCompositionWidget(QWidget):
                         w = self._build_group_section(
                             gid, depth=0, parent_gid=None, entry_idx=None, is_root=False
                         )
+                        self._top_sections[gid] = w
                         layout.insertWidget(insert_at, w)
                         insert_at += 1
 
@@ -314,6 +360,39 @@ class GroupCompositionWidget(QWidget):
                                 count += 1
         return count
 
+    def _tail_frame_index(self, group: CompositionGroup) -> Optional[int]:
+        """Index of the group's last entry when it is a frame, else None.
+
+        That frame is the one held on screen just before the group loops, so it
+        is the one people reach for when they want a pause. A group ending on a
+        sub-group or a layer block has no such frame of its own: the timing
+        lives in whatever it ends on."""
+        if group.entries and is_frame_entry(group.entries[-1]):
+            return len(group.entries) - 1
+        return None
+
+    def _tail_duration(self, group: CompositionGroup) -> int:
+        """Effective duration of the tail frame (the group default when unset)."""
+        i = self._tail_frame_index(group)
+        if i is None:
+            return group.default_duration_ms
+        entry = group.entries[i]
+        return entry.duration_ms if entry.duration_ms is not None else group.default_duration_ms
+
+    def _sync_duration_spins(self, gid: int) -> None:
+        """Re-show the durations of a group whose default just changed.
+
+        Frames with no duration of their own display the group default, so the
+        spinboxes standing for them are stale the moment it moves — and a stale
+        one writes its old number back into the model on the next click."""
+        group = self._gm.get_group(gid) if self._gm else None
+        if group is None:
+            return
+        for i, entry in enumerate(group.entries):
+            if is_frame_entry(entry) and entry.duration_ms is None:
+                _set_spin_quietly(self._row_dur_spin.get((gid, i)), group.default_duration_ms)
+        _set_spin_quietly(self._tail_spin.get(gid), self._tail_duration(group))
+
     def _get_orphan_gids(self) -> List[int]:
         """Return group IDs not referenced anywhere (safe to delete)."""
         if not self._gm:
@@ -345,7 +424,13 @@ class GroupCompositionWidget(QWidget):
                 if is_sub_group_entry(e):
                     sub_entry = e
 
-        is_collapsed = gid in self._collapsed
+        # A nested occurrence is a *reference*, drawn as a single header row
+        # that never opens. Collapse used to be tracked per group id, which
+        # every occurrence shared: opening one deep in the tree also opened the
+        # copy under root. A group's frames are editable in its own top-level
+        # section anyway, so that is the one place allowed to show them.
+        is_reference = parent_gid is not None
+        is_collapsed = True if is_reference else (gid in self._collapsed)
         is_selected  = (gid == self._current_gid)
 
         # Outer frame
@@ -371,14 +456,20 @@ class GroupCompositionWidget(QWidget):
         hl.setContentsMargins(5, 4, 5, 4)
         hl.setSpacing(4)
 
-        # Toggle collapse
-        tog = QPushButton("▶" if is_collapsed else "▼")
-        tog.setFixedSize(20, 20)
-        tog.setStyleSheet(
-            f"QPushButton {{ background: none; border: none; "
-            f"color: {_T.TEXT_DIM}; font-size: 11px; }}"
-        )
-        tog.clicked.connect(lambda _=None, g=gid: self._cmd_toggle(g))
+        # Collapse toggle — or, on a reference, a jump to the section that owns
+        # the frames, since a reference has nothing of its own to open.
+        if is_reference:
+            tog = _small_btn("↗", _T.CLONE_BTN, width=22)
+            tog.setToolTip("Go to this group's own section, where its frames are edited")
+            tog.clicked.connect(lambda _=None, g=gid: self._cmd_reveal_group(g))
+        else:
+            tog = QPushButton("▶" if is_collapsed else "▼")
+            tog.setFixedSize(20, 20)
+            tog.setStyleSheet(
+                f"QPushButton {{ background: none; border: none; "
+                f"color: {_T.TEXT_DIM}; font-size: 11px; }}"
+            )
+            tog.clicked.connect(lambda _=None, g=gid: self._cmd_toggle(g))
         hl.addWidget(tog)
 
         # Selected indicator
@@ -449,16 +540,49 @@ class GroupCompositionWidget(QWidget):
             dur_ov.valueChanged.connect(_set_dur_ov)
             hl.addWidget(dur_ov)
 
-        # Default duration (only shown for top-level / non-sub-entry view)
-        if sub_entry is None:
+        # Timing of the group itself — shown on the section that owns the
+        # frames, not on a reference to it (which has loop/x/y/⏱ of its own).
+        if not is_reference:
             hl.addWidget(_lbl("⏱"))
-            dur_sp = _spinbox(10, 99999, group.default_duration_ms, suffix="ms", w=85)
+            dur_sp = _spinbox(10, 99999, group.default_duration_ms, suffix="ms", w=_DUR_W)
             dur_sp.setToolTip("Default frame duration for this group")
-            def _set_gdur(v, g=group):
+            def _set_gdur(v, g=group, gg=gid):
                 g.default_duration_ms = v
+                self._sync_duration_spins(gg)
                 self.entries_changed.emit()
             dur_sp.valueChanged.connect(_set_gdur)
             hl.addWidget(dur_sp)
+
+            # The last frame's duration is the pause before the group loops, so
+            # it gets adjusted often — and reaching it meant scrolling past
+            # every frame in the group. This writes the same value the bottom
+            # row's ⏱ does, and the two are kept in step.
+            tail_idx = self._tail_frame_index(group)
+            hl.addWidget(_lbl("last"))
+            tail_sp = _spinbox(10, 99999, self._tail_duration(group), suffix="ms", w=_DUR_W)
+            tail_sp.setEnabled(tail_idx is not None)
+            if tail_idx is not None:
+                tail_sp.setToolTip(
+                    "How long the last frame is held — the pause before this "
+                    "group loops.\nSame value as the bottom frame row's ⏱."
+                )
+            elif not group.entries:
+                tail_sp.setToolTip("This group is empty — add a frame first.")
+            else:
+                tail_sp.setToolTip(
+                    "This group ends on a sub-group or a layer block, which "
+                    "carries its own\ntiming — set the pause there instead."
+                )
+            def _set_tail(v, g=group, gg=gid):
+                i = self._tail_frame_index(g)
+                if i is None:
+                    return
+                g.entries[i].duration_ms = v
+                _set_spin_quietly(self._row_dur_spin.get((gg, i)), v)
+                self.entries_changed.emit()
+            tail_sp.valueChanged.connect(_set_tail)
+            hl.addWidget(tail_sp)
+            self._tail_spin[gid] = tail_sp
 
         # Action buttons
         for label, tip, fn, color in [
@@ -625,12 +749,16 @@ class GroupCompositionWidget(QWidget):
         ctrl.setSpacing(4)
 
         ctrl.addWidget(_lbl("⏱"))
-        dur = _spinbox(10, 99999, entry.duration_ms if entry.duration_ms is not None else group_default_dur, suffix="ms", w=85)
-        def _set_dur(v, e=entry):
+        dur = _spinbox(10, 99999, entry.duration_ms if entry.duration_ms is not None else group_default_dur, suffix="ms", w=_DUR_W)
+        def _set_dur(v, e=entry, pg=parent_gid, ei=entry_idx):
             e.duration_ms = v
+            group = self._gm.get_group(pg) if self._gm else None
+            if group is not None and self._tail_frame_index(group) == ei:
+                _set_spin_quietly(self._tail_spin.get(pg), v)
             self.entries_changed.emit()
         dur.valueChanged.connect(_set_dur)
         ctrl.addWidget(dur)
+        self._row_dur_spin[(parent_gid, entry_idx)] = dur
 
         ctrl.addWidget(_lbl("x"))
         xs = _spinbox(-9999, 9999, entry.x)
@@ -961,6 +1089,14 @@ class GroupCompositionWidget(QWidget):
             self._collapsed.discard(key)
         else:
             self._collapsed.add(key)
+        self.refresh()
+
+    def _cmd_reveal_group(self, gid: int):
+        """Select a referenced group and scroll to the section that owns it."""
+        self._current_gid = gid
+        self._collapsed.discard(gid)
+        self.current_group_changed.emit(gid)
+        self._pending_reveal = gid
         self.refresh()
 
     def _cmd_select(self, gid: int):
