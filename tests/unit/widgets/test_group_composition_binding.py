@@ -52,9 +52,9 @@ def bound_rows(widget, monkeypatch):
     drawn = []
     original = GroupCompositionWidget._build_bound_row
 
-    def spy(self, material_index, position, group):
+    def spy(self, material_index, position, group, repeats=1):
         drawn.append(material_index)
-        return original(self, material_index, position, group)
+        return original(self, material_index, position, group, repeats)
 
     monkeypatch.setattr(GroupCompositionWidget, "_build_bound_row", spy)
     return drawn
@@ -194,6 +194,96 @@ def test_the_add_buttons_are_off_while_the_group_is_bound(widget):
     _bind(widget, "*_org*")
     assert add_buttons(), "the buttons are still drawn"
     assert not any(b.isEnabled() for b in add_buttons())
+
+
+# ── Merging repeats, shown as the timeline it exports ────────────────────────
+
+@pytest.fixture()
+def repeats(widget):
+    """Rebuild the library so org01..org03 are one held pose, org04 another."""
+    mm = MaterialManager()
+    for name, shade in [("dh01_org01", 5), ("dh01_org02", 5),
+                        ("dh01_org03", 5), ("dh01_org04", 9)]:
+        mm.add_material(Image.new("RGBA", (8, 8), (shade, shade, shade, 255)), name=name)
+    widget.set_material_manager(mm)
+    widget.mm = mm
+    return widget
+
+
+def test_merging_is_off_by_default(widget):
+    assert widget.gm.get_group(widget.root).collapse_repeats is False
+    assert not widget._merge_chk[widget.root].isChecked()
+
+
+def test_an_unmerged_binding_shows_every_match(repeats):
+    _bind(repeats, "*_org*")
+    assert repeats._bound_runs(repeats.gm.get_group(repeats.root)) == \
+        [(0, 1), (1, 1), (2, 1), (3, 1)]
+
+
+def test_merging_folds_neighbouring_repeats_into_one_row(repeats):
+    repeats.gm.get_group(repeats.root).collapse_repeats = True
+    _bind(repeats, "*_org*")
+
+    assert repeats._bound_runs(repeats.gm.get_group(repeats.root)) == [(0, 3), (3, 1)]
+
+
+def test_merging_draws_one_row_per_run(repeats, bound_rows):
+    repeats.gm.get_group(repeats.root).collapse_repeats = True
+    _bind(repeats, "*_org*")
+    assert bound_rows == [0, 3], "the run is one row, keyed on its first material"
+
+
+def test_ticking_the_box_merges(repeats, bound_rows):
+    _bind(repeats, "*_org*")
+    bound_rows.clear()
+
+    repeats._merge_chk[repeats.root].setChecked(True)
+
+    assert repeats.gm.get_group(repeats.root).collapse_repeats is True
+    assert bound_rows == [0, 3], "and the tree redraws as the merged timeline"
+
+
+def test_unticking_the_box_shows_the_files_again(repeats, bound_rows):
+    repeats.gm.get_group(repeats.root).collapse_repeats = True
+    _bind(repeats, "*_org*")
+    bound_rows.clear()
+
+    repeats._merge_chk[repeats.root].setChecked(False)
+    assert bound_rows == [0, 1, 2, 3]
+
+
+def test_merging_makes_the_change_undoable(repeats):
+    fired = []
+    repeats.entries_changed.connect(lambda: fired.append(1))
+    repeats._merge_chk[repeats.root].setChecked(True)
+    assert fired
+
+
+def test_a_merged_tail_run_is_held_once_per_repeat(repeats):
+    """Pinning has to seed from what the export does, not from the group
+    default the row would have shown before merging."""
+    root = repeats.gm.get_group(repeats.root)
+    root.collapse_repeats = True
+    root.default_duration_ms = 100
+    repeats.gm.get_group(repeats.root).source_pattern = "*_org0[1-3]*"
+    repeats.refresh()
+
+    assert repeats._bound_runs(root) == [(0, 3)]
+    assert repeats._tail_duration(root) == 300
+
+    repeats._tail_chk[repeats.root].setChecked(True)
+    assert root.tail_duration_ms == 300
+
+
+def test_merging_an_unbound_group_leaves_its_rows_alone(widget):
+    """The box is not only for bindings, but the tree only redraws entries the
+    ordinary way — the merge happens at export."""
+    widget._merge_chk[widget.root].setChecked(True)
+
+    assert widget.gm.get_group(widget.root).collapse_repeats is True
+    assert widget._bound_runs(widget.gm.get_group(widget.root)) is None
+    assert widget._row_dur_spin[(widget.root, 0)].isEnabled()
 
 
 # ── The pinned pause works on a binding too ──────────────────────────────────

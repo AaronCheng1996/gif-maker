@@ -19,6 +19,8 @@ from .composition_group import (
     is_layer_block_entry,
     is_frame_slot,
     is_group_slot,
+    collapse_repeat_runs,
+    image_digest,
     resolve_source_indices,
 )
 
@@ -821,6 +823,15 @@ class GifBuilder:
                     expanded_frames.append(layers_i)
                     expanded_durations.append(dur)
 
+        # Runs of frames that draw the same thing become one held frame, so a
+        # pose an exporter spelled out as ten copies reads as one — see
+        # CompositionGroup.collapse_repeats. Done before the tail pause so the
+        # pause is the last word on the frame it lands on.
+        if group.collapse_repeats:
+            expanded_frames, expanded_durations = self._collapse_repeat_frames(
+                expanded_frames, expanded_durations, material_manager
+            )
+
         # A pinned tail pause (CompositionGroup.tail_duration_ms) belongs to
         # whichever frame ends the group, so it is applied here instead of being
         # written into an entry that the next appended frame would displace.
@@ -833,6 +844,43 @@ class GifBuilder:
             expanded_durations[-1] = group.tail_duration_ms
 
         return expanded_frames, expanded_durations
+
+    @staticmethod
+    def _collapse_repeat_frames(
+        frames: List[List[Tuple[Optional[int], int, int]]],
+        durations: List[int],
+        material_manager: MaterialManager,
+    ) -> Tuple[List[List[Tuple[Optional[int], int, int]]], List[int]]:
+        """Merge neighbouring frames that draw the same thing, summing duration.
+
+        Sameness is decided on pixels rather than on material index: an exporter
+        writes a held pose as separate files, so the repeats are different
+        materials carrying identical images. Each material is hashed once per
+        call, which is what keeps a 48-frame group from re-reading its images
+        for every comparison."""
+        if not frames:
+            return frames, durations
+
+        digests: dict = {}
+
+        def identity(layers):
+            out = []
+            for midx, x, y in layers:
+                if midx is None:
+                    out.append((None, x, y))
+                    continue
+                key = digests.get(midx)
+                if key is None:
+                    mat = material_manager.get_material(midx)
+                    key = image_digest(mat[0]) if mat else f"missing:{midx}"
+                    digests[midx] = key
+                out.append((key, x, y))
+            return tuple(out)
+
+        runs = collapse_repeat_runs([identity(f) for f in frames])
+        out_frames = [frames[start] for start, _ in runs]
+        out_durations = [sum(durations[start:start + length]) for start, length in runs]
+        return out_frames, out_durations
 
     def get_preview_frames_for_group(
         self,

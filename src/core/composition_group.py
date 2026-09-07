@@ -8,9 +8,10 @@ Groups can be nested; preview and export target the currently selected group.
 """
 
 import fnmatch
+import hashlib
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 
 # ----- Slots (used inside a timeline of a LayerBlock) -----
@@ -115,16 +116,48 @@ class CompositionGroup:
     group holds as many frames as the current material set actually has. While
     it is set, entries are not exported (they are kept, so unbinding restores
     them). See resolve_source_indices for why binding by name matters.
+
+    collapse_repeats merges runs of consecutive frames that draw the same thing
+    into one frame held for the sum of their durations. Sprite exporters spell a
+    held pose out as repeated images — ten copies of one frame, or two files
+    that happen to be identical — and the run and the single long frame play the
+    same, so the timeline reads as the poses it has rather than as the padding.
+    Matching is on pixels, not on which material an entry points at, because the
+    repeats are usually separate files.
     """
     name: str = ""
     entries: List[Entry] = field(default_factory=list)
     default_duration_ms: int = 100
     tail_duration_ms: Optional[int] = None
     source_pattern: Optional[str] = None
+    collapse_repeats: bool = False
 
     def __post_init__(self):
         if not self.name:
             self.name = "Group"
+
+
+# ----- Repeat runs -----
+
+def image_digest(image) -> str:
+    """Content fingerprint of a material, for spotting repeated frames.
+
+    Exporters write a held pose as separate files, so repeats are different
+    materials carrying the same pixels — comparing indices would miss every
+    one of them."""
+    return hashlib.md5(image.tobytes()).hexdigest()
+
+
+def collapse_repeat_runs(keys: List) -> List[Tuple[int, int]]:
+    """Runs of equal neighbouring keys, as (index of the first, run length)."""
+    runs: List[Tuple[int, int]] = []
+    for i, key in enumerate(keys):
+        if runs and key == keys[runs[-1][0]]:
+            start, length = runs[-1]
+            runs[-1] = (start, length + 1)
+        else:
+            runs.append((i, 1))
+    return runs
 
 
 # ----- Material selectors -----
@@ -220,6 +253,7 @@ def group_to_dict(group_id: int, group: "CompositionGroup") -> dict:
         "default_duration_ms": group.default_duration_ms,
         "tail_duration_ms": group.tail_duration_ms,
         "source_pattern": group.source_pattern,
+        "collapse_repeats": group.collapse_repeats,
         "entries": [entry_to_dict(e) for e in group.entries],
     }
 
@@ -230,6 +264,7 @@ def group_from_dict(d: dict) -> "CompositionGroup":
         default_duration_ms=d.get("default_duration_ms", 100),
         tail_duration_ms=d.get("tail_duration_ms"),
         source_pattern=d.get("source_pattern"),
+        collapse_repeats=bool(d.get("collapse_repeats", False)),
         entries=[entry_from_dict(e) for e in d.get("entries", [])],
     )
 

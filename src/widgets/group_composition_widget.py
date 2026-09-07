@@ -9,7 +9,8 @@ Collapsible group tree with:
   is the pause before the group loops; pinning that pause keeps it on whichever
   frame ends the group as materials are added
 - A group can be bound to a material glob instead of to entries, so it holds as
-  many frames as the current material set matches
+  many frames as the current material set matches, and can merge neighbouring
+  identical frames into one held frame
 - FrameEntry rows have large thumbnails (≈¼ of row width)
 - LayerBlock timelines show slot rows with full x/y editing
 """
@@ -23,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QCursor
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Tuple
 from PIL import Image
 
 from ..core.composition_group import (
@@ -31,7 +32,7 @@ from ..core.composition_group import (
     FrameSlot, GroupSlot,
     is_frame_entry, is_sub_group_entry, is_layer_block_entry,
     is_frame_slot, is_group_slot,
-    resolve_source_indices,
+    collapse_repeat_runs, image_digest, resolve_source_indices,
 )
 from .theme import AppTheme as _T
 
@@ -171,6 +172,7 @@ class GroupCompositionWidget(QWidget):
         self._tail_spin: dict = {}       # group_id -> its header's "last" ⏱
         self._tail_chk: dict = {}        # group_id -> its header's "pin last" box
         self._bind_edit: dict = {}       # group_id -> its header's material-glob field
+        self._merge_chk: dict = {}       # group_id -> its header's "merge repeats" box
         self._top_sections: dict = {}    # group_id -> its top-level section widget
         self._pending_reveal: Optional[int] = None
         # Rebuilding the tree resets the scroll position, so it is put back once
@@ -284,6 +286,7 @@ class GroupCompositionWidget(QWidget):
             self._tail_spin.clear()
             self._tail_chk.clear()
             self._bind_edit.clear()
+            self._merge_chk.clear()
             self._top_sections.clear()
 
             layout = self._inner_layout
@@ -392,12 +395,47 @@ class GroupCompositionWidget(QWidget):
             return None
         return resolve_source_indices(group.source_pattern, self._material_names())
 
+    def _bound_runs(self, group: CompositionGroup) -> Optional[List[Tuple[int, int]]]:
+        """A bound group as the frames it exports: (material index, repeat count).
+
+        With merging off every match is its own frame. With it on, neighbours
+        that draw the same thing become one row held that many times longer —
+        the tree has to show the timeline that will be exported, not the file
+        list it came from."""
+        indices = self._bound_indices(group)
+        if indices is None:
+            return None
+        if not group.collapse_repeats:
+            return [(i, 1) for i in indices]
+
+        digests = []
+        for idx in indices:
+            mat = self._mm.get_material(idx) if self._mm else None
+            digests.append(image_digest(mat[0]) if mat else f"missing:{idx}")
+        return [(indices[start], length)
+                for start, length in collapse_repeat_runs(digests)]
+
     def _has_tail_frame(self, group: CompositionGroup) -> bool:
         """Whether the group ends on a frame of its own, bound or not."""
         bound = self._bound_indices(group)
         if bound is not None:
             return bool(bound)
         return self._tail_frame_index(group) is not None
+
+    def _unpinned_tail_ms(self, group: CompositionGroup) -> int:
+        """What the group's last frame runs for with no pause pinned.
+
+        A merged run is held once per repeat, so the tail of a merged group is
+        longer than the group default — and the pin has to seed from what is on
+        screen, not from a number the export never uses."""
+        runs = self._bound_runs(group)
+        if runs:
+            return group.default_duration_ms * runs[-1][1]
+        i = self._tail_frame_index(group)
+        if i is None:
+            return group.default_duration_ms
+        entry = group.entries[i]
+        return entry.duration_ms if entry.duration_ms is not None else group.default_duration_ms
 
     def _tail_duration(self, group: CompositionGroup) -> int:
         """Effective duration of the tail frame (the group default when unset).
@@ -408,11 +446,7 @@ class GroupCompositionWidget(QWidget):
             return group.default_duration_ms
         if group.tail_duration_ms is not None:
             return group.tail_duration_ms
-        i = self._tail_frame_index(group)
-        if i is None:
-            return group.default_duration_ms   # bound: every frame runs at the default
-        entry = group.entries[i]
-        return entry.duration_ms if entry.duration_ms is not None else group.default_duration_ms
+        return self._unpinned_tail_ms(group)
 
     def _sync_duration_spins(self, gid: int) -> None:
         """Re-show the durations of a group whose default just changed.
@@ -502,6 +536,7 @@ class GroupCompositionWidget(QWidget):
         is_collapsed = True if is_reference else (gid in self._collapsed)
         is_selected  = (gid == self._current_gid)
         bound_indices = self._bound_indices(group)
+        bound_runs = self._bound_runs(group)
 
         # Outer frame
         outer = QFrame()
@@ -642,11 +677,29 @@ class GroupCompositionWidget(QWidget):
 
             if bound_indices is not None:
                 n = len(bound_indices)
+                shown = len(bound_runs or [])
                 hl.addWidget(_lbl(
-                    f"→{n}",
+                    f"→{n}" if shown == n else f"→{n}/{shown}",
                     f"color: {_T.SUCCESS if n else _T.ERROR}; font-size: 10px; "
                     "font-weight: bold;"
                 ))
+
+            merge_chk = QCheckBox("merge")
+            merge_chk.setChecked(group.collapse_repeats)
+            merge_chk.setToolTip(
+                "Merge neighbouring frames that draw the same thing into one, "
+                "held for\ntheir combined time.\n"
+                "Exporters spell a held pose out as repeated images — ten copies "
+                "of one\nframe, or two files that happen to be identical — and "
+                "the run and the\nsingle long frame play the same. Matching is "
+                "on pixels, so it does not\ncare how the files were named."
+            )
+            def _set_merge(checked, g=group):
+                g.collapse_repeats = bool(checked)
+                self._notify()
+            merge_chk.toggled.connect(_set_merge)
+            hl.addWidget(merge_chk)
+            self._merge_chk[gid] = merge_chk
 
             hl.addWidget(_lbl("⏱"))
             dur_sp = _spinbox(10, 99999, group.default_duration_ms, suffix="ms", w=_DUR_W)
@@ -806,8 +859,10 @@ class GroupCompositionWidget(QWidget):
             cl.setSpacing(3)
 
             if bound_indices is not None:
-                for pos, midx in enumerate(bound_indices):
-                    cl.addWidget(self._build_bound_row(midx, pos, group))
+                for pos, (midx, repeats) in enumerate(bound_runs or []):
+                    cl.addWidget(
+                        self._build_bound_row(midx, pos, group, repeats)
+                    )
                 if not bound_indices:
                     cl.addWidget(_lbl(
                         f"Nothing in the material library matches "
@@ -860,7 +915,7 @@ class GroupCompositionWidget(QWidget):
     # ── Bound-group row ───────────────────────────────────────────────────────
 
     def _build_bound_row(self, material_index: int, position: int,
-                         group: CompositionGroup) -> QWidget:
+                         group: CompositionGroup, repeats: int = 1) -> QWidget:
         """One frame a binding resolved to: thumbnail and name, nothing to edit.
 
         The binding decides which materials and in what order, so this row
@@ -894,8 +949,12 @@ class GroupCompositionWidget(QWidget):
         rl.addWidget(_lbl(name, f"color: {_T.MAT_NAME}; font-size: 11px;"))
         rl.addStretch()
 
-        is_last = position == len(self._bound_indices(group) or []) - 1
-        ms = self._tail_duration(group) if is_last else group.default_duration_ms
+        if repeats > 1:
+            rl.addWidget(_lbl(f"×{repeats}", f"color: {_T.TEXT_DIM}; font-size: 10px;"))
+
+        is_last = position == len(self._bound_runs(group) or []) - 1
+        ms = (self._tail_duration(group) if is_last
+              else group.default_duration_ms * repeats)
         rl.addWidget(_lbl(f"{ms}ms", f"color: {_T.TEXT_DIM}; font-size: 10px;"))
         return row
 
