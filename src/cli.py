@@ -7,6 +7,8 @@ composition template, without launching PyQt6 at all.
 
 Usage:
     python -m src.cli --images img1.png img2.png --template template.json --output-dir out/
+    python -m src.cli --frames Images/ --unit-pattern "(?P<unit>dh\\d+)_" \\
+                      --template template.json --output-dir out/
 """
 import argparse
 import sys
@@ -14,6 +16,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .core.batch_processor import BatchProcessor
+from .core.frame_set import FrameSetError, scan_frame_folder
 from .core.template_manager import TemplateManager
 
 
@@ -40,8 +43,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "without opening the GUI."
         ),
     )
-    parser.add_argument("--images", nargs="+", required=True, metavar="PATH",
-                         help="One or more source image files to process")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--images", nargs="+", metavar="PATH",
+                        help="One or more sprite sheets to split and process")
+    source.add_argument("--frames", metavar="DIR",
+                        help="A folder of exported frames; one GIF per unit "
+                             "(see --unit-pattern)")
     parser.add_argument("--template", required=True, metavar="PATH",
                          help="Path to a template JSON file (exported from the Template Manager)")
     parser.add_argument("--output-dir", metavar="DIR",
@@ -57,7 +64,68 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-height", type=int, default=None, help="Override output GIF height")
     parser.add_argument("--positions", nargs="+", metavar="ROW,COL", default=None,
                          help="Only use these tile positions, e.g. --positions 0,0 0,1")
+    parser.add_argument("--unit-pattern", metavar="REGEX", default=None,
+                         help=(
+                             "How --frames file names divide into outputs: a regex "
+                             "anchored at the start of the name, read for a group "
+                             r"called 'unit', e.g. (?P<unit>s?dh\d+(?:_sleep)?)_ . "
+                             "Files it does not match are skipped. Omit it to treat "
+                             "the whole folder as one output."
+                         ))
+    parser.add_argument("--recursive", action="store_true",
+                         help="Search --frames sub-folders too")
+    parser.add_argument("--dry-run", action="store_true",
+                         help="With --frames, list the units that would be built "
+                              "and stop")
     return parser
+
+
+def _run_frame_folder(args, template) -> int:
+    folder = Path(args.frames)
+    if not folder.is_dir():
+        print(f"Error: not a folder: {folder}", file=sys.stderr)
+        return 1
+
+    try:
+        scan = scan_frame_folder(str(folder), args.unit_pattern,
+                                 recursive=args.recursive)
+    except FrameSetError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"{folder}: {scan.summary()}")
+    if not scan.units:
+        print("Error: nothing to build — check --unit-pattern", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        for unit in scan.units:
+            print(f"  {unit.unit}  ({len(unit)} frames)  "
+                  f"{unit.paths[0].name} … {unit.paths[-1].name}")
+        return 0
+
+    if args.output_dir:
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    processor = BatchProcessor()
+    processor.set_progress_callback(
+        lambda current, total, message: print(f"[{current}/{total}] {message}"))
+
+    successful, failed = processor.process_frame_folder(
+        folder=str(folder),
+        pattern=args.unit_pattern,
+        template=template,
+        color_count=args.color_count,
+        output_directory=args.output_dir,
+        output_width=args.output_width,
+        output_height=args.output_height,
+        recursive=args.recursive,
+    )
+
+    print(f"\nDone: {len(successful)} succeeded, {len(failed)} failed.")
+    for unit, err in failed:
+        print(f"  FAILED {unit}: {err}", file=sys.stderr)
+    return 0 if not failed else 2
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -74,6 +142,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as e:
         print(f"Error: invalid template '{template_path}': {e}", file=sys.stderr)
         return 1
+
+    if args.frames:
+        return _run_frame_folder(args, template)
 
     missing = [p for p in args.images if not Path(p).exists()]
     if missing:

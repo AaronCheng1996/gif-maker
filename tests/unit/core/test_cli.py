@@ -1,6 +1,6 @@
 """Unit tests for src/cli.py — the headless batch CLI (no PyQt6 required)."""
 import pytest
-from PIL import Image
+from PIL import Image, ImageSequence
 
 from src.cli import main, _parse_positions
 from src.core.group_manager import GroupManager
@@ -144,3 +144,125 @@ def test_main_with_invalid_positions_returns_1(tmp_path, capsys):
     ])
     assert rc == 1
     assert "Invalid position" in capsys.readouterr().err
+
+
+# ── The frame-folder source ──────────────────────────────────────────────────
+
+def _bound_template_file(tmp_path, **group_kw):
+    """A template bound to *_org*, so it needs no fixed material indices."""
+    gm = GroupManager()
+    gid = gm.add_group(CompositionGroup(
+        name="org", default_duration_ms=100, source_pattern="*_org*", **group_kw))
+    gm.set_root_group_id(gid)
+    tpl = TemplateManager.export_composition_template(gm)
+    tpl["settings"]["output_width"] = 8
+    tpl["settings"]["output_height"] = 8
+    path = tmp_path / "bound.json"
+    TemplateManager.save_template_to_file(tpl, str(path))
+    return str(path)
+
+
+def _frame_folder(tmp_path, units):
+    """units: {"dh01": [shade, ...]} written as dh01_org01.png ..."""
+    folder = tmp_path / "frames"
+    folder.mkdir(parents=True, exist_ok=True)
+    for unit, shades in units.items():
+        for i, shade in enumerate(shades, 1):
+            Image.new("RGB", (8, 8), (shade, shade, shade)).save(
+                folder / f"{unit}_org{i:02d}.png")
+    return str(folder)
+
+
+def test_a_frame_folder_builds_one_gif_per_unit(tmp_path):
+    template = _bound_template_file(tmp_path)
+    frames = _frame_folder(tmp_path, {"dh01": [10, 20], "dh02": [30, 40, 50]})
+    out_dir = tmp_path / "out"
+
+    rc = main(["--frames", frames, "--unit-pattern", r"(?P<unit>dh\d+)_",
+               "--template", template, "--output-dir", str(out_dir)])
+
+    assert rc == 0
+    assert sorted(p.name for p in out_dir.glob("*.gif")) == ["dh01.gif", "dh02.gif"]
+
+
+def test_a_dry_run_lists_the_units_without_building(tmp_path, capsys):
+    template = _bound_template_file(tmp_path)
+    frames = _frame_folder(tmp_path, {"dh01": [10], "dh02": [20]})
+    out_dir = tmp_path / "out"
+
+    rc = main(["--frames", frames, "--unit-pattern", r"(?P<unit>dh\d+)_",
+               "--template", template, "--output-dir", str(out_dir), "--dry-run"])
+
+    assert rc == 0
+    printed = capsys.readouterr().out
+    assert "dh01" in printed and "dh02" in printed
+    assert not out_dir.exists(), "a dry run writes nothing"
+
+
+def test_a_pattern_that_matches_nothing_is_an_error(tmp_path, capsys):
+    template = _bound_template_file(tmp_path)
+    frames = _frame_folder(tmp_path, {"dh01": [10]})
+
+    rc = main(["--frames", frames, "--unit-pattern", r"(?P<unit>zz\d+)_",
+               "--template", template])
+
+    assert rc == 1
+    assert "check --unit-pattern" in capsys.readouterr().err
+
+
+def test_a_broken_pattern_is_reported_not_raised(tmp_path, capsys):
+    template = _bound_template_file(tmp_path)
+    frames = _frame_folder(tmp_path, {"dh01": [10]})
+
+    rc = main(["--frames", frames, "--unit-pattern", "(?P<unit>",
+               "--template", template])
+
+    assert rc == 1
+    assert "Invalid naming rule" in capsys.readouterr().err
+
+
+def test_a_missing_frame_folder_is_reported(tmp_path, capsys):
+    template = _bound_template_file(tmp_path)
+
+    rc = main(["--frames", str(tmp_path / "nope"), "--template", template])
+
+    assert rc == 1
+    assert "not a folder" in capsys.readouterr().err.lower()
+
+
+def test_no_pattern_treats_the_folder_as_one_output(tmp_path):
+    template = _bound_template_file(tmp_path)
+    frames = _frame_folder(tmp_path, {"dh01": [10, 20]})
+    out_dir = tmp_path / "out"
+
+    rc = main(["--frames", frames, "--template", template,
+               "--output-dir", str(out_dir)])
+
+    assert rc == 0
+    assert [p.name for p in out_dir.glob("*.gif")] == ["frames.gif"]
+
+
+def test_repeats_are_merged_when_the_template_asks(tmp_path):
+    template = _bound_template_file(tmp_path, collapse_repeats=True)
+    frames = _frame_folder(tmp_path, {"dh01": [10, 10, 10, 20]})
+    out_dir = tmp_path / "out"
+
+    assert main(["--frames", frames, "--unit-pattern", r"(?P<unit>dh\d+)_",
+                 "--template", template, "--output-dir", str(out_dir)]) == 0
+
+    with Image.open(out_dir / "dh01.gif") as im:
+        durations = [f.info.get("duration") for f in ImageSequence.Iterator(im)]
+    assert durations == [300, 100]
+
+
+def test_a_source_has_to_be_given(tmp_path):
+    template = _bound_template_file(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["--template", template])
+
+
+def test_the_two_sources_are_mutually_exclusive(tmp_path):
+    template = _bound_template_file(tmp_path)
+    frames = _frame_folder(tmp_path, {"dh01": [10]})
+    with pytest.raises(SystemExit):
+        main(["--frames", frames, "--images", "a.png", "--template", template])

@@ -3,9 +3,10 @@ Unit tests for BatchProcessor (composition_group format v4.0)
 """
 import pytest
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageSequence
 
 from src.core.batch_processor import BatchProcessor, BatchProcessingError
+from src.core.frame_set import FrameSet, scan_frame_folder
 from src.core.template_manager import TemplateManager
 from src.core.group_manager import GroupManager
 from src.core.composition_group import CompositionGroup, FrameEntry, SubGroupEntry
@@ -245,3 +246,141 @@ def test_process_batch_with_output_dir(tmp_path):
     assert len(successful) == 2
     for p in successful:
         assert Path(p).exists()
+
+
+# ── Frame folders: materials come from files, not from tiles ─────────────────
+
+def _bound_template(**group_kw) -> dict:
+    """A template whose one group is bound to *_org* — no fixed indices."""
+    gm = GroupManager()
+    gid = gm.add_group(CompositionGroup(
+        name="org", default_duration_ms=100, source_pattern="*_org*", **group_kw))
+    gm.set_root_group_id(gid)
+    return TemplateManager.export_composition_template(gm)
+
+
+def _frames(tmp_path, unit, shades, clip="org"):
+    folder = tmp_path / "frames"
+    folder.mkdir(parents=True, exist_ok=True)
+    for i, shade in enumerate(shades, 1):
+        Image.new("RGB", (8, 8), (shade, shade, shade)).save(
+            folder / f"{unit}_{clip}{i:02d}.png")
+    return folder
+
+
+def _durations(path):
+    with Image.open(path) as im:
+        return [f.info.get("duration") for f in ImageSequence.Iterator(im)]
+
+
+def test_a_frame_set_builds_one_gif_named_after_its_unit(tmp_path):
+    folder = _frames(tmp_path, "dh01", [10, 20, 30])
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], _bound_template(),
+        output_directory=str(tmp_path / "out"),
+        output_width=8, output_height=8)
+
+    assert Path(out).name == "dh01.gif"
+    assert _durations(out) == [100, 100, 100]
+
+
+def test_materials_keep_their_file_stems_so_bindings_can_match(tmp_path):
+    """A binding matches on names; tile-style names would match nothing."""
+    folder = _frames(tmp_path, "dh01", [10, 20])
+    Image.new("RGB", (8, 8), (99, 99, 99)).save(folder / "dh01_idle01.png")
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], _bound_template(),
+        output_directory=str(tmp_path / "out"), output_width=8, output_height=8)
+
+    assert len(_durations(out)) == 2, "the idle frame is not part of *_org*"
+
+
+def test_a_unit_with_more_frames_makes_a_longer_gif(tmp_path):
+    """The point of the folder source: length comes from the files."""
+    template = _bound_template()
+    bp = BatchProcessor()
+
+    short = scan_frame_folder(str(_frames(tmp_path / "a", "dh01", [10, 20])),
+                              r"(?P<unit>dh\d+)_").units[0]
+    long = scan_frame_folder(str(_frames(tmp_path / "b", "dh02", [10, 20, 30, 40])),
+                             r"(?P<unit>dh\d+)_").units[0]
+
+    a = bp.process_frame_set(short, template, output_directory=str(tmp_path / "out"),
+                             output_width=8, output_height=8)
+    b = bp.process_frame_set(long, template, output_directory=str(tmp_path / "out"),
+                             output_width=8, output_height=8)
+
+    assert len(_durations(a)) == 2 and len(_durations(b)) == 4
+
+
+def test_repeated_frames_become_one_held_frame(tmp_path):
+    folder = _frames(tmp_path, "dh01", [10, 10, 10, 20])
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], _bound_template(collapse_repeats=True),
+        output_directory=str(tmp_path / "out"), output_width=8, output_height=8)
+
+    assert _durations(out) == [300, 100]
+
+
+def test_a_unit_with_no_frames_is_refused(tmp_path):
+    with pytest.raises(BatchProcessingError, match="no frames"):
+        BatchProcessor().process_frame_set(FrameSet(unit="dh01"), _bound_template())
+
+
+def test_the_output_lands_beside_the_frames_when_no_directory_is_given(tmp_path):
+    folder = _frames(tmp_path, "dh01", [10, 20])
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], _bound_template(), output_width=8, output_height=8)
+    assert Path(out).parent == folder
+
+
+# ── A whole folder in one run ────────────────────────────────────────────────
+
+def test_a_folder_builds_one_gif_per_unit(tmp_path):
+    _frames(tmp_path, "dh01", [10, 20])
+    _frames(tmp_path, "dh02", [30, 40, 50])
+    out_dir = tmp_path / "out"
+
+    ok, failed = BatchProcessor().process_frame_folder(
+        str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _bound_template(),
+        output_directory=str(out_dir), output_width=8, output_height=8)
+
+    assert failed == []
+    assert sorted(Path(p).name for p in ok) == ["dh01.gif", "dh02.gif"]
+    assert len(_durations(out_dir / "dh01.gif")) == 2
+    assert len(_durations(out_dir / "dh02.gif")) == 3
+
+
+def test_a_folder_run_reports_progress_per_unit(tmp_path):
+    _frames(tmp_path, "dh01", [10])
+    _frames(tmp_path, "dh02", [20])
+    seen = []
+
+    bp = BatchProcessor()
+    bp.set_progress_callback(lambda c, t, m: seen.append((c, t)))
+    bp.process_frame_folder(
+        str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _bound_template(),
+        output_directory=str(tmp_path / "out"), output_width=8, output_height=8)
+
+    assert (1, 2) in seen and (2, 2) in seen
+
+
+def test_one_bad_unit_does_not_stop_the_rest(tmp_path):
+    """A template that needs indices this unit cannot supply fails alone."""
+    _frames(tmp_path, "dh01", [10])
+    _frames(tmp_path, "dh02", [20, 30, 40])
+
+    ok, failed = BatchProcessor().process_frame_folder(
+        str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _simple_template(3),
+        output_directory=str(tmp_path / "out"), output_width=8, output_height=8)
+
+    assert [Path(p).stem for p in ok] == ["dh02"]
+    assert [unit for unit, _ in failed] == ["dh01"]
