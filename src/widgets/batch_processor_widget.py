@@ -1,11 +1,17 @@
 """
 Batch Processor Widget - UI for automated batch GIF generation
 
-Allows users to:
-1. Select multiple images
-2. Choose a template
-3. Configure tile split settings
-4. Process all images automatically
+Two sources, differing only in where the materials come from:
+
+Sprite sheets
+    Pick images, set a tile split, and each image becomes one GIF.
+
+Frame folder
+    Pick a folder of exported frames and a naming rule, and each unit the rule
+    finds becomes one GIF. The rule is a regex because no two projects name
+    their frames alike — see core/frame_set.py.
+
+Then in both cases: choose a template, process.
 """
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -24,19 +30,20 @@ from . import ui
 
 
 class _BatchWorker(QObject):
-    """Runs BatchProcessor.process_batch in a background thread."""
+    """Runs one of BatchProcessor's batch methods in a background thread."""
 
     progress = pyqtSignal(int, int, str)          # current, total, message
     finished = pyqtSignal(list, list)             # successful, failed
 
-    def __init__(self, processor, kwargs: dict):
+    def __init__(self, processor, kwargs: dict, method: str = "process_batch"):
         super().__init__()
         self._processor = processor
         self._kwargs = kwargs
+        self._method = method
 
     def run(self):
         try:
-            successful, failed = self._processor.process_batch(**self._kwargs)
+            successful, failed = getattr(self._processor, self._method)(**self._kwargs)
         except Exception as e:
             successful, failed = [], [("", str(e))]
         self.finished.emit(successful, failed)
@@ -54,6 +61,7 @@ class BatchProcessorWidget(QWidget):
         super().__init__(parent)
         
         self.image_paths: List[str] = []
+        self.frame_scan = None            # FrameScan from the last folder scan
         self.selected_template: Optional[Dict[str, Any]] = None
         self.selected_template_name: str = ""
         self.selected_positions: List[Tuple[int, int]] = []
@@ -78,10 +86,35 @@ class BatchProcessorWidget(QWidget):
         desc_label.setStyleSheet(f"color: {_T.TEXT_DIM}; font-size: 11px;")
         layout.addWidget(desc_label)
         
-        # === Image Selection Section ===
-        image_group = QGroupBox("1. Select Images")
+        # === Source Section ===
+        image_group = QGroupBox("1. Choose a source")
         image_layout = QVBoxLayout()
-        
+
+        source_row = QHBoxLayout()
+        self.source_mode_group = QButtonGroup()
+        self.sheet_source_radio = QRadioButton("Sprite sheets")
+        self.sheet_source_radio.setToolTip(
+            "Each image is split into tiles, and each image becomes one GIF."
+        )
+        self.folder_source_radio = QRadioButton("Frame folder")
+        self.folder_source_radio.setToolTip(
+            "A folder of exported frames. Each unit the naming rule finds "
+            "becomes one GIF."
+        )
+        self.sheet_source_radio.setChecked(True)
+        self.source_mode_group.addButton(self.sheet_source_radio, 0)
+        self.source_mode_group.addButton(self.folder_source_radio, 1)
+        self.sheet_source_radio.toggled.connect(self.on_source_mode_changed)
+        source_row.addWidget(self.sheet_source_radio)
+        source_row.addWidget(self.folder_source_radio)
+        source_row.addStretch()
+        image_layout.addLayout(source_row)
+
+        # ── Sprite sheets ────────────────────────────────────────────────────
+        self.sheet_source_panel = QWidget()
+        sheet_panel_layout = QVBoxLayout(self.sheet_source_panel)
+        sheet_panel_layout.setContentsMargins(0, 0, 0, 0)
+
         image_buttons = QHBoxLayout()
         self.add_images_btn = QPushButton("Add Images")
         self.add_images_btn.clicked.connect(self.add_images)
@@ -91,17 +124,68 @@ class BatchProcessorWidget(QWidget):
         self.clear_images_btn.clicked.connect(self.clear_images)
         image_buttons.addWidget(self.clear_images_btn)
         
-        image_layout.addLayout(image_buttons)
-        
+        sheet_panel_layout.addLayout(image_buttons)
+
         self.image_list = QListWidget()
         self.image_list.setMaximumHeight(120)
         self.image_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        image_layout.addWidget(self.image_list)
-        
+        sheet_panel_layout.addWidget(self.image_list)
+
         self.image_count_label = QLabel("No images selected")
         self.image_count_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
-        image_layout.addWidget(self.image_count_label)
-        
+        sheet_panel_layout.addWidget(self.image_count_label)
+        image_layout.addWidget(self.sheet_source_panel)
+
+        # ── Frame folder ─────────────────────────────────────────────────────
+        self.folder_source_panel = QWidget()
+        folder_layout = QVBoxLayout(self.folder_source_panel)
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(QLabel("Folder:"))
+        self.frames_dir_edit = QLineEdit()
+        self.frames_dir_edit.setPlaceholderText("Folder of exported frames")
+        self.frames_dir_edit.editingFinished.connect(self.rescan_frame_folder)
+        folder_row.addWidget(self.frames_dir_edit, stretch=1)
+        self.browse_frames_btn = QPushButton("Browse…")
+        self.browse_frames_btn.setMaximumWidth(90)
+        self.browse_frames_btn.clicked.connect(self.browse_frame_folder)
+        folder_row.addWidget(self.browse_frames_btn)
+        folder_layout.addLayout(folder_row)
+
+        pattern_row = QHBoxLayout()
+        pattern_row.addWidget(QLabel("Unit rule:"))
+        self.unit_pattern_edit = QLineEdit()
+        self.unit_pattern_edit.setPlaceholderText(
+            r"(?P<unit>\w+?)_   — leave empty to make the whole folder one GIF")
+        self.unit_pattern_edit.setToolTip(
+            "A regex deciding which output each file belongs to.\n"
+            "It is matched at the start of the file name and read for a group "
+            "called 'unit'.\n\n"
+            r"  (?P<unit>dh\d+)_              dh01_org01 -> dh01" "\n"
+            r"  (?P<unit>s?dh\d+(?:_sleep)?)_  keeps dh03_sleep out of dh03" "\n\n"
+            "Files it does not match are skipped. Leave it empty to treat the "
+            "whole folder\nas a single GIF named after it."
+        )
+        self.unit_pattern_edit.editingFinished.connect(self.rescan_frame_folder)
+        pattern_row.addWidget(self.unit_pattern_edit, stretch=1)
+        self.rescan_btn = QPushButton("Scan")
+        self.rescan_btn.setMaximumWidth(90)
+        self.rescan_btn.clicked.connect(self.rescan_frame_folder)
+        pattern_row.addWidget(self.rescan_btn)
+        folder_layout.addLayout(pattern_row)
+
+        self.unit_list = QListWidget()
+        self.unit_list.setMaximumHeight(120)
+        folder_layout.addWidget(self.unit_list)
+
+        self.unit_count_label = QLabel("No folder scanned")
+        self.unit_count_label.setStyleSheet(f"color: {_T.TEXT_DIM};")
+        folder_layout.addWidget(self.unit_count_label)
+
+        self.folder_source_panel.setVisible(False)
+        image_layout.addWidget(self.folder_source_panel)
+
         image_group.setLayout(image_layout)
         layout.addWidget(image_group)
         
@@ -131,7 +215,8 @@ class BatchProcessorWidget(QWidget):
         layout.addWidget(template_group)
         
         # === Split Settings Section ===
-        split_group = QGroupBox("3. Tile Split Settings")
+        # Only sprite sheets are split; a frame folder arrives already cut up.
+        self.split_group = split_group = QGroupBox("3. Tile Split Settings")
         split_layout = QVBoxLayout()
         split_layout.setSpacing(8)
         
@@ -468,6 +553,61 @@ class BatchProcessorWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Preview Failed", f"Could not generate preview:\n{e}")
 
+    def is_frame_folder_source(self) -> bool:
+        return self.folder_source_radio.isChecked()
+
+    def on_source_mode_changed(self, _checked=None):
+        """Show the panel for the chosen source and hide the other one.
+
+        Only sprite sheets are split, so the tile settings and the position
+        grid go with them — a frame folder arrives already cut up."""
+        folder = self.is_frame_folder_source()
+        self.sheet_source_panel.setVisible(not folder)
+        self.folder_source_panel.setVisible(folder)
+        self.split_group.setVisible(not folder)
+        self.validation_label.setText("")
+        self.validation_label.setStyleSheet("")
+        self.update_button_states()
+
+    def browse_frame_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Folder of Frames", self.frames_dir_edit.text().strip())
+        if folder:
+            self.frames_dir_edit.setText(folder)
+            self.rescan_frame_folder()
+
+    def rescan_frame_folder(self):
+        """Re-read the folder and show the units the rule finds.
+
+        Shown before anything is built because the rule is the one setting with
+        no safe default: it decides how many GIFs come out and which frames end
+        up in each, and a wrong guess is only obvious from the list."""
+        from ..core.frame_set import FrameSetError, scan_frame_folder
+
+        self.unit_list.clear()
+        self.frame_scan = None
+        folder = self.frames_dir_edit.text().strip()
+        if not folder:
+            self.unit_count_label.setText("No folder scanned")
+            self.update_button_states()
+            return
+
+        try:
+            self.frame_scan = scan_frame_folder(
+                folder, self.unit_pattern_edit.text().strip())
+        except FrameSetError as e:
+            self.unit_count_label.setText(str(e))
+            self.update_button_states()
+            return
+
+        for unit in self.frame_scan.units:
+            self.unit_list.addItem(QListWidgetItem(
+                f"{unit.unit}  —  {len(unit)} frame(s)   "
+                f"[{unit.paths[0].name} … {unit.paths[-1].name}]"
+            ))
+        self.unit_count_label.setText(self.frame_scan.summary())
+        self.update_button_states()
+
     def add_images(self):
         """Add images to the batch list"""
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -647,8 +787,64 @@ class BatchProcessorWidget(QWidget):
         if directory:
             self.output_dir_edit.setText(directory)
     
+    def _validate_output_directory(self) -> bool:
+        if self.same_dir_checkbox.isChecked():
+            return True
+        output_dir = self.output_dir_edit.text().strip()
+        if not output_dir:
+            self.show_validation_error("Please select an output directory")
+            return False
+        if not Path(output_dir).exists():
+            self.show_validation_error("Output directory does not exist")
+            return False
+        return True
+
+    def validate_frame_folder_settings(self) -> bool:
+        """Check a frame-folder run: a scan with units, and a template."""
+        if not self.frame_scan or not self.frame_scan.units:
+            self.show_validation_error(
+                "No units found — pick a folder and check the unit rule")
+            return False
+        if not self.selected_template:
+            self.show_validation_error("Please select a template")
+            return False
+        if not self._validate_output_directory():
+            return False
+
+        from ..core.batch_processor import BatchProcessor
+        try:
+            BatchProcessor.validate_template(self.selected_template)
+        except ValueError as e:
+            self.show_validation_error(f"Invalid template: {e}")
+            return False
+
+        # A template holding fixed material indices needs at least that many
+        # frames; a bound one needs none, and reports 0 here.
+        required = BatchProcessor.estimate_required_tiles(self.selected_template)
+        short = [u for u in self.frame_scan.units if len(u) < required]
+        if short:
+            names = ", ".join(u.unit for u in short[:3])
+            more = "…" if len(short) > 3 else ""
+            self.show_validation_error(
+                f"Template needs {required} materials; {names}{more} "
+                f"{'have' if len(short) > 1 else 'has'} fewer"
+            )
+            return False
+
+        units = len(self.frame_scan.units)
+        frames = sum(len(u) for u in self.frame_scan.units)
+        skipped = len(self.frame_scan.skipped)
+        message = f"{units} GIF(s) from {frames} frame(s)"
+        if skipped:
+            message += f"; {skipped} file(s) skipped by the unit rule"
+        self.show_validation_success(message)
+        return True
+
     def validate_settings(self):
         """Validate current settings"""
+        if self.is_frame_folder_source():
+            return self.validate_frame_folder_settings()
+
         # Check images
         if not self.image_paths:
             self.show_validation_error("Please select at least one image")
@@ -726,24 +922,40 @@ class BatchProcessorWidget(QWidget):
     
     def update_button_states(self):
         """Update button states based on current state"""
-        has_images = len(self.image_paths) > 0
+        if self.is_frame_folder_source():
+            has_source = bool(self.frame_scan and self.frame_scan.units)
+        else:
+            has_source = len(self.image_paths) > 0
         has_template = self.selected_template is not None
 
-        self.validate_btn.setEnabled(has_images and has_template)
-        self.process_btn.setEnabled(has_images and has_template)
+        self.validate_btn.setEnabled(has_source and has_template)
+        self.process_btn.setEnabled(has_source and has_template)
         if hasattr(self, '_gen_preview_btn'):
-            self._gen_preview_btn.setEnabled(has_images and has_template)
+            # The GIF preview renders one sprite sheet; a folder has no single
+            # sheet to render, and its units are listed instead.
+            self._gen_preview_btn.setEnabled(
+                has_source and has_template and not self.is_frame_folder_source())
     
     def start_batch_processing(self):
         """Start the batch processing in a background thread."""
         if not self.validate_settings():
             return
 
+        folder_source = self.is_frame_folder_source()
+        if folder_source:
+            question = (
+                f"Build {len(self.frame_scan.units)} GIF(s) with template "
+                f"'{self.selected_template_name}'?\n\n"
+                "Each unit found in the folder will be exported as one GIF."
+            )
+        else:
+            question = (
+                f"Process {len(self.image_paths)} image(s) with template "
+                f"'{self.selected_template_name}'?\n\n"
+                "Each image will be split into tiles and exported as a GIF."
+            )
         reply = QMessageBox.question(
-            self,
-            "Confirm Batch Processing",
-            f"Process {len(self.image_paths)} image(s) with template '{self.selected_template_name}'?\n\n"
-            "Each image will be split into tiles and exported as a GIF.",
+            self, "Confirm Batch Processing", question,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -759,25 +971,38 @@ class BatchProcessorWidget(QWidget):
         )
 
         from ..core.batch_processor import BatchProcessor
-        processor = BatchProcessor()
+        processor = self._processor = BatchProcessor()
 
-        split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
-        kwargs = dict(
-            image_paths=list(self.image_paths),
-            template=self.selected_template,
-            split_mode=split_mode,
-            split_rows=self.rows_spinbox.value(),
-            split_cols=self.cols_spinbox.value(),
-            tile_width=self.tile_width_spinbox.value(),
-            tile_height=self.tile_height_spinbox.value(),
-            selected_positions=self.selected_positions if self.selected_positions else None,
-            output_directory=output_directory,
-            color_count=int(self.color_palette_combo.currentText()),
-            output_width=self.output_width_spinbox.value(),
-            output_height=self.output_height_spinbox.value(),
-        )
+        if folder_source:
+            method = "process_frame_folder"
+            kwargs = dict(
+                folder=self.frames_dir_edit.text().strip(),
+                pattern=self.unit_pattern_edit.text().strip() or None,
+                template=self.selected_template,
+                output_directory=output_directory,
+                color_count=int(self.color_palette_combo.currentText()),
+                output_width=self.output_width_spinbox.value(),
+                output_height=self.output_height_spinbox.value(),
+            )
+        else:
+            method = "process_batch"
+            split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
+            kwargs = dict(
+                image_paths=list(self.image_paths),
+                template=self.selected_template,
+                split_mode=split_mode,
+                split_rows=self.rows_spinbox.value(),
+                split_cols=self.cols_spinbox.value(),
+                tile_width=self.tile_width_spinbox.value(),
+                tile_height=self.tile_height_spinbox.value(),
+                selected_positions=self.selected_positions if self.selected_positions else None,
+                output_directory=output_directory,
+                color_count=int(self.color_palette_combo.currentText()),
+                output_width=self.output_width_spinbox.value(),
+                output_height=self.output_height_spinbox.value(),
+            )
 
-        self._worker = _BatchWorker(processor, kwargs)
+        self._worker = _BatchWorker(processor, kwargs, method)
         self._thread = QThread(self)
         self._worker.moveToThread(self._thread)
 
@@ -792,6 +1017,27 @@ class BatchProcessorWidget(QWidget):
         self._thread.finished.connect(self._thread.deleteLater)
 
         self._thread.start()
+
+    def stop_workers(self, timeout_ms: int = 30000):
+        """Join the batch thread; Qt aborts if one outlives its widget.
+
+        The run stops after the unit it is on rather than mid-GIF, so a folder
+        of 30 units does not hold the window open for all of them."""
+        processor = getattr(self, "_processor", None)
+        if processor is not None:
+            processor.cancel()
+        thread = getattr(self, "_thread", None)
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(timeout_ms)
+            except RuntimeError:
+                pass          # already deleted by its own finished handler
+
+    def closeEvent(self, event):
+        self.stop_workers()
+        super().closeEvent(event)
 
     def on_progress(self, current: int, total: int, message: str):
         """Handle thread-safe progress updates (called via signal)."""

@@ -37,9 +37,19 @@ class BatchProcessor:
 
     def __init__(self):
         self.progress_callback: Optional[Callable[[int, int, str], None]] = None
+        self._cancelled = False
 
     def set_progress_callback(self, callback: Callable[[int, int, str], None]) -> None:
         self.progress_callback = callback
+
+    def cancel(self) -> None:
+        """Ask a running batch to stop after the item it is on.
+
+        A folder can hold dozens of units, so a run is long enough that quitting
+        the app during one is ordinary rather than exceptional — and the thread
+        has to end before its widget does. Checked between items, never inside
+        one, so no half-written GIF is left behind."""
+        self._cancelled = True
 
     def _report_progress(self, current: int, total: int, message: str) -> None:
         if self.progress_callback:
@@ -227,6 +237,9 @@ class BatchProcessor:
         total = len(scan.units)
 
         for idx, unit in enumerate(scan.units, 1):
+            if self._cancelled:
+                self._report_progress(idx - 1, total, "Cancelled")
+                break
             try:
                 self._report_progress(idx, total, f"Processing {unit.unit}")
                 successful.append(self.process_frame_set(
@@ -269,6 +282,9 @@ class BatchProcessor:
         total = len(image_paths)
 
         for idx, image_path in enumerate(image_paths, 1):
+            if self._cancelled:
+                self._report_progress(idx - 1, total, "Cancelled")
+                break
             try:
                 self._report_progress(idx, total, f"Processing {Path(image_path).name}")
 

@@ -262,7 +262,8 @@ class MainWindow(QMainWindow, MaterialsPanelMixin, ComposerPanelMixin, TemplateM
     def closeEvent(self, event):
         """Handle application closing - perform emergency auto-save"""
         # Background render threads must finish before their widget is destroyed.
-        for tab_name in ('spine_to_gif', 'crop_gif', 'gif_to_mp4', 'video_concat'):
+        for tab_name in ('spine_to_gif', 'crop_gif', 'gif_to_mp4', 'video_concat',
+                         'batch_processor'):
             tab = getattr(self, tab_name, None)
             if tab is not None:
                 tab.stop_workers()
