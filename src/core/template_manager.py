@@ -39,6 +39,7 @@ class TemplateManager:
           "id": int,
           "name": str,
           "default_duration_ms": int,
+          "tail_duration_ms": int|null,   # pause pinned to whichever frame ends the group
           "entries": [
             { "type": "frame",     "material_index": int, "x": int, "y": int, "duration_ms": int|null },
             { "type": "subgroup",  "group_id": int, "loop_count": int, "x": int, "y": int,

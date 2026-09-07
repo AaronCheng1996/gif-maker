@@ -6,7 +6,8 @@ Collapsible group tree with:
 - A group's frames are shown in its own top-level section; nested references are
   single header rows exposing loop-count, x, y offset, and a jump to that section
 - Group headers carry both the default frame duration and the last frame's, which
-  is the pause before the group loops
+  is the pause before the group loops; pinning that pause keeps it on whichever
+  frame ends the group as materials are added
 - FrameEntry rows have large thumbnails (≈¼ of row width)
 - LayerBlock timelines show slot rows with full x/y editing
 """
@@ -16,7 +17,7 @@ import copy
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSpinBox, QInputDialog, QMessageBox,
-    QLineEdit, QSizePolicy,
+    QLineEdit, QSizePolicy, QCheckBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QCursor
@@ -165,6 +166,7 @@ class GroupCompositionWidget(QWidget):
         # — so the other view of the same number is moved directly instead.
         self._row_dur_spin: dict = {}    # (group_id, entry_idx) -> frame row's ⏱
         self._tail_spin: dict = {}       # group_id -> its header's "last" ⏱
+        self._tail_chk: dict = {}        # group_id -> its header's "pin last" box
         self._top_sections: dict = {}    # group_id -> its top-level section widget
         self._pending_reveal: Optional[int] = None
         # Rebuilding the tree resets the scroll position, so it is put back once
@@ -276,6 +278,7 @@ class GroupCompositionWidget(QWidget):
 
             self._row_dur_spin.clear()
             self._tail_spin.clear()
+            self._tail_chk.clear()
             self._top_sections.clear()
 
             layout = self._inner_layout
@@ -372,10 +375,15 @@ class GroupCompositionWidget(QWidget):
         return None
 
     def _tail_duration(self, group: CompositionGroup) -> int:
-        """Effective duration of the tail frame (the group default when unset)."""
+        """Effective duration of the tail frame (the group default when unset).
+
+        A pinned pause wins over the frame's own duration, because that is what
+        the group will actually export — see CompositionGroup.tail_duration_ms."""
         i = self._tail_frame_index(group)
         if i is None:
             return group.default_duration_ms
+        if group.tail_duration_ms is not None:
+            return group.tail_duration_ms
         entry = group.entries[i]
         return entry.duration_ms if entry.duration_ms is not None else group.default_duration_ms
 
@@ -388,10 +396,44 @@ class GroupCompositionWidget(QWidget):
         group = self._gm.get_group(gid) if self._gm else None
         if group is None:
             return
+        pinned_idx = (self._tail_frame_index(group)
+                      if group.tail_duration_ms is not None else None)
         for i, entry in enumerate(group.entries):
+            if i == pinned_idx:
+                continue  # shows the pinned pause, which the default cannot move
             if is_frame_entry(entry) and entry.duration_ms is None:
                 _set_spin_quietly(self._row_dur_spin.get((gid, i)), group.default_duration_ms)
         _set_spin_quietly(self._tail_spin.get(gid), self._tail_duration(group))
+
+    def _refresh_tail_widgets(self, gid: int) -> None:
+        """Re-show the "last" box and the tail frame's row after a pin toggle.
+
+        Pinning moves ownership of that one duration between the two, and each
+        has to come out enabled on exactly one side. Doing it in place rather
+        than through refresh() is what lets the handler run at all: a rebuild
+        would delete the checkbox that is mid-click."""
+        group = self._gm.get_group(gid) if self._gm else None
+        if group is None:
+            return
+        pinned = group.tail_duration_ms is not None
+        tail_idx = self._tail_frame_index(group)
+        effective = self._tail_duration(group)
+
+        spin = self._tail_spin.get(gid)
+        if spin is not None:
+            _set_spin_quietly(spin, effective)
+            try:
+                spin.setEnabled(tail_idx is not None and pinned)
+            except RuntimeError:
+                pass
+
+        row = self._row_dur_spin.get((gid, tail_idx)) if tail_idx is not None else None
+        if row is not None:
+            _set_spin_quietly(row, effective)
+            try:
+                row.setEnabled(not pinned)
+            except RuntimeError:
+                pass
 
     def _get_orphan_gids(self) -> List[int]:
         """Return group IDs not referenced anywhere (safe to delete)."""
@@ -555,34 +597,77 @@ class GroupCompositionWidget(QWidget):
 
             # The last frame's duration is the pause before the group loops, so
             # it gets adjusted often — and reaching it meant scrolling past
-            # every frame in the group. This writes the same value the bottom
-            # row's ⏱ does, and the two are kept in step.
+            # every frame in the group.
+            #
+            # Pinning it (the checkbox) stores that pause on the group instead
+            # of on the frame, so it follows the end of the timeline: add
+            # materials or apply a template and the pause lands on the new last
+            # frame while the old one goes back to its own duration. Unpinned,
+            # the box only reports what the bottom frame row's ⏱ already says.
             tail_idx = self._tail_frame_index(group)
+            has_tail = tail_idx is not None
+            pinned = group.tail_duration_ms is not None
             hl.addWidget(_lbl("last"))
+
+            tail_chk = QCheckBox()
+            tail_chk.setChecked(pinned and has_tail)
+            tail_chk.setEnabled(has_tail)
+            tail_chk.setToolTip(
+                "Pin the pause before this group loops.\n"
+                "On: the value beside this box is forced onto whichever frame "
+                "ends the group,\nso adding frames moves it to the new last one "
+                "and gives the old one\nits own duration back.\n"
+                "Off: the last frame keeps whatever duration it was given."
+                if has_tail else
+                "This group has no last frame to pin."
+            )
+            hl.addWidget(tail_chk)
+            self._tail_chk[gid] = tail_chk
+
             tail_sp = _spinbox(10, 99999, self._tail_duration(group), suffix="ms", w=_DUR_W)
-            tail_sp.setEnabled(tail_idx is not None)
-            if tail_idx is not None:
+            tail_sp.setEnabled(has_tail and pinned)
+            if not has_tail:
                 tail_sp.setToolTip(
-                    "How long the last frame is held — the pause before this "
-                    "group loops.\nSame value as the bottom frame row's ⏱."
-                )
-            elif not group.entries:
-                tail_sp.setToolTip("This group is empty — add a frame first.")
-            else:
-                tail_sp.setToolTip(
+                    "This group is empty — add a frame first." if not group.entries else
                     "This group ends on a sub-group or a layer block, which "
                     "carries its own\ntiming — set the pause there instead."
                 )
+            elif pinned:
+                tail_sp.setToolTip(
+                    "How long the frame ending this group is held — the pause "
+                    "before it loops.\nPinned, so it stays on the last frame as "
+                    "frames are added."
+                )
+            else:
+                tail_sp.setToolTip(
+                    "How long the last frame is held — the pause before this "
+                    "group loops.\nTick the box to edit it here; otherwise set "
+                    "it on the bottom frame row's ⏱."
+                )
+
             def _set_tail(v, g=group, gg=gid):
-                i = self._tail_frame_index(g)
-                if i is None:
+                # Only reachable while pinned — the box is disabled otherwise.
+                if g.tail_duration_ms is None:
                     return
-                g.entries[i].duration_ms = v
-                _set_spin_quietly(self._row_dur_spin.get((gg, i)), v)
+                g.tail_duration_ms = v
+                i = self._tail_frame_index(g)
+                if i is not None:
+                    _set_spin_quietly(self._row_dur_spin.get((gg, i)), v)
                 self.entries_changed.emit()
             tail_sp.valueChanged.connect(_set_tail)
             hl.addWidget(tail_sp)
             self._tail_spin[gid] = tail_sp
+
+            def _set_tail_pinned(checked, g=group, gg=gid):
+                if self._tail_frame_index(g) is None:
+                    return
+                # Seeding from the effective duration leaves the number on
+                # screen unchanged as the box is ticked; clearing it hands the
+                # frame back to its own.
+                g.tail_duration_ms = self._tail_duration(g) if checked else None
+                self._refresh_tail_widgets(gg)
+                self.entries_changed.emit()
+            tail_chk.toggled.connect(_set_tail_pinned)
 
         # Action buttons
         for label, tip, fn, color in [
@@ -749,7 +834,23 @@ class GroupCompositionWidget(QWidget):
         ctrl.setSpacing(4)
 
         ctrl.addWidget(_lbl("⏱"))
-        dur = _spinbox(10, 99999, entry.duration_ms if entry.duration_ms is not None else group_default_dur, suffix="ms", w=_DUR_W)
+        # A pinned group pause owns whichever frame ends the group, so that row
+        # reports it read-only instead of offering a second number that the
+        # export would ignore.
+        row_group = self._gm.get_group(parent_gid) if self._gm else None
+        row_pinned = (row_group is not None
+                      and row_group.tail_duration_ms is not None
+                      and self._tail_frame_index(row_group) == entry_idx)
+        shown = (row_group.tail_duration_ms if row_pinned
+                 else (entry.duration_ms if entry.duration_ms is not None
+                       else group_default_dur))
+        dur = _spinbox(10, 99999, shown, suffix="ms", w=_DUR_W)
+        dur.setEnabled(not row_pinned)
+        if row_pinned:
+            dur.setToolTip(
+                "The pause before this group loops is pinned to its last frame "
+                "— edit it on the group header's 'last' box."
+            )
         def _set_dur(v, e=entry, pg=parent_gid, ei=entry_idx):
             e.duration_ms = v
             group = self._gm.get_group(pg) if self._gm else None

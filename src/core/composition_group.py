@@ -99,10 +99,19 @@ class CompositionGroup:
     Group-led composition: ordered list of entries.
     Each entry is FrameEntry, SubGroupEntry, or LayerBlockEntry.
     Leaf group: only FrameEntry. Container: can have SubGroupEntry and LayerBlockEntry.
+
+    tail_duration_ms pins the pause before the group loops to *whichever* frame
+    ends the group rather than to one particular frame. It is resolved at
+    expansion time, so appending a frame moves the pause onto the new last frame
+    and hands the old one its own duration back — where writing the pause into
+    the entry would have stranded it mid-timeline. None times every frame by
+    itself. Ignored while the group ends on a sub-group or a layer block, which
+    carry their own timing.
     """
     name: str = ""
     entries: List[Entry] = field(default_factory=list)
     default_duration_ms: int = 100
+    tail_duration_ms: Optional[int] = None
 
     def __post_init__(self):
         if not self.name:
@@ -169,6 +178,7 @@ def group_to_dict(group_id: int, group: "CompositionGroup") -> dict:
         "id": group_id,
         "name": group.name,
         "default_duration_ms": group.default_duration_ms,
+        "tail_duration_ms": group.tail_duration_ms,
         "entries": [entry_to_dict(e) for e in group.entries],
     }
 
@@ -177,6 +187,7 @@ def group_from_dict(d: dict) -> "CompositionGroup":
     return CompositionGroup(
         name=d.get("name", "Group"),
         default_duration_ms=d.get("default_duration_ms", 100),
+        tail_duration_ms=d.get("tail_duration_ms"),
         entries=[entry_from_dict(e) for e in d.get("entries", [])],
     )
 

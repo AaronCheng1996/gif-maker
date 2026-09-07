@@ -809,6 +809,15 @@ class GifBuilder:
                     expanded_frames.append(layers_i)
                     expanded_durations.append(dur)
 
+        # A pinned tail pause (CompositionGroup.tail_duration_ms) belongs to
+        # whichever frame ends the group, so it is applied here instead of being
+        # written into an entry that the next appended frame would displace.
+        # A group ending on a sub-group or a layer block has no tail frame of
+        # its own — the timing lives in whatever it ends on — so it is skipped.
+        if (group.tail_duration_ms is not None and expanded_durations
+                and group.entries and is_frame_entry(group.entries[-1])):
+            expanded_durations[-1] = group.tail_duration_ms
+
         return expanded_frames, expanded_durations
 
     def get_preview_frames_for_group(

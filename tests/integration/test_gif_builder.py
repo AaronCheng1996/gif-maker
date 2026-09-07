@@ -273,3 +273,155 @@ def test_compose_flat_image_skips_non_frame_entries():
     assert result.size == (5, 5)
 
 
+# ── A pinned tail pause belongs to the group, not to one frame ───────────────
+
+def _pinned_group(tail_ms, frame_count=3):
+    """A group of frame_count frames at 100ms whose loop pause is pinned."""
+    from src.core.composition_group import CompositionGroup, FrameEntry
+
+    mm = MaterialManager()
+    for i in range(frame_count + 1):
+        mm.add_material(Image.new("RGB", (10, 10), (i * 50, i * 30, i * 10)), name=f"m{i}")
+
+    gm = GroupManager()
+    g = CompositionGroup(name="G", default_duration_ms=100, tail_duration_ms=tail_ms)
+    for i in range(frame_count):
+        g.entries.append(FrameEntry(material_index=i))
+    gid = gm.add_group(g)
+    return GifBuilder(), gid, gm, mm, g
+
+
+def test_a_pinned_pause_lands_on_the_last_frame():
+    gb, gid, gm, mm, _ = _pinned_group(2000)
+    _, durations = gb._expand_composition_group(gid, gm, mm)
+    assert durations == [100, 100, 2000]
+
+
+def test_an_unpinned_group_times_every_frame_by_itself():
+    gb, gid, gm, mm, _ = _pinned_group(None)
+    _, durations = gb._expand_composition_group(gid, gm, mm)
+    assert durations == [100, 100, 100]
+
+
+def test_appending_a_frame_moves_the_pause_and_frees_the_old_last_one():
+    """The point of pinning: a new material must not strand the pause mid-timeline."""
+    from src.core.composition_group import FrameEntry
+
+    gb, gid, gm, mm, g = _pinned_group(2000)
+    g.entries.append(FrameEntry(material_index=3))
+
+    _, durations = gb._expand_composition_group(gid, gm, mm)
+    assert durations == [100, 100, 100, 2000]
+
+
+def test_the_pause_overrides_the_last_frames_own_duration():
+    gb, gid, gm, mm, g = _pinned_group(2000)
+    g.entries[-1].duration_ms = 40
+    _, durations = gb._expand_composition_group(gid, gm, mm)
+    assert durations[-1] == 2000
+
+
+def test_a_displaced_frame_keeps_the_duration_it_was_given():
+    """Pinning must not have written into the frame it was standing on."""
+    from src.core.composition_group import FrameEntry
+
+    gb, gid, gm, mm, g = _pinned_group(2000)
+    g.entries[-1].duration_ms = 40
+    g.entries.append(FrameEntry(material_index=3))
+
+    _, durations = gb._expand_composition_group(gid, gm, mm)
+    assert durations == [100, 100, 40, 2000]
+
+
+def test_a_group_ending_on_a_sub_group_ignores_the_pause():
+    """That group has no last frame of its own — the timing lives in what it
+    ends on, and overwriting the sub-group's final frame would reach across a
+    boundary the editor does not show."""
+    from src.core.composition_group import CompositionGroup, FrameEntry, SubGroupEntry
+
+    mm = MaterialManager()
+    for i in range(3):
+        mm.add_material(Image.new("RGB", (10, 10), (i * 50, 0, 0)), name=f"m{i}")
+
+    gm = GroupManager()
+    sub = CompositionGroup(name="Sub", default_duration_ms=70)
+    sub.entries.append(FrameEntry(material_index=0))
+    sub_id = gm.add_group(sub)
+
+    root = CompositionGroup(name="Root", default_duration_ms=100, tail_duration_ms=2000)
+    root.entries.append(FrameEntry(material_index=1))
+    root.entries.append(SubGroupEntry(group_id=sub_id))
+    root_id = gm.add_group(root)
+
+    _, durations = GifBuilder()._expand_composition_group(root_id, gm, mm)
+    assert durations == [100, 70]
+
+
+def test_an_empty_group_with_a_pause_still_expands_to_nothing():
+    from src.core.composition_group import CompositionGroup
+
+    gm = GroupManager()
+    gid = gm.add_group(CompositionGroup(name="Empty", tail_duration_ms=2000))
+    frames, durations = GifBuilder()._expand_composition_group(gid, gm, MaterialManager())
+    assert frames == [] and durations == []
+
+
+def test_the_pause_repeats_with_every_loop_of_the_group():
+    """It is the pause *before the group loops*, so each pass ends on it."""
+    from src.core.composition_group import CompositionGroup, SubGroupEntry
+
+    gb, gid, gm, mm, _ = _pinned_group(2000, frame_count=2)
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(SubGroupEntry(group_id=gid, loop_count=2))
+    root_id = gm.add_group(root)
+
+    _, durations = gb._expand_composition_group(root_id, gm, mm)
+    assert durations == [100, 2000, 100, 2000]
+
+
+def test_a_reference_override_still_wins_over_the_pause():
+    """duration_override_ms retimes every frame of that one reference, pause
+    included — it is the coarser instrument and stays the outer one."""
+    from src.core.composition_group import CompositionGroup, SubGroupEntry
+
+    gb, gid, gm, mm, _ = _pinned_group(2000, frame_count=2)
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(SubGroupEntry(group_id=gid, duration_override_ms=66))
+    root_id = gm.add_group(root)
+
+    _, durations = gb._expand_composition_group(root_id, gm, mm)
+    assert durations == [66, 66]
+
+
+def test_a_pinned_pause_survives_a_template_round_trip():
+    from src.core.composition_group import CompositionGroup, FrameEntry
+    from src.core.template_manager import TemplateManager
+
+    gm = GroupManager()
+    g = CompositionGroup(name="G", default_duration_ms=100, tail_duration_ms=2000)
+    g.entries.append(FrameEntry(material_index=0))
+    gid = gm.add_group(g)
+    gm.set_root_group_id(gid)
+
+    template = TemplateManager.export_composition_template(gm, {})
+    restored, _ = TemplateManager.import_composition_template(template)
+
+    assert restored.get_group(gid).tail_duration_ms == 2000
+
+
+def test_a_template_written_before_pinning_loads_unpinned():
+    from src.core.template_manager import TemplateManager
+
+    template = {
+        "version": "4.0",
+        "format": "composition_group",
+        "settings": {},
+        "root_group_id": 0,
+        "groups": [{
+            "id": 0, "name": "G", "default_duration_ms": 100,
+            "entries": [{"type": "frame", "material_index": 0,
+                         "x": 0, "y": 0, "duration_ms": None}],
+        }],
+    }
+    restored, _ = TemplateManager.import_composition_template(template)
+    assert restored.get_group(0).tail_duration_ms is None
