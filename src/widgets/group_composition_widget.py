@@ -8,6 +8,8 @@ Collapsible group tree with:
 - Group headers carry both the default frame duration and the last frame's, which
   is the pause before the group loops; pinning that pause keeps it on whichever
   frame ends the group as materials are added
+- A group can be bound to a material glob instead of to entries, so it holds as
+  many frames as the current material set matches
 - FrameEntry rows have large thumbnails (≈¼ of row width)
 - LayerBlock timelines show slot rows with full x/y editing
 """
@@ -29,6 +31,7 @@ from ..core.composition_group import (
     FrameSlot, GroupSlot,
     is_frame_entry, is_sub_group_entry, is_layer_block_entry,
     is_frame_slot, is_group_slot,
+    resolve_source_indices,
 )
 from .theme import AppTheme as _T
 
@@ -167,6 +170,7 @@ class GroupCompositionWidget(QWidget):
         self._row_dur_spin: dict = {}    # (group_id, entry_idx) -> frame row's ⏱
         self._tail_spin: dict = {}       # group_id -> its header's "last" ⏱
         self._tail_chk: dict = {}        # group_id -> its header's "pin last" box
+        self._bind_edit: dict = {}       # group_id -> its header's material-glob field
         self._top_sections: dict = {}    # group_id -> its top-level section widget
         self._pending_reveal: Optional[int] = None
         # Rebuilding the tree resets the scroll position, so it is put back once
@@ -279,6 +283,7 @@ class GroupCompositionWidget(QWidget):
             self._row_dur_spin.clear()
             self._tail_spin.clear()
             self._tail_chk.clear()
+            self._bind_edit.clear()
             self._top_sections.clear()
 
             layout = self._inner_layout
@@ -374,16 +379,38 @@ class GroupCompositionWidget(QWidget):
             return len(group.entries) - 1
         return None
 
+    def _material_names(self) -> List[str]:
+        return [name for _, name in self._mm.get_all_materials()] if self._mm else []
+
+    def _bound_indices(self, group: CompositionGroup) -> Optional[List[int]]:
+        """Materials a bound group resolves to right now, or None when unbound.
+
+        The tree has to show what the group will export, and for a bound group
+        that is a slice of the material library rather than its entries — which
+        are kept, but sit out while the binding is on."""
+        if not group.source_pattern:
+            return None
+        return resolve_source_indices(group.source_pattern, self._material_names())
+
+    def _has_tail_frame(self, group: CompositionGroup) -> bool:
+        """Whether the group ends on a frame of its own, bound or not."""
+        bound = self._bound_indices(group)
+        if bound is not None:
+            return bool(bound)
+        return self._tail_frame_index(group) is not None
+
     def _tail_duration(self, group: CompositionGroup) -> int:
         """Effective duration of the tail frame (the group default when unset).
 
         A pinned pause wins over the frame's own duration, because that is what
         the group will actually export — see CompositionGroup.tail_duration_ms."""
-        i = self._tail_frame_index(group)
-        if i is None:
+        if not self._has_tail_frame(group):
             return group.default_duration_ms
         if group.tail_duration_ms is not None:
             return group.tail_duration_ms
+        i = self._tail_frame_index(group)
+        if i is None:
+            return group.default_duration_ms   # bound: every frame runs at the default
         entry = group.entries[i]
         return entry.duration_ms if entry.duration_ms is not None else group.default_duration_ms
 
@@ -423,7 +450,7 @@ class GroupCompositionWidget(QWidget):
         if spin is not None:
             _set_spin_quietly(spin, effective)
             try:
-                spin.setEnabled(tail_idx is not None and pinned)
+                spin.setEnabled(self._has_tail_frame(group) and pinned)
             except RuntimeError:
                 pass
 
@@ -474,6 +501,7 @@ class GroupCompositionWidget(QWidget):
         is_reference = parent_gid is not None
         is_collapsed = True if is_reference else (gid in self._collapsed)
         is_selected  = (gid == self._current_gid)
+        bound_indices = self._bound_indices(group)
 
         # Outer frame
         outer = QFrame()
@@ -585,6 +613,41 @@ class GroupCompositionWidget(QWidget):
         # Timing of the group itself — shown on the section that owns the
         # frames, not on a reference to it (which has loop/x/y/⏱ of its own).
         if not is_reference:
+            # Binding the group to a material glob is what lets one template
+            # fit sprites whose clips are different lengths: the group is as
+            # long as the match is, so nothing downstream shifts.
+            hl.addWidget(_lbl("bind"))
+            bind_ed = QLineEdit(group.source_pattern or "")
+            bind_ed.setPlaceholderText("entries")
+            bind_ed.setMaximumWidth(108)
+            bind_ed.setToolTip(
+                "Bind this group to every material whose name matches a glob, "
+                "e.g. *_org*\n(case-insensitive, ordered by the numbers in the "
+                "name so org2 precedes org10).\n"
+                "The group then holds as many frames as match, which is what "
+                "lets one\ntemplate fit clips of different lengths.\n"
+                "Leave it empty to use the entries listed below instead — they "
+                "are kept\neither way."
+            )
+            def _set_bind(ed=bind_ed, g=group):
+                text = ed.text().strip()
+                wanted = text or None
+                if wanted == g.source_pattern:
+                    return
+                g.source_pattern = wanted
+                self._notify()
+            bind_ed.editingFinished.connect(_set_bind)
+            hl.addWidget(bind_ed)
+            self._bind_edit[gid] = bind_ed
+
+            if bound_indices is not None:
+                n = len(bound_indices)
+                hl.addWidget(_lbl(
+                    f"→{n}",
+                    f"color: {_T.SUCCESS if n else _T.ERROR}; font-size: 10px; "
+                    "font-weight: bold;"
+                ))
+
             hl.addWidget(_lbl("⏱"))
             dur_sp = _spinbox(10, 99999, group.default_duration_ms, suffix="ms", w=_DUR_W)
             dur_sp.setToolTip("Default frame duration for this group")
@@ -604,8 +667,7 @@ class GroupCompositionWidget(QWidget):
             # materials or apply a template and the pause lands on the new last
             # frame while the old one goes back to its own duration. Unpinned,
             # the box only reports what the bottom frame row's ⏱ already says.
-            tail_idx = self._tail_frame_index(group)
-            has_tail = tail_idx is not None
+            has_tail = self._has_tail_frame(group)
             pinned = group.tail_duration_ms is not None
             hl.addWidget(_lbl("last"))
 
@@ -628,6 +690,8 @@ class GroupCompositionWidget(QWidget):
             tail_sp.setEnabled(has_tail and pinned)
             if not has_tail:
                 tail_sp.setToolTip(
+                    "Nothing matches this group's binding yet."
+                    if group.source_pattern else
                     "This group is empty — add a frame first." if not group.entries else
                     "This group ends on a sub-group or a layer block, which "
                     "carries its own\ntiming — set the pause there instead."
@@ -659,7 +723,7 @@ class GroupCompositionWidget(QWidget):
             self._tail_spin[gid] = tail_sp
 
             def _set_tail_pinned(checked, g=group, gg=gid):
-                if self._tail_frame_index(g) is None:
+                if not self._has_tail_frame(g):
                     return
                 # Seeding from the effective duration leaves the number on
                 # screen unchanged as the box is ticked; clearing it hands the
@@ -679,7 +743,11 @@ class GroupCompositionWidget(QWidget):
              lambda _=None, g=gid: self._cmd_add_layerblock(g), _T.ADD_LAYER),
         ]:
             btn = _action_btn(label, color)
-            btn.setToolTip(tip)
+            btn.setToolTip(
+                "This group is bound to materials — clear its bind field to "
+                "edit entries." if bound_indices is not None else tip
+            )
+            btn.setEnabled(bound_indices is None)
             btn.clicked.connect(fn)
             hl.addWidget(btn)
 
@@ -690,7 +758,7 @@ class GroupCompositionWidget(QWidget):
             "Empty this group — remove every frame, sub-group and layer block "
             "inside it.\nThe group itself stays, and Undo brings the contents back."
             if entry_count else "This group is already empty")
-        clear_btn.setEnabled(entry_count > 0)
+        clear_btn.setEnabled(entry_count > 0 and bound_indices is None)
         clear_btn.clicked.connect(lambda _=None, g=gid: self._cmd_clear_group(g))
         hl.addWidget(clear_btn)
 
@@ -737,27 +805,44 @@ class GroupCompositionWidget(QWidget):
             cl.setContentsMargins(6, 4, 6, 6)
             cl.setSpacing(3)
 
-            for i, entry in enumerate(group.entries):
-                if is_frame_entry(entry):
-                    cl.addWidget(
-                        self._build_frame_row(entry, gid, i, group.default_duration_ms)
-                    )
-                elif is_sub_group_entry(entry):
-                    cl.addWidget(
-                        self._build_group_section(
-                            entry.group_id, depth=depth + 1,
-                            parent_gid=gid, entry_idx=i,
+            if bound_indices is not None:
+                for pos, midx in enumerate(bound_indices):
+                    cl.addWidget(self._build_bound_row(midx, pos, group))
+                if not bound_indices:
+                    cl.addWidget(_lbl(
+                        f"Nothing in the material library matches "
+                        f"'{group.source_pattern}'.",
+                        f"color: {_T.TEXT_HINT}; font-style: italic; font-size: 10px;"
+                    ))
+                elif group.entries:
+                    cl.addWidget(_lbl(
+                        f"{len(group.entries)} entr"
+                        f"{'y is' if len(group.entries) == 1 else 'ies are'} held "
+                        f"aside while this group is bound.",
+                        f"color: {_T.TEXT_HINT}; font-style: italic; font-size: 10px;"
+                    ))
+            else:
+                for i, entry in enumerate(group.entries):
+                    if is_frame_entry(entry):
+                        cl.addWidget(
+                            self._build_frame_row(entry, gid, i, group.default_duration_ms)
                         )
-                    )
-                elif is_layer_block_entry(entry):
-                    cl.addWidget(self._build_layerblock(entry, gid, i))
+                    elif is_sub_group_entry(entry):
+                        cl.addWidget(
+                            self._build_group_section(
+                                entry.group_id, depth=depth + 1,
+                                parent_gid=gid, entry_idx=i,
+                            )
+                        )
+                    elif is_layer_block_entry(entry):
+                        cl.addWidget(self._build_layerblock(entry, gid, i))
 
-            if not group.entries:
-                hint = _lbl(
-                    "Empty — use +Frame, +Group, or +Layer to add entries.",
-                    f"color: {_T.TEXT_HINT}; font-style: italic; font-size: 10px;"
-                )
-                cl.addWidget(hint)
+                if not group.entries:
+                    hint = _lbl(
+                        "Empty — use +Frame, +Group, or +Layer to add entries.",
+                        f"color: {_T.TEXT_HINT}; font-style: italic; font-size: 10px;"
+                    )
+                    cl.addWidget(hint)
 
             vl.addWidget(content)
 
@@ -771,6 +856,48 @@ class GroupCompositionWidget(QWidget):
             return wrapper
 
         return outer
+
+    # ── Bound-group row ───────────────────────────────────────────────────────
+
+    def _build_bound_row(self, material_index: int, position: int,
+                         group: CompositionGroup) -> QWidget:
+        """One frame a binding resolved to: thumbnail and name, nothing to edit.
+
+        The binding decides which materials and in what order, so this row
+        reports rather than offers — the numbers that *are* editable (the group
+        default, and the pinned pause) live on the header."""
+        row = QFrame()
+        row.setStyleSheet(
+            f"QFrame {{ background: {_T.FRAME_ROW_BG}; "
+            f"border: 1px dashed {_T.FRAME_ROW_BORDER}; border-radius: 3px; }}"
+        )
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(6, 2, 6, 2)
+        rl.setSpacing(6)
+
+        rl.addWidget(_lbl(f"{position + 1}", f"color: {_T.TEXT_DIM}; font-size: 10px;"))
+
+        thumb = QLabel()
+        thumb.setFixedSize(52, 36)
+        thumb.setStyleSheet("background: transparent; border: none;")
+        thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name = f"#{material_index}"
+        if self._mm:
+            mat = self._mm.get_material(material_index)
+            if mat:
+                img, name = mat
+                px = _pil_to_pixmap(img, 52, 36)
+                if px:
+                    thumb.setPixmap(px)
+        rl.addWidget(thumb)
+
+        rl.addWidget(_lbl(name, f"color: {_T.MAT_NAME}; font-size: 11px;"))
+        rl.addStretch()
+
+        is_last = position == len(self._bound_indices(group) or []) - 1
+        ms = self._tail_duration(group) if is_last else group.default_duration_ms
+        rl.addWidget(_lbl(f"{ms}ms", f"color: {_T.TEXT_DIM}; font-size: 10px;"))
+        return row
 
     # ── FrameEntry row ────────────────────────────────────────────────────────
 

@@ -7,6 +7,8 @@ or LayerBlockEntry (multiple timelines composited frame-by-frame).
 Groups can be nested; preview and export target the currently selected group.
 """
 
+import fnmatch
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Union
 
@@ -107,15 +109,53 @@ class CompositionGroup:
     the entry would have stranded it mid-timeline. None times every frame by
     itself. Ignored while the group ends on a sub-group or a layer block, which
     carry their own timing.
+
+    source_pattern binds the group to the materials whose names match a glob
+    instead of to a fixed list of entries: it resolves at expansion time, so the
+    group holds as many frames as the current material set actually has. While
+    it is set, entries are not exported (they are kept, so unbinding restores
+    them). See resolve_source_indices for why binding by name matters.
     """
     name: str = ""
     entries: List[Entry] = field(default_factory=list)
     default_duration_ms: int = 100
     tail_duration_ms: Optional[int] = None
+    source_pattern: Optional[str] = None
 
     def __post_init__(self):
         if not self.name:
             self.name = "Group"
+
+
+# ----- Material selectors -----
+
+def natural_key(name: str) -> tuple:
+    """Sort key that reads runs of digits as numbers, so org2 sorts before org10.
+
+    These names carry frame numbers, and plain lexicographic order drops org10
+    into the middle of the sequence."""
+    return tuple(
+        (1, int(part), "") if part.isdigit() else (0, 0, part.lower())
+        for part in re.split(r"(\d+)", name) if part != ""
+    )
+
+
+def resolve_source_indices(pattern: str, names: List[str]) -> List[int]:
+    """Indices of the materials whose name matches `pattern`, in natural order.
+
+    `pattern` is a case-insensitive glob matched against the material name —
+    the file stem, for frames loaded from disk. Selecting by name instead of by
+    position is the whole point: a group bound to ``*_org*`` holds however many
+    org frames the current sprite has, so one template survives a clip that is
+    27 frames on one character and 36 on the next. A list of indices could not:
+    every group after the one that changed length pointed at the wrong material.
+    """
+    if not pattern:
+        return []
+    lowered = pattern.lower()
+    hits = [i for i, n in enumerate(names) if fnmatch.fnmatch(n.lower(), lowered)]
+    hits.sort(key=lambda i: (natural_key(names[i]), i))
+    return hits
 
 
 # ─── Serialization helpers ────────────────────────────────────────────────────
@@ -179,6 +219,7 @@ def group_to_dict(group_id: int, group: "CompositionGroup") -> dict:
         "name": group.name,
         "default_duration_ms": group.default_duration_ms,
         "tail_duration_ms": group.tail_duration_ms,
+        "source_pattern": group.source_pattern,
         "entries": [entry_to_dict(e) for e in group.entries],
     }
 
@@ -188,6 +229,7 @@ def group_from_dict(d: dict) -> "CompositionGroup":
         name=d.get("name", "Group"),
         default_duration_ms=d.get("default_duration_ms", 100),
         tail_duration_ms=d.get("tail_duration_ms"),
+        source_pattern=d.get("source_pattern"),
         entries=[entry_from_dict(e) for e in d.get("entries", [])],
     )
 

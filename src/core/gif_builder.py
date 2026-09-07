@@ -19,6 +19,7 @@ from .composition_group import (
     is_layer_block_entry,
     is_frame_slot,
     is_group_slot,
+    resolve_source_indices,
 )
 
 if TYPE_CHECKING:
@@ -758,7 +759,18 @@ class GifBuilder:
         expanded_durations: List[int] = []
         default_dur = group.default_duration_ms
 
-        for entry in group.entries:
+        # A bound group takes its frames from the material set instead of from
+        # its entries, so it is as long as that set happens to be — see
+        # CompositionGroup.source_pattern. Its entries are kept but not
+        # exported, so unbinding brings them straight back.
+        if group.source_pattern:
+            names = [name for _, name in material_manager.get_all_materials()]
+            for idx in resolve_source_indices(group.source_pattern, names):
+                expanded_frames.append([(idx, 0, 0)])
+                expanded_durations.append(default_dur)
+        exported_entries = [] if group.source_pattern else group.entries
+
+        for entry in exported_entries:
             if is_frame_entry(entry):
                 e = entry  # type: FrameEntry
                 expanded_frames.append([(e.material_index, e.x, e.y)])
@@ -813,9 +825,11 @@ class GifBuilder:
         # whichever frame ends the group, so it is applied here instead of being
         # written into an entry that the next appended frame would displace.
         # A group ending on a sub-group or a layer block has no tail frame of
-        # its own — the timing lives in whatever it ends on — so it is skipped.
-        if (group.tail_duration_ms is not None and expanded_durations
-                and group.entries and is_frame_entry(group.entries[-1])):
+        # its own — the timing lives in whatever it ends on — so it is skipped;
+        # a bound group is all frames and always has one.
+        ends_on_frame = bool(group.source_pattern) or (
+            bool(group.entries) and is_frame_entry(group.entries[-1]))
+        if group.tail_duration_ms is not None and expanded_durations and ends_on_frame:
             expanded_durations[-1] = group.tail_duration_ms
 
         return expanded_frames, expanded_durations
