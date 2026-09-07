@@ -71,6 +71,7 @@ class BatchProcessor:
         selected_positions: Optional[List[Tuple[int, int]]] = None,
         output_width: Optional[int] = None,
         output_height: Optional[int] = None,
+        auto_size: bool = False,
     ) -> str:
         """
         Process one image into a GIF using a composition template.
@@ -113,7 +114,7 @@ class BatchProcessor:
                 mm, template, output_path,
                 color_count=color_count,
                 output_width=output_width, output_height=output_height,
-                units="tiles",
+                auto_size=auto_size, units="tiles",
             )
 
         except BatchProcessingError:
@@ -134,6 +135,7 @@ class BatchProcessor:
         color_count: int = 256,
         output_width: Optional[int] = None,
         output_height: Optional[int] = None,
+        auto_size: bool = False,
         units: str = "materials",
     ) -> str:
         """Run a template over a material set and write the GIF.
@@ -151,9 +153,21 @@ class BatchProcessor:
 
         group_manager, settings = TemplateManager.import_composition_template(template)
 
+        root_gid = group_manager.get_root_group_id()
+        if root_gid is None:
+            raise BatchProcessingError("Template has no root group")
+
         gif_builder = GifBuilder()
-        w = output_width if output_width is not None else settings.get("output_width", 256)
-        h = output_height if output_height is not None else settings.get("output_height", 256)
+
+        # One size across a batch either crops the tall sources or pads the
+        # small ones, and with a frame folder the sources are whole characters
+        # that genuinely differ. Auto measures each one on its own materials.
+        w = h = 0
+        if auto_size:
+            w, h = gif_builder.measure_group_output_size(root_gid, group_manager, mm)
+        if w <= 0 or h <= 0:
+            w = output_width if output_width is not None else settings.get("output_width", 256)
+            h = output_height if output_height is not None else settings.get("output_height", 256)
         gif_builder.set_output_size(w, h)
         gif_builder.set_loop(settings.get("loop_count", 0))
         gif_builder.set_color_count(color_count)
@@ -162,10 +176,6 @@ class BatchProcessor:
             gif_builder.set_background_color(0, 0, 0, 0)
         else:
             gif_builder.set_background_color(255, 255, 255, 255)
-
-        root_gid = group_manager.get_root_group_id()
-        if root_gid is None:
-            raise BatchProcessingError("Template has no root group")
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         gif_builder.build_gif_from_group(root_gid, group_manager, mm, output_path)
@@ -182,6 +192,7 @@ class BatchProcessor:
         output_directory: Optional[str] = None,
         output_width: Optional[int] = None,
         output_height: Optional[int] = None,
+        auto_size: bool = False,
     ) -> str:
         """Build one GIF from one unit's frames.
 
@@ -205,7 +216,7 @@ class BatchProcessor:
                 mm, template, output_path,
                 color_count=color_count,
                 output_width=output_width, output_height=output_height,
-                units="materials",
+                auto_size=auto_size, units="materials",
             )
 
         except BatchProcessingError:
@@ -225,6 +236,7 @@ class BatchProcessor:
         output_directory: Optional[str] = None,
         output_width: Optional[int] = None,
         output_height: Optional[int] = None,
+        auto_size: bool = False,
         recursive: bool = False,
     ) -> Tuple[List[str], List[Tuple[str, str]]]:
         """Build one GIF per unit found in `folder`.
@@ -247,6 +259,7 @@ class BatchProcessor:
                     color_count=color_count,
                     output_directory=output_directory,
                     output_width=output_width, output_height=output_height,
+                    auto_size=auto_size,
                 ))
                 self._report_progress(idx, total, f"Done {unit.unit}")
             except Exception as e:
@@ -271,6 +284,7 @@ class BatchProcessor:
         selected_positions: Optional[List[Tuple[int, int]]] = None,
         output_width: Optional[int] = None,
         output_height: Optional[int] = None,
+        auto_size: bool = False,
     ) -> Tuple[List[str], List[Tuple[str, str]]]:
         """
         Process multiple images into GIFs with the same template.
@@ -299,7 +313,7 @@ class BatchProcessor:
                     split_mode, split_rows, split_cols,
                     tile_width, tile_height,
                     color_count, out, selected_positions,
-                    output_width, output_height,
+                    output_width, output_height, auto_size,
                 )
                 successful.append(result)
                 self._report_progress(idx, total, f"Done {Path(image_path).name}")

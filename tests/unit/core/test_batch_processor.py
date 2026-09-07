@@ -250,13 +250,18 @@ def test_process_batch_with_output_dir(tmp_path):
 
 # ── Frame folders: materials come from files, not from tiles ─────────────────
 
-def _bound_template(**group_kw) -> dict:
-    """A template whose one group is bound to *_org* — no fixed indices."""
+def _template(**group_kw) -> dict:
+    """A template whose one group carries the given group settings."""
     gm = GroupManager()
     gid = gm.add_group(CompositionGroup(
-        name="org", default_duration_ms=100, source_pattern="*_org*", **group_kw))
+        name="org", default_duration_ms=100, **group_kw))
     gm.set_root_group_id(gid)
     return TemplateManager.export_composition_template(gm)
+
+
+def _bound_template(**group_kw) -> dict:
+    """A template whose one group is bound to *_org* — no fixed indices."""
+    return _template(source_pattern="*_org*", **group_kw)
 
 
 def _frames(tmp_path, unit, shades, clip="org"):
@@ -384,3 +389,95 @@ def test_one_bad_unit_does_not_stop_the_rest(tmp_path):
 
     assert [Path(p).stem for p in ok] == ["dh02"]
     assert [unit for unit, _ in failed] == ["dh01"]
+
+
+# ── Sizing each output to its own materials ──────────────────────────────────
+
+def _sized_frames(tmp_path, unit, size, count=2):
+    folder = tmp_path / "frames"
+    folder.mkdir(parents=True, exist_ok=True)
+    for i in range(1, count + 1):
+        Image.new("RGB", size, (i * 50, 0, 0)).save(folder / f"{unit}_org{i:02d}.png")
+    return folder
+
+
+def test_auto_size_fits_the_output_to_the_unit(tmp_path):
+    folder = _sized_frames(tmp_path, "dh01", (37, 91))
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], _bound_template(), output_directory=str(tmp_path / "out"),
+        output_width=200, output_height=200, auto_size=True)
+
+    with Image.open(out) as im:
+        assert im.size == (37, 91)
+
+
+def test_without_auto_size_the_given_size_is_used(tmp_path):
+    folder = _sized_frames(tmp_path, "dh01", (37, 91))
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], _bound_template(), output_directory=str(tmp_path / "out"),
+        output_width=200, output_height=200)
+
+    with Image.open(out) as im:
+        assert im.size == (200, 200)
+
+
+def test_each_unit_in_a_folder_gets_its_own_size(tmp_path):
+    """One size across a batch crops the tall sources or pads the small ones."""
+    _sized_frames(tmp_path, "dh01", (37, 91))
+    _sized_frames(tmp_path, "dh02", (120, 44))
+    out_dir = tmp_path / "out"
+
+    ok, failed = BatchProcessor().process_frame_folder(
+        str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _bound_template(),
+        output_directory=str(out_dir), output_width=200, output_height=200,
+        auto_size=True)
+
+    assert failed == []
+    with Image.open(out_dir / "dh01.gif") as im:
+        assert im.size == (37, 91)
+    with Image.open(out_dir / "dh02.gif") as im:
+        assert im.size == (120, 44)
+
+
+def test_auto_size_falls_back_when_there_is_nothing_to_measure(tmp_path):
+    """Frames that draw nothing give no box to fit, so the set size stands."""
+    from src.core.composition_group import GroupSlot, LayerBlockEntry
+
+    folder = _sized_frames(tmp_path, "dh01", (37, 91))
+    scan = scan_frame_folder(str(folder), r"(?P<unit>dh\d+)_")
+
+    gm = GroupManager()
+    empty = gm.add_group(CompositionGroup(name="Empty"))
+    root = CompositionGroup(name="Root", default_duration_ms=100)
+    root.entries.append(LayerBlockEntry(timelines=[[GroupSlot(group_id=empty)]]))
+    gm.set_root_group_id(gm.add_group(root))
+    template = TemplateManager.export_composition_template(gm)
+
+    out = BatchProcessor().process_frame_set(
+        scan.units[0], template, output_directory=str(tmp_path / "out"),
+        output_width=64, output_height=48, auto_size=True)
+
+    with Image.open(out) as im:
+        assert im.size == (64, 48)
+
+
+def test_auto_size_works_for_sprite_sheets_too(tmp_path):
+    """A sheet's tiles have a natural size just as a unit's frames do."""
+    sheet = tmp_path / "sheet.png"
+    strip = Image.new("RGB", (40, 12))
+    for i in range(4):
+        strip.paste(Image.new("RGB", (10, 12), (i * 60, 20, 20)), (i * 10, 0))
+    strip.save(sheet)
+
+    out = BatchProcessor().process_single_image(
+        str(sheet), _simple_template(4), split_mode="grid",
+        split_rows=1, split_cols=4, tile_width=10, tile_height=12,
+        output_path=str(tmp_path / "o.gif"),
+        output_width=300, output_height=300, auto_size=True)
+
+    with Image.open(out) as im:
+        assert im.size == (10, 12)

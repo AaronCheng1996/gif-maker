@@ -62,6 +62,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--color-count", type=int, default=256, help="GIF palette size (default: 256)")
     parser.add_argument("--output-width", type=int, default=None, help="Override output GIF width")
     parser.add_argument("--output-height", type=int, default=None, help="Override output GIF height")
+    parser.add_argument("--auto-size", action="store_true",
+                         help="Size each output to its own materials, ignoring "
+                              "--output-width/--output-height")
     parser.add_argument("--positions", nargs="+", metavar="ROW,COL", default=None,
                          help="Only use these tile positions, e.g. --positions 0,0 0,1")
     parser.add_argument("--unit-pattern", metavar="REGEX", default=None,
@@ -119,6 +122,7 @@ def _run_frame_folder(args, template) -> int:
         output_directory=args.output_dir,
         output_width=args.output_width,
         output_height=args.output_height,
+        auto_size=args.auto_size,
         recursive=args.recursive,
     )
 
@@ -177,6 +181,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         selected_positions=positions,
         output_width=args.output_width,
         output_height=args.output_height,
+        auto_size=args.auto_size,
     )
 
     print(f"\nDone: {len(successful)} succeeded, {len(failed)} failed.")

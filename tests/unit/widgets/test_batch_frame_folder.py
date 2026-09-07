@@ -249,3 +249,63 @@ def test_cancelling_stops_a_batch_between_units(tmp_path):
     assert len(ok) == 1, "the unit in flight finishes, the rest do not start"
     assert failed == []
     assert "Cancelled" in started
+
+
+# ── Sizing each output to its own materials ──────────────────────────────────
+
+def test_auto_size_is_off_by_default(widget):
+    assert not widget.auto_size_checkbox.isChecked()
+    assert widget.output_width_spinbox.isEnabled()
+
+
+def test_auto_size_takes_the_size_boxes_over(widget):
+    widget.auto_size_checkbox.setChecked(True)
+
+    assert not widget.output_width_spinbox.isEnabled()
+    assert not widget.output_height_spinbox.isEnabled()
+
+    widget.auto_size_checkbox.setChecked(False)
+    assert widget.output_width_spinbox.isEnabled()
+
+
+def test_re_enabling_the_ui_after_a_run_leaves_auto_in_charge(widget):
+    """set_ui_enabled must not hand the boxes back while Auto is on."""
+    widget.auto_size_checkbox.setChecked(True)
+    widget.set_ui_enabled(False)
+    widget.set_ui_enabled(True)
+
+    assert not widget.output_width_spinbox.isEnabled()
+    assert not widget.output_height_spinbox.isEnabled()
+
+
+def test_a_folder_run_carries_the_auto_size_flag(widget):
+    _use_folder(widget)
+    widget.auto_size_checkbox.setChecked(True)
+
+    method, kwargs = widget.build_run_arguments()
+    assert method == "process_frame_folder"
+    assert kwargs["auto_size"] is True
+
+
+def test_a_sprite_sheet_run_carries_it_too(widget):
+    widget.sheet_source_radio.setChecked(True)
+    widget.image_paths = ["a.png"]
+    widget.auto_size_checkbox.setChecked(True)
+
+    method, kwargs = widget.build_run_arguments()
+    assert method == "process_batch"
+    assert kwargs["auto_size"] is True
+
+
+def test_the_two_sources_agree_on_everything_below_the_picker(widget):
+    """They differ only in where the materials come from."""
+    _use_folder(widget)
+    widget.image_paths = ["a.png"]
+
+    _, folder_kwargs = widget.build_run_arguments()
+    widget.sheet_source_radio.setChecked(True)
+    _, sheet_kwargs = widget.build_run_arguments()
+
+    shared = ("template", "output_directory", "color_count",
+              "output_width", "output_height", "auto_size")
+    assert all(folder_kwargs[k] == sheet_kwargs[k] for k in shared)

@@ -343,7 +343,17 @@ class BatchProcessorWidget(QWidget):
         self.output_height_spinbox.setValue(256)
         self.output_height_spinbox.setMaximumWidth(80)
         size_layout.addWidget(self.output_height_spinbox)
-        
+
+        self.auto_size_checkbox = QCheckBox("Auto")
+        self.auto_size_checkbox.setToolTip(
+            "Size each output to its own materials.\n"
+            "One size across a batch either crops the tall sources or pads the "
+            "small ones,\nand whole characters genuinely differ. Off, every "
+            "output uses the size set here."
+        )
+        self.auto_size_checkbox.toggled.connect(self._on_auto_size_toggled)
+        size_layout.addWidget(self.auto_size_checkbox)
+
         size_layout.addStretch()
         output_layout.addLayout(size_layout)
         
@@ -536,8 +546,7 @@ class BatchProcessorWidget(QWidget):
 
             gm, settings = TemplateManager.import_composition_template(self.selected_template)
             gb = GifBuilder()
-            gb.set_output_size(self.output_width_spinbox.value(),
-                               self.output_height_spinbox.value())
+            gb.set_output_size(*self._preview_output_size(gb, gm, mm))
             gb.set_loop(0)
             if settings.get("transparent_bg"):
                 gb.set_background_color(0, 0, 0, 0)
@@ -552,6 +561,22 @@ class BatchProcessorWidget(QWidget):
             self.batch_preview_widget.play()
         except Exception as e:
             QMessageBox.warning(self, "Preview Failed", f"Could not generate preview:\n{e}")
+
+    def _preview_output_size(self, gif_builder, group_manager, material_manager):
+        """The size the export would use, so the preview is not a different GIF."""
+        if self.auto_size_checkbox.isChecked():
+            root_id = group_manager.get_root_group_id()
+            if root_id is not None:
+                w, h = gif_builder.measure_group_output_size(
+                    root_id, group_manager, material_manager)
+                if w > 0 and h > 0:
+                    return w, h
+        return self.output_width_spinbox.value(), self.output_height_spinbox.value()
+
+    def _on_auto_size_toggled(self, checked: bool):
+        """The size boxes are what Auto replaces, so they go quiet while it is on."""
+        self.output_width_spinbox.setEnabled(not checked)
+        self.output_height_spinbox.setEnabled(not checked)
 
     def is_frame_folder_source(self) -> bool:
         return self.folder_source_radio.isChecked()
@@ -936,6 +961,44 @@ class BatchProcessorWidget(QWidget):
             self._gen_preview_btn.setEnabled(
                 has_source and has_template and not self.is_frame_folder_source())
     
+    def build_run_arguments(self):
+        """Which BatchProcessor method this run calls, and with what.
+
+        Split out from the run so the wiring can be read back without starting
+        a thread: the two sources share every setting below the source picker,
+        and it is those shared ones that quietly go missing.
+        """
+        output_directory = (
+            None if self.same_dir_checkbox.isChecked()
+            else self.output_dir_edit.text().strip() or None
+        )
+        shared = dict(
+            template=self.selected_template,
+            output_directory=output_directory,
+            color_count=int(self.color_palette_combo.currentText()),
+            output_width=self.output_width_spinbox.value(),
+            output_height=self.output_height_spinbox.value(),
+            auto_size=self.auto_size_checkbox.isChecked(),
+        )
+
+        if self.is_frame_folder_source():
+            return "process_frame_folder", dict(
+                folder=self.frames_dir_edit.text().strip(),
+                pattern=self.unit_pattern_edit.text().strip() or None,
+                **shared,
+            )
+
+        return "process_batch", dict(
+            image_paths=list(self.image_paths),
+            split_mode="grid" if self.grid_mode_radio.isChecked() else "size",
+            split_rows=self.rows_spinbox.value(),
+            split_cols=self.cols_spinbox.value(),
+            tile_width=self.tile_width_spinbox.value(),
+            tile_height=self.tile_height_spinbox.value(),
+            selected_positions=self.selected_positions if self.selected_positions else None,
+            **shared,
+        )
+
     def start_batch_processing(self):
         """Start the batch processing in a background thread."""
         if not self.validate_settings():
@@ -965,43 +1028,9 @@ class BatchProcessorWidget(QWidget):
         self.progress_bar.setValue(0)
         self.progress_label.setText("Starting…")
 
-        output_directory = (
-            None if self.same_dir_checkbox.isChecked()
-            else self.output_dir_edit.text().strip() or None
-        )
-
         from ..core.batch_processor import BatchProcessor
         processor = self._processor = BatchProcessor()
-
-        if folder_source:
-            method = "process_frame_folder"
-            kwargs = dict(
-                folder=self.frames_dir_edit.text().strip(),
-                pattern=self.unit_pattern_edit.text().strip() or None,
-                template=self.selected_template,
-                output_directory=output_directory,
-                color_count=int(self.color_palette_combo.currentText()),
-                output_width=self.output_width_spinbox.value(),
-                output_height=self.output_height_spinbox.value(),
-            )
-        else:
-            method = "process_batch"
-            split_mode = "grid" if self.grid_mode_radio.isChecked() else "size"
-            kwargs = dict(
-                image_paths=list(self.image_paths),
-                template=self.selected_template,
-                split_mode=split_mode,
-                split_rows=self.rows_spinbox.value(),
-                split_cols=self.cols_spinbox.value(),
-                tile_width=self.tile_width_spinbox.value(),
-                tile_height=self.tile_height_spinbox.value(),
-                selected_positions=self.selected_positions if self.selected_positions else None,
-                output_directory=output_directory,
-                color_count=int(self.color_palette_combo.currentText()),
-                output_width=self.output_width_spinbox.value(),
-                output_height=self.output_height_spinbox.value(),
-            )
-
+        method, kwargs = self.build_run_arguments()
         self._worker = _BatchWorker(processor, kwargs, method)
         self._thread = QThread(self)
         self._worker.moveToThread(self._thread)
@@ -1089,8 +1118,8 @@ class BatchProcessorWidget(QWidget):
         self.tile_height_spinbox.setEnabled(enabled)
         self.select_all_btn.setEnabled(enabled)
         self.deselect_all_btn.setEnabled(enabled)
-        self.output_width_spinbox.setEnabled(enabled)
-        self.output_height_spinbox.setEnabled(enabled)
+        self.output_width_spinbox.setEnabled(enabled and not self.auto_size_checkbox.isChecked())
+        self.output_height_spinbox.setEnabled(enabled and not self.auto_size_checkbox.isChecked())
         self.color_palette_combo.setEnabled(enabled)
         self.same_dir_checkbox.setEnabled(enabled)
         self.browse_output_btn.setEnabled(enabled and not self.same_dir_checkbox.isChecked())

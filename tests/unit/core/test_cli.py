@@ -266,3 +266,22 @@ def test_the_two_sources_are_mutually_exclusive(tmp_path):
     frames = _frame_folder(tmp_path, {"dh01": [10]})
     with pytest.raises(SystemExit):
         main(["--frames", frames, "--images", "a.png", "--template", template])
+
+
+def test_auto_size_fits_each_unit_to_its_own_frames(tmp_path):
+    template = _bound_template_file(tmp_path)
+    folder = tmp_path / "frames"
+    folder.mkdir(parents=True, exist_ok=True)
+    for unit, size in (("dh01", (37, 91)), ("dh02", (120, 44))):
+        for i in (1, 2):
+            Image.new("RGB", size, (i * 60, 0, 0)).save(folder / f"{unit}_org{i:02d}.png")
+    out_dir = tmp_path / "out"
+
+    rc = main(["--frames", str(folder), "--unit-pattern", r"(?P<unit>dh\d+)_",
+               "--template", template, "--output-dir", str(out_dir), "--auto-size"])
+
+    assert rc == 0
+    with Image.open(out_dir / "dh01.gif") as im:
+        assert im.size == (37, 91)
+    with Image.open(out_dir / "dh02.gif") as im:
+        assert im.size == (120, 44)
