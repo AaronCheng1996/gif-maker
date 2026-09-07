@@ -392,3 +392,43 @@ def test_two_groups_sharing_a_name_go_to_the_row_that_was_picked(qapp, picker):
     assert calls[0]["items"][second] == f"[{second}] Idle"
     assert len(window.group_manager.get_group(second).entries) == 1
     assert window.group_manager.get_group(first).entries == []
+
+
+def test_auto_fit_sizes_a_bound_group(qapp):
+    """Auto used to report 'no materials' for a group bound to a glob: it has
+    no entries, and the size was measured by walking them."""
+    from PIL import Image
+    from src.core.composition_group import CompositionGroup
+
+    window = MainWindow()
+    for name, size in [("dh01_idle01", (40, 90)), ("dh01_org01", (96, 253)),
+                       ("dh01_org02", (97, 257))]:
+        window.material_manager.add_material(Image.new("RGBA", size), name=name)
+
+    gid = window.group_manager.add_group(
+        CompositionGroup(name="org", source_pattern="*_org*"))
+    window.current_group_id = gid
+
+    assert window.get_all_materials_max_size() == (97, 257)
+
+    window.auto_fit_output_size()
+    assert (window.width_spinbox.value(), window.height_spinbox.value()) == (97, 257)
+
+
+def test_auto_fit_sizes_a_root_made_of_sub_group_references(qapp):
+    """Same blind spot: a root holding only references has no frame of its own."""
+    from PIL import Image
+    from src.core.composition_group import CompositionGroup, SubGroupEntry
+
+    window = MainWindow()
+    window.material_manager.add_material(Image.new("RGBA", (70, 25)), name="a_org01")
+
+    child = window.group_manager.add_group(
+        CompositionGroup(name="org", source_pattern="*_org*"))
+    root_gid = window.group_manager.get_root_group_id()
+    window.group_manager.get_group(root_gid).entries.append(
+        SubGroupEntry(group_id=child, x=5, y=0))
+    window.current_group_id = root_gid
+
+    window.auto_fit_output_size()
+    assert (window.width_spinbox.value(), window.height_spinbox.value()) == (75, 25)

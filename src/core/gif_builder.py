@@ -882,6 +882,40 @@ class GifBuilder:
         out_durations = [sum(durations[start:start + length]) for start, length in runs]
         return out_frames, out_durations
 
+    def measure_group_output_size(
+        self,
+        group_id: int,
+        group_manager: "GroupManager",
+        material_manager: MaterialManager,
+    ) -> Tuple[int, int]:
+        """The canvas this group needs: the box its frames actually draw into.
+
+        Measured from the expansion rather than from the group's own entries,
+        because the expansion is the only view that has resolved everything
+        deciding what gets drawn — the materials a binding matched, the frames a
+        sub-group contributes and the offset it contributes them at, a layer
+        block's slots. A group holding nothing but sub-group references has no
+        entry to measure and would otherwise come back empty.
+
+        Materials are pasted top-left at (x, y), so a frame at x=50 needs
+        50 + its width; the widest material alone would clip it.
+        """
+        frames, _ = self._expand_composition_group(
+            group_id, group_manager, material_manager
+        )
+        width = height = 0
+        for layers in frames:
+            for material_idx, x, y in layers:
+                if material_idx is None:
+                    continue
+                material = material_manager.get_material(material_idx)
+                if material is None:
+                    continue
+                w, h = material[0].size
+                width = max(width, x + w)
+                height = max(height, y + h)
+        return (max(0, width), max(0, height))
+
     def get_preview_frames_for_group(
         self,
         group_id: int,

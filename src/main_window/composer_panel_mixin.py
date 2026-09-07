@@ -425,19 +425,21 @@ class ComposerPanelMixin:
         return count
 
     def get_all_materials_max_size(self) -> Tuple[int, int]:
-        """Return max (width, height) of all FrameEntry materials in the current group."""
+        """Return the output size the current group needs to draw everything.
+
+        Delegated to the builder, which measures the group as it will be
+        exported. Walking the group's own entries instead missed everything that
+        is not a plain frame sitting directly in it: a group bound to a material
+        glob has no entries at all, and a root made of sub-group references has
+        none either, so both came back 0 and Auto reported no materials.
+        """
         group = self._get_current_group()
-        if group is None:
+        if group is None or self.current_group_id is None:
             return (0, 0)
-        max_w = max_h = 0
-        for entry in group.entries:
-            if isinstance(entry, FrameEntry):
-                mat = self.material_manager.get_material(entry.material_index)
-                if mat:
-                    w, h = mat[0].size
-                    max_w = max(max_w, w)
-                    max_h = max(max_h, h)
-        return (max_w, max_h)
+        from ..core.gif_builder import GifBuilder
+        return GifBuilder().measure_group_output_size(
+            self.current_group_id, self.group_manager, self.material_manager
+        )
 
     def auto_fit_output_size(self):
         """Automatically adjust output size to fit all materials."""
