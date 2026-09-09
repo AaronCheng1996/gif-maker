@@ -5,7 +5,9 @@ import pytest
 from pathlib import Path
 from PIL import Image, ImageSequence
 
-from src.core.batch_processor import BatchProcessor, BatchProcessingError
+from src.core.batch_processor import (
+    BatchProcessor, BatchProcessingError, check_material_coverage,
+)
 from src.core.frame_set import FrameSet, scan_frame_folder
 from src.core.template_manager import TemplateManager
 from src.core.group_manager import GroupManager
@@ -195,7 +197,7 @@ def test_process_batch(tmp_path):
     progress_calls = []
     bp.set_progress_callback(lambda c, t, m: progress_calls.append((c, t)))
 
-    successful, failed = bp.process_batch(
+    successful, failed, _ = bp.process_batch(
         image_paths=sources,
         template=tpl,
         split_mode="grid",
@@ -229,7 +231,7 @@ def test_process_batch_with_output_dir(tmp_path):
 
     tpl = _simple_template(n_tiles=1)
     bp = BatchProcessor()
-    successful, failed = bp.process_batch(
+    successful, failed, _ = bp.process_batch(
         image_paths=sources,
         template=tpl,
         split_mode="grid",
@@ -354,7 +356,7 @@ def test_a_folder_builds_one_gif_per_unit(tmp_path):
     _frames(tmp_path, "dh02", [30, 40, 50])
     out_dir = tmp_path / "out"
 
-    ok, failed = BatchProcessor().process_frame_folder(
+    ok, failed, _ = BatchProcessor().process_frame_folder(
         str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _bound_template(),
         output_directory=str(out_dir), output_width=8, output_height=8)
 
@@ -383,7 +385,7 @@ def test_one_bad_unit_does_not_stop_the_rest(tmp_path):
     _frames(tmp_path, "dh01", [10])
     _frames(tmp_path, "dh02", [20, 30, 40])
 
-    ok, failed = BatchProcessor().process_frame_folder(
+    ok, failed, _ = BatchProcessor().process_frame_folder(
         str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _simple_template(3),
         output_directory=str(tmp_path / "out"), output_width=8, output_height=8)
 
@@ -431,7 +433,7 @@ def test_each_unit_in_a_folder_gets_its_own_size(tmp_path):
     _sized_frames(tmp_path, "dh02", (120, 44))
     out_dir = tmp_path / "out"
 
-    ok, failed = BatchProcessor().process_frame_folder(
+    ok, failed, _ = BatchProcessor().process_frame_folder(
         str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _bound_template(),
         output_directory=str(out_dir), output_width=200, output_height=200,
         auto_size=True)
@@ -481,3 +483,118 @@ def test_auto_size_works_for_sprite_sheets_too(tmp_path):
 
     with Image.open(out) as im:
         assert im.size == (10, 12)
+
+
+# ── The third outcome: built, but a group of the template stayed empty ───────
+
+def _two_clip_template() -> dict:
+    """A root that plays an org group and an idle group, both bound by name."""
+    gm = GroupManager()
+    org = gm.add_group(CompositionGroup(name="org", default_duration_ms=100,
+                                        source_pattern="*_org*"))
+    idle = gm.add_group(CompositionGroup(name="idle", default_duration_ms=100,
+                                         source_pattern="*_idle*"))
+    root = gm.add_group(CompositionGroup(name="Root", default_duration_ms=100))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=org, loop_count=1))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=idle, loop_count=1))
+    gm.set_root_group_id(root)
+    return TemplateManager.export_composition_template(gm)
+
+
+def test_a_group_no_file_fills_is_named_before_anything_is_loaded(tmp_path):
+    """The pre-flight half: answerable from names, so a scan can show it."""
+    notes = check_material_coverage(_two_clip_template(),
+                                    ["dh01_org01", "dh01_org02"])
+    assert len(notes) == 1
+    assert "idle" in notes[0] and "*_idle*" in notes[0]
+
+
+def test_a_material_set_that_fills_every_group_warns_about_nothing(tmp_path):
+    assert check_material_coverage(
+        _two_clip_template(), ["dh01_org01", "dh01_idle01"]) == []
+
+
+def test_a_group_under_a_bound_group_is_not_reached_so_not_reported():
+    """A bound group's entries are kept but not exported, so what hangs off one
+    is not part of the build and must not be reported as missing."""
+    gm = GroupManager()
+    buried = gm.add_group(CompositionGroup(name="buried", source_pattern="*_nope*"))
+    root = gm.add_group(CompositionGroup(name="Root", source_pattern="*_org*"))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=buried, loop_count=1))
+    gm.set_root_group_id(root)
+
+    assert check_material_coverage(
+        TemplateManager.export_composition_template(gm), ["dh01_org01"]) == []
+
+
+def test_a_unit_missing_a_clip_is_reported_as_a_warning_not_a_failure(tmp_path):
+    """The GIF is written and is one animation short, which nothing else says."""
+    _frames(tmp_path, "dh01", [10, 20], clip="org")
+    _frames(tmp_path, "dh01", [30, 40], clip="idle")
+    _frames(tmp_path, "dh02", [10, 20], clip="org")      # no idle clip
+
+    ok, failed, warnings = BatchProcessor().process_frame_folder(
+        str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _two_clip_template(),
+        output_directory=str(tmp_path / "out"),
+        output_width=8, output_height=8)
+
+    assert len(ok) == 2 and failed == []
+    assert [unit for unit, _ in warnings] == ["dh02"]
+    assert "idle" in warnings[0][1]
+
+
+def test_a_warned_unit_still_produced_its_gif(tmp_path):
+    """Warnings overlap successes on purpose: the file exists, it is just worth
+    opening. Dropping it from successful would hide an output that was made."""
+    _frames(tmp_path, "dh01", [10, 20], clip="org")
+
+    ok, failed, warnings = BatchProcessor().process_frame_folder(
+        str(tmp_path / "frames"), r"(?P<unit>dh\d+)_", _two_clip_template(),
+        output_directory=str(tmp_path / "out"),
+        output_width=8, output_height=8)
+
+    assert warnings and failed == []
+    assert len(ok) == 1 and Path(ok[0]).exists()
+
+
+def test_a_sprite_sheet_run_reports_the_same_third_outcome(tmp_path):
+    """Both sources check in _build_from_materials, so neither can drift."""
+    src = tmp_path / "sheet.png"
+    Image.new("RGB", (16, 16), (10, 20, 30)).save(src)
+
+    gm = GroupManager()
+    tiles = gm.add_group(CompositionGroup(name="tiles", source_pattern="*_tile_*"))
+    missing = gm.add_group(CompositionGroup(name="org", source_pattern="*_org*"))
+    root = gm.add_group(CompositionGroup(name="Root", default_duration_ms=100))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=tiles, loop_count=1))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=missing, loop_count=1))
+    gm.set_root_group_id(root)
+
+    ok, failed, warnings = BatchProcessor().process_batch(
+        image_paths=[str(src)],
+        template=TemplateManager.export_composition_template(gm),
+        split_mode="grid", split_rows=1, split_cols=1,
+        tile_width=0, tile_height=0,
+        output_directory=str(tmp_path / "out"),
+        output_width=16, output_height=16)
+
+    # Tiles are named sheet_tile_0, which '*_org*' cannot match.
+    assert len(ok) == 1 and failed == []
+    assert [Path(key).name for key, _ in warnings] == ["sheet.png"]
+
+
+def test_a_composition_left_wholly_empty_is_a_failure_not_a_warning(tmp_path):
+    """A warning says an output is short of something; with nothing to draw at
+    all there is no output, and that is the existing failure path."""
+    src = tmp_path / "sheet.png"
+    Image.new("RGB", (16, 16), (10, 20, 30)).save(src)
+
+    ok, failed, warnings = BatchProcessor().process_batch(
+        image_paths=[str(src)], template=_bound_template(),
+        split_mode="grid", split_rows=1, split_cols=1,
+        tile_width=0, tile_height=0,
+        output_directory=str(tmp_path / "out"),
+        output_width=16, output_height=16)
+
+    assert ok == [] and warnings == []
+    assert len(failed) == 1

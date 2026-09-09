@@ -9,7 +9,9 @@ import pytest
 from PIL import Image
 from PyQt6.QtWidgets import QApplication
 
-from src.core.composition_group import CompositionGroup, FrameEntry
+from src.core.composition_group import (
+    CompositionGroup, FrameEntry, SubGroupEntry,
+)
 from src.core.group_manager import GroupManager
 from src.core.template_manager import TemplateManager
 from src.widgets.batch_processor_widget import BatchProcessorWidget
@@ -242,7 +244,7 @@ def test_cancelling_stops_a_batch_between_units(tmp_path):
             bp.cancel()
 
     bp.set_progress_callback(on_progress)
-    ok, failed = bp.process_frame_folder(
+    ok, failed, _ = bp.process_frame_folder(
         str(folder), r"(?P<unit>dh\d+)_", _bound_template(),
         output_directory=str(tmp_path / "out"), output_width=8, output_height=8)
 
@@ -309,3 +311,189 @@ def test_the_two_sources_agree_on_everything_below_the_picker(widget):
     shared = ("template", "output_directory", "color_count",
               "output_width", "output_height", "auto_size")
     assert all(folder_kwargs[k] == sheet_kwargs[k] for k in shared)
+
+
+# ── Analyse: offering a rule instead of demanding one ────────────────────────
+
+def test_analysing_fills_the_dropdown_and_writes_a_rule_into_the_field(widget):
+    """The field stays authoritative — a suggestion is a starting point, so it
+    lands in the same box the user can go on to edit by hand."""
+    widget.folder_source_radio.setChecked(True)
+    widget.frames_dir_edit.setText(str(widget.frames_dir))
+    widget.unit_pattern_edit.setText("")
+
+    widget.suggest_unit_rules()
+
+    assert widget.suggestion_row.isVisibleTo(widget)
+    assert widget.suggestion_combo.count() > 1
+    assert widget.unit_pattern_edit.text() == (widget._suggestions[0].pattern or "")
+
+
+def test_choosing_a_suggestion_scans_with_it(widget):
+    widget.folder_source_radio.setChecked(True)
+    widget.frames_dir_edit.setText(str(widget.frames_dir))
+    widget.suggest_unit_rules()
+
+    split = [i for i, s in enumerate(widget._suggestions) if s.units == 2]
+    assert split, "dh01/dh02 should be on offer as two GIFs"
+    widget.suggestion_combo.setCurrentIndex(split[0])
+    chosen = widget._suggestions[split[0]]
+
+    assert widget.unit_pattern_edit.text() == chosen.pattern
+    assert len(widget.frame_scan.units) == chosen.units
+
+
+def test_a_suggestions_warnings_are_shown_beside_it(widget):
+    """stray.png matches no rule; a count of skipped files in the summary is
+    not the same as being told which file and why."""
+    widget.folder_source_radio.setChecked(True)
+    widget.frames_dir_edit.setText(str(widget.frames_dir))
+    widget.suggest_unit_rules()
+
+    warned = [i for i, s in enumerate(widget._suggestions) if s.warnings]
+    assert warned
+    widget.suggestion_combo.setCurrentIndex(warned[0])
+    assert widget.suggestion_warning_label.isVisibleTo(widget)
+    assert "stray.png" in widget.suggestion_warning_label.text()
+
+
+def test_a_hand_typed_rule_is_checked_the_same_way(widget):
+    """The rule most likely to be wrong is the one nobody suggested."""
+    _use_folder(widget, r"(?P<unit>dh\d+)_")
+
+    assert widget.suggestion_warning_label.isVisibleTo(widget)
+    assert "stray.png" in widget.suggestion_warning_label.text()
+
+
+def test_a_rule_with_nothing_to_flag_says_nothing(widget, tmp_path):
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    for i in (1, 2, 3):
+        Image.new("RGB", (8, 8), (i, i, i)).save(clean / f"dh01_org{i:02d}.png")
+
+    widget.folder_source_radio.setChecked(True)
+    widget.frames_dir_edit.setText(str(clean))
+    widget.unit_pattern_edit.setText(r"(?P<unit>dh\d+)_")
+    widget.rescan_frame_folder()
+
+    assert widget.frame_scan.units and not widget.frame_scan.skipped
+    assert not widget.suggestion_warning_label.isVisibleTo(widget)
+
+
+def test_analysing_without_a_folder_asks_for_one(widget, monkeypatch):
+    asked = []
+    monkeypatch.setattr(
+        "src.widgets.batch_processor_widget.QMessageBox.information",
+        lambda *a, **k: asked.append(a))
+    widget.frames_dir_edit.setText("")
+
+    widget.suggest_unit_rules()
+    assert asked
+
+
+# ── Warnings: built, but a group of the template stayed empty ────────────────
+
+def _two_clip_template():
+    gm = GroupManager()
+    org = gm.add_group(CompositionGroup(name="org", source_pattern="*_org*"))
+    idle = gm.add_group(CompositionGroup(name="idle", source_pattern="*_idle*"))
+    root = gm.add_group(CompositionGroup(name="Root", default_duration_ms=100))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=org, loop_count=1))
+    gm.get_group(root).entries.append(SubGroupEntry(group_id=idle, loop_count=1))
+    gm.set_root_group_id(root)
+    return TemplateManager.export_composition_template(gm)
+
+
+def test_a_unit_that_will_come_out_short_is_marked_at_scan_time(widget):
+    """Knowing before the run beats reading it in the summary afterwards."""
+    widget.set_templates({"two clips": _two_clip_template()})
+    widget.template_combo.setCurrentIndex(widget.template_combo.count() - 1)
+    _use_folder(widget)
+
+    rows = [widget.unit_list.item(i).text() for i in range(widget.unit_list.count())]
+    assert rows and all("⚠" in row for row in rows), "no unit has an idle clip"
+    assert "idle" in "".join(rows)
+    assert "with warnings" in widget.unit_count_label.text()
+
+
+def test_a_template_that_every_unit_fills_marks_nothing(widget):
+    _use_folder(widget)
+
+    rows = [widget.unit_list.item(i).text() for i in range(widget.unit_list.count())]
+    assert rows and not any("⚠" in row for row in rows)
+
+
+def test_changing_the_template_re_marks_the_units(widget):
+    """The marks are a property of the template, so they go stale when it does."""
+    _use_folder(widget)
+    assert "with warnings" not in widget.unit_count_label.text()
+
+    widget.set_templates({"two clips": _two_clip_template()})
+    widget.template_combo.setCurrentIndex(widget.template_combo.count() - 1)
+
+    assert "with warnings" in widget.unit_count_label.text()
+
+
+def test_a_finished_run_keeps_its_warnings_on_screen(widget):
+    """The message box is dismissed; the list of what to go and check is not."""
+    _use_folder(widget)
+    widget._mark_warned_units([("dh02", "group 'idle' is bound to '*_idle*' "
+                                        "and no material matches")])
+
+    rows = [widget.unit_list.item(i).text() for i in range(widget.unit_list.count())]
+    assert not rows[0].startswith("⚠")
+    assert rows[1].startswith("⚠") and "idle" in rows[1]
+
+
+# ── The suggestions row must not decide how wide the tab is ──────────────────
+
+@pytest.fixture()
+def long_named_frames(tmp_path):
+    """Names the length of the ones this came up on."""
+    folder = tmp_path / "long"
+    folder.mkdir()
+    for scene in ("dhD19", "dhD20", "dhL01", "dhS20"):
+        for clip in ("idle1", "org1", "pis2"):
+            for i in (1, 2, 3):
+                Image.new("RGB", (8, 8), (i * 40, 0, 0)).save(
+                    folder / f"{scene}_ho_nude_fera_{clip}_outside_{i}.png")
+    return folder
+
+
+def _analysed(widget, folder):
+    widget.folder_source_radio.setChecked(True)
+    before = widget.folder_source_panel.minimumSizeHint().width()
+    widget.frames_dir_edit.setText(str(folder))
+    widget.suggest_unit_rules()
+    return before
+
+
+def test_analysing_does_not_widen_the_panel(widget, long_named_frames):
+    """A combo asks for its widest item, and these items are sentences: the
+    panel grew past the window and took the buttons below it out of reach."""
+    before = _analysed(widget, long_named_frames)
+
+    assert widget.suggestion_combo.count() > 1
+    assert widget.folder_source_panel.minimumSizeHint().width() == before
+
+
+def test_the_closed_box_is_narrower_than_what_it_holds(widget, long_named_frames):
+    _analysed(widget, long_named_frames)
+
+    combo = widget.suggestion_combo
+    fm = combo.fontMetrics()
+    widest = max(fm.horizontalAdvance(combo.itemText(i))
+                 for i in range(combo.count()))
+    assert combo.minimumSizeHint().width() < widest
+
+
+def test_the_open_list_is_wide_enough_to_read(widget, long_named_frames):
+    """The closed box shrinking must not cost you the text you are choosing
+    from — the two are sized separately on purpose."""
+    _analysed(widget, long_named_frames)
+
+    combo = widget.suggestion_combo
+    fm = combo.fontMetrics()
+    widest = max(fm.horizontalAdvance(combo.itemText(i))
+                 for i in range(combo.count()))
+    assert combo.view().minimumWidth() >= widest

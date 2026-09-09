@@ -8,7 +8,8 @@ import pytest
 from PIL import Image
 
 from src.core.frame_set import (
-    FrameSetError, compile_unit_pattern, scan_frame_folder, unit_of,
+    FrameSetError, compile_unit_pattern, scan_frame_folder,
+    suggest_unit_patterns, unit_of,
 )
 
 DH = r"(?P<unit>s?dh\d+(?:_sleep)?)_"
@@ -138,3 +139,108 @@ def test_scanning_something_that_is_not_a_folder_is_reported(tmp_path):
 def test_the_summary_counts_units_and_frames(tmp_path):
     _folder(tmp_path, "dh01_org01.png", "dh01_org02.png", "dh02_org01.png")
     assert scan_frame_folder(str(tmp_path), DH).summary() == "2 unit(s), 3 frame(s)"
+
+
+# ── Suggesting a rule from the names that are there ──────────────────────────
+
+def _suggest(tmp_path, *names, subdir=None):
+    _folder(tmp_path, *names, subdir=subdir)
+    return suggest_unit_patterns(str(tmp_path / (subdir or "")))
+
+
+def test_a_scene_id_is_generalised_into_a_readable_rule(tmp_path):
+    """dhD/dhL/dhS becomes dh[DLS], not three escaped literals: the offered rule
+    is meant to be read and edited, not just accepted."""
+    found = _suggest(
+        tmp_path,
+        "dhD19_idle_1.png", "dhD19_idle_2.png",
+        "dhD19_org_1.png", "dhD19_org_2.png",
+        "dhD20_org_1.png", "dhD20_org_2.png",
+        "dhL01_org_1.png", "dhL01_org_2.png",
+        "dhS20_org_1.png", "dhS20_org_2.png",
+    )
+    assert any(s.pattern == r"(?P<unit>dh[DLS]\d+)_" for s in found)
+
+
+def test_every_offered_rule_produces_what_it_claims(tmp_path):
+    """The numbers are the point, so they have to survive being run again."""
+    found = _suggest(tmp_path, "dh01_org_1.png", "dh01_org_2.png",
+                     "dh02_org_1.png", "dh02_org_2.png")
+
+    for s in found:
+        scan = scan_frame_folder(str(tmp_path), s.pattern)
+        assert len(scan.units) == s.units
+        assert sum(len(u) for u in scan.units) == s.frames
+        assert len(scan.skipped) == s.skipped
+        assert min(len(u) for u in scan.units) == s.min_frames
+        assert max(len(u) for u in scan.units) == s.max_frames
+
+
+def test_suggestions_run_from_the_coarsest_cut_to_the_finest(tmp_path):
+    found = _suggest(tmp_path, "dh01_org_1.png", "dh01_org_2.png",
+                     "dh02_org_1.png", "dh02_org_2.png")
+    assert [s.units for s in found] == sorted(s.units for s in found)
+    assert found[0].pattern is None
+
+
+def test_rules_that_cut_the_folder_the_same_way_are_one_choice(tmp_path):
+    """'dh01' and 'dh01_' group the same files; offering both is offering the
+    user a difference that is not there."""
+    found = _suggest(tmp_path, "dh01_org_1.png", "dh01_org_2.png",
+                     "dh02_org_1.png", "dh02_org_2.png")
+    shapes = [(s.units, s.frames, s.skipped) for s in found]
+    assert len(shapes) == len(set(shapes))
+
+
+def test_a_rule_that_makes_a_gif_of_every_file_is_not_offered(tmp_path):
+    found = _suggest(tmp_path, "a_1.png", "b_1.png", "c_1.png")
+    assert all(s.units < 3 for s in found)
+
+
+def test_a_separator_spelled_two_ways_still_gathers_one_animation(tmp_path):
+    """An exporter that wrote 'org_ 1' beside 'org_2' names one animation; a
+    rule reading only the tidy half drops the rest without saying so."""
+    found = _suggest(tmp_path, "dh01_org_1.png", "dh01_org_ 2.png",
+                     "dh02_org_1.png", "dh02_org_ 2.png")
+    numbered = [s for s in found
+                if s.pattern and s.pattern.endswith(r"\d+$")]
+    assert numbered and all(s.skipped == 0 for s in numbered)
+
+
+def test_a_still_among_numbered_frames_is_called_out(tmp_path):
+    """A background exported beside the frames builds without complaint and
+    plays as a flash of empty scene, so the scan has to be the one to notice."""
+    found = _suggest(tmp_path, "dh01_org_1.png", "dh01_org_2.png",
+                     "dh01_org_3.png", "dh01_bg.png")
+    grouped = [s for s in found if s.units == 1]
+    assert grouped
+    assert any("dh01_bg.png" in str(w) and "still" in str(w)
+               for s in grouped for w in s.warnings)
+
+
+def test_files_a_rule_drops_are_reported_against_that_rule(tmp_path):
+    found = _suggest(tmp_path, "dh01_org_1.png", "dh01_org_2.png", "notes.png")
+    dropped = [s for s in found if s.skipped]
+    assert dropped
+    assert any("notes.png" in str(w) for s in dropped for w in s.warnings)
+
+
+def test_a_phrase_keeps_its_values_apart_from_its_wording(tmp_path):
+    """The UI translates the template and must not have to re-derive the
+    numbers, so they travel beside it rather than baked into a string."""
+    found = _suggest(tmp_path, "dhD19_org_1.png", "dhD20_org_1.png",
+                     "dhL01_org_1.png", "dhS20_org_1.png")
+    labelled = [s for s in found if s.label.args]
+    assert labelled and all(isinstance(v, int) for s in labelled
+                            for v in s.label.args.values())
+    assert all("{" not in str(s.label) for s in found)
+
+
+def test_a_folder_with_no_images_suggests_nothing(tmp_path):
+    (tmp_path / "empty").mkdir()
+    assert suggest_unit_patterns(str(tmp_path / "empty")) == []
+
+
+def test_suggesting_for_something_that_is_not_a_folder_is_reported(tmp_path):
+    with pytest.raises(FrameSetError, match="Not a folder"):
+        suggest_unit_patterns(str(tmp_path / "nope"))

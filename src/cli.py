@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .core.batch_processor import BatchProcessor
-from .core.frame_set import FrameSetError, scan_frame_folder
+from .core.frame_set import (
+    FrameSetError, scan_frame_folder, suggest_unit_patterns,
+)
 from .core.template_manager import TemplateManager
 
 
@@ -49,8 +51,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     source.add_argument("--frames", metavar="DIR",
                         help="A folder of exported frames; one GIF per unit "
                              "(see --unit-pattern)")
-    parser.add_argument("--template", required=True, metavar="PATH",
+    parser.add_argument("--template", metavar="PATH",
                          help="Path to a template JSON file (exported from the Template Manager)")
+    parser.add_argument("--suggest", action="store_true",
+                         help="Read the --frames names, print the unit rules "
+                              "that fit them with the number of GIFs each would "
+                              "produce, and stop. The one setting with no safe "
+                              "default, answered from the folder itself.")
     parser.add_argument("--output-dir", metavar="DIR",
                          help="Directory to write output GIFs into (default: alongside each source image)")
     parser.add_argument("--split-mode", choices=["grid", "size"], default="grid",
@@ -81,6 +88,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="With --frames, list the units that would be built "
                               "and stop")
     return parser
+
+
+def _report(successful, failed, warnings) -> None:
+    """Print the three outcomes of a run.
+
+    A warning is not a failure and not a silent success: the file was written,
+    but a group of the template found nothing to fill it, so that output is one
+    animation short. Listed by name because the point of noticing is being able
+    to go and open those and only those."""
+    line = f"\nDone: {len(successful)} succeeded"
+    if warnings:
+        line += f", {len({key for key, _ in warnings})} with warnings"
+    print(line + f", {len(failed)} failed.")
+
+    for key, note in warnings:
+        print(f"  WARNING {key}: {note}")
+    for key, err in failed:
+        print(f"  FAILED {key}: {err}", file=sys.stderr)
 
 
 def _run_frame_folder(args, template) -> int:
@@ -114,7 +139,7 @@ def _run_frame_folder(args, template) -> int:
     processor.set_progress_callback(
         lambda current, total, message: print(f"[{current}/{total}] {message}"))
 
-    successful, failed = processor.process_frame_folder(
+    successful, failed, warnings = processor.process_frame_folder(
         folder=str(folder),
         pattern=args.unit_pattern,
         template=template,
@@ -126,15 +151,48 @@ def _run_frame_folder(args, template) -> int:
         recursive=args.recursive,
     )
 
-    print(f"\nDone: {len(successful)} succeeded, {len(failed)} failed.")
-    for unit, err in failed:
-        print(f"  FAILED {unit}: {err}", file=sys.stderr)
+    _report(successful, failed, warnings)
     return 0 if not failed else 2
+
+
+def _run_suggest(folder: str, recursive: bool) -> int:
+    """Print the rules that fit a folder's names, and what each would produce."""
+    try:
+        suggestions = suggest_unit_patterns(folder, recursive=recursive)
+    except FrameSetError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if not suggestions:
+        print(f"{folder}: no rule fits these names — write one by hand")
+        return 1
+
+    print(f"{folder}: {len(suggestions)} rule(s) fit these names\n")
+    for s in suggestions:
+        print(f"  {s.describe()}")
+        # Printed as typed, not repr'd: the point is to paste it straight back
+        # in, and repr doubles every backslash in a regex.
+        print(f'      --unit-pattern "{s.pattern}"' if s.pattern else
+              "      (no --unit-pattern)")
+        print(f"      e.g. {s.example}")
+        for w in s.warnings:
+            print(f"      ! {w}")
+        print()
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+
+    # Suggesting reads names and writes nothing, so it is the one run that has
+    # no use for a template.
+    if args.suggest:
+        if not args.frames:
+            parser.error("--suggest reads file names, so it needs --frames")
+        return _run_suggest(args.frames, args.recursive)
+    if not args.template:
+        parser.error("the following arguments are required: --template")
 
     template_path = Path(args.template)
     if not template_path.exists():
@@ -168,7 +226,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     processor = BatchProcessor()
     processor.set_progress_callback(lambda current, total, message: print(f"[{current}/{total}] {message}"))
 
-    successful, failed = processor.process_batch(
+    successful, failed, warnings = processor.process_batch(
         image_paths=args.images,
         template=template,
         split_mode=args.split_mode,
@@ -184,10 +242,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         auto_size=args.auto_size,
     )
 
-    print(f"\nDone: {len(successful)} succeeded, {len(failed)} failed.")
-    for path, err in failed:
-        print(f"  FAILED {path}: {err}", file=sys.stderr)
-
+    _report(successful, failed, warnings)
     return 0 if not failed else 2
 
 

@@ -23,6 +23,10 @@ from pathlib import Path
 
 from PIL import Image
 
+from .composition_group import (
+    is_group_slot, is_layer_block_entry, is_sub_group_entry,
+    resolve_source_indices,
+)
 from .image_loader import ImageLoader, MaterialManager
 from .frame_set import FrameSet, FrameScan, scan_frame_folder
 from .gif_builder import GifBuilder
@@ -33,11 +37,80 @@ class BatchProcessingError(Exception):
     pass
 
 
+def _reachable_groups(group_manager, root_gid: int):
+    """The groups a build would actually visit, root first.
+
+    Mirrors GifBuilder._expand_composition_group, including the part that makes
+    a bound group a leaf: while source_pattern is set its entries are kept but
+    not exported, so nothing under it is reached and nothing under it should be
+    reported on.
+    """
+    seen = set()
+    stack = [root_gid]
+    while stack:
+        gid = stack.pop()
+        if gid in seen:
+            continue
+        seen.add(gid)
+        group = group_manager.get_group(gid)
+        if group is None:
+            continue
+        yield group
+        if group.source_pattern:
+            continue
+        for entry in group.entries:
+            if is_sub_group_entry(entry):
+                stack.append(entry.group_id)
+            elif is_layer_block_entry(entry):
+                for timeline in entry.timelines:
+                    for slot in timeline:
+                        if is_group_slot(slot):
+                            stack.append(slot.group_id)
+
+
+def empty_bound_groups(group_manager, root_gid: int,
+                       names: List[str]) -> List[str]:
+    """Which of the reachable bound groups this material set would leave empty.
+
+    A group bound to a glob that matches nothing contributes no frames, and the
+    GIF is written anyway - one animation short, with no error to notice. Over a
+    folder of a couple of hundred units that is the failure that costs the most
+    to find, because the run says it succeeded and the difference is only
+    visible by opening the file. Checked on names alone, so it can be run before
+    a batch as easily as during one.
+    """
+    return [
+        f"group '{g.name}' is bound to '{g.source_pattern}' and no material matches"
+        for g in _reachable_groups(group_manager, root_gid)
+        if g.source_pattern and not resolve_source_indices(g.source_pattern, names)
+    ]
+
+
+def check_material_coverage(template: Dict[str, Any],
+                            names: List[str]) -> List[str]:
+    """empty_bound_groups for a template that has not been imported yet.
+
+    The pre-flight half: what a unit's file names would leave empty, answerable
+    from a scan without loading a single image."""
+    try:
+        group_manager, _ = TemplateManager.import_composition_template(template)
+    except Exception:
+        return []                       # a template this broken fails the build
+    root_gid = group_manager.get_root_group_id()
+    if root_gid is None:
+        return []
+    return empty_bound_groups(group_manager, root_gid, names)
+
+
 class BatchProcessor:
 
     def __init__(self):
         self.progress_callback: Optional[Callable[[int, int, str], None]] = None
         self._cancelled = False
+        # What the last _build_from_materials found wrong with its material set.
+        # Kept on the processor rather than returned so both sources get the
+        # check from the one place that has the real materials.
+        self.last_warnings: List[str] = []
 
     def set_progress_callback(self, callback: Callable[[int, int, str], None]) -> None:
         self.progress_callback = callback
@@ -157,6 +230,10 @@ class BatchProcessor:
         if root_gid is None:
             raise BatchProcessingError("Template has no root group")
 
+        self.last_warnings = empty_bound_groups(
+            group_manager, root_gid,
+            [name for _, name in mm.get_all_materials()])
+
         gif_builder = GifBuilder()
 
         # One size across a batch either crops the tall sources or pads the
@@ -238,14 +315,22 @@ class BatchProcessor:
         output_height: Optional[int] = None,
         auto_size: bool = False,
         recursive: bool = False,
-    ) -> Tuple[List[str], List[Tuple[str, str]]]:
+    ) -> Tuple[List[str], List[Tuple[str, str]], List[Tuple[str, str]]]:
         """Build one GIF per unit found in `folder`.
 
-        Returns (successful_paths, [(unit, error_msg), ...]).
+        Returns (successful_paths, [(unit, error)], [(unit, warning)]).
+
+        A warning is not a third kind of failure: the GIF was written and its
+        path is in successful_paths. It says the file is worth opening - this
+        unit did not fill one of the template's groups, so the output is an
+        animation short rather than wrong, which nothing else would report. One
+        unit naming its clips differently from the rest is the usual cause, and
+        over a hundred units the only way to find it is a list.
         """
         scan: FrameScan = scan_frame_folder(folder, pattern, recursive=recursive)
         successful: List[str] = []
         failed: List[Tuple[str, str]] = []
+        warnings: List[Tuple[str, str]] = []
         total = len(scan.units)
 
         for idx, unit in enumerate(scan.units, 1):
@@ -261,12 +346,13 @@ class BatchProcessor:
                     output_width=output_width, output_height=output_height,
                     auto_size=auto_size,
                 ))
+                warnings.extend((unit.unit, w) for w in self.last_warnings)
                 self._report_progress(idx, total, f"Done {unit.unit}")
             except Exception as e:
                 failed.append((unit.unit, str(e)))
                 self._report_progress(idx, total, f"Failed {unit.unit}: {e}")
 
-        return successful, failed
+        return successful, failed, warnings
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -285,14 +371,17 @@ class BatchProcessor:
         output_width: Optional[int] = None,
         output_height: Optional[int] = None,
         auto_size: bool = False,
-    ) -> Tuple[List[str], List[Tuple[str, str]]]:
+    ) -> Tuple[List[str], List[Tuple[str, str]], List[Tuple[str, str]]]:
         """
         Process multiple images into GIFs with the same template.
 
-        Returns (successful_paths, [(img_path, error_msg), ...]).
+        Returns (successful_paths, [(img_path, error)], [(img_path, warning)]).
+        A warning means the GIF was written but a group of the template found no
+        tile to fill it - see process_frame_folder, which reports the same way.
         """
         successful: List[str] = []
         failed: List[Tuple[str, str]] = []
+        warnings: List[Tuple[str, str]] = []
         total = len(image_paths)
 
         for idx, image_path in enumerate(image_paths, 1):
@@ -316,13 +405,14 @@ class BatchProcessor:
                     output_width, output_height, auto_size,
                 )
                 successful.append(result)
+                warnings.extend((image_path, w) for w in self.last_warnings)
                 self._report_progress(idx, total, f"Done {Path(image_path).name}")
 
             except Exception as e:
                 failed.append((image_path, str(e)))
                 self._report_progress(idx, total, f"Failed {Path(image_path).name}: {e}")
 
-        return successful, failed
+        return successful, failed, warnings
 
     # ─────────────────────────────────────────────────────────────────────────
 

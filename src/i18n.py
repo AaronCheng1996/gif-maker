@@ -298,6 +298,30 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Imported":                          "已匯入",
         "Batch Export Complete":             "批次匯出完成",
         "File Not Found":                    "找不到檔案",
+
+        # ── Batch Export: working out the unit rule ───────────────────────────
+        "Analyse":                           "分析",
+        "Scan":                              "掃描",
+        "Suggestions:":                      "建議規則：",
+        "Read the file names and offer the rules that fit them, each with "
+        "the number of GIFs it would actually produce.":
+            "讀取檔名，列出符合的分組規則，並附上每種規則實際會產生幾個 GIF。",
+        "Pick a folder of frames first.":     "請先選擇影格資料夾。",
+        "No rule fits these names — write one by hand":
+            "沒有規則符合這些檔名 — 請自行輸入",
+        "The whole folder as one GIF":        "整個資料夾合成一個 GIF",
+        "One GIF per numbered sequence":      "每一段編號序列一個 GIF",
+        "Group by the first {n} part(s) of the name":
+            "依檔名開頭的前 {n} 段分組",
+        "{n} GIF(s), {lo}-{hi} frame(s) each":
+            "{n} 個 GIF，每個 {lo}-{hi} 格",
+        ", {n} file(s) skipped":              "，跳過 {n} 個檔案",
+        "{n} file(s) match nothing and will not be exported, e.g. {sample}":
+            "{n} 個檔案不符合規則，不會被輸出，例如 {sample}",
+        "{n} unit(s) hold a single frame, e.g. {sample}":
+            "{n} 個單位只有一格，例如 {sample}",
+        "{n} file(s) have no frame number and may be stills, e.g. {sample}":
+            "{n} 個檔案沒有影格編號，可能是靜態圖，例如 {sample}",
     }
 }
 # fmt: on

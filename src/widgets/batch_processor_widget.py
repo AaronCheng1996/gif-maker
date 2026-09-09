@@ -20,20 +20,21 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QRadioButton, QButtonGroup, QScrollArea, QGridLayout,
                               QCheckBox, QLineEdit, QSplitter)
 from PyQt6.QtCore import pyqtSignal, Qt, QObject, QThread
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QColor
 from PIL import Image
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
 from .theme import AppTheme as _T
 from . import ui
+from ..i18n import tr
 
 
 class _BatchWorker(QObject):
     """Runs one of BatchProcessor's batch methods in a background thread."""
 
     progress = pyqtSignal(int, int, str)          # current, total, message
-    finished = pyqtSignal(list, list)             # successful, failed
+    finished = pyqtSignal(list, list, list)       # successful, failed, warnings
 
     def __init__(self, processor, kwargs: dict, method: str = "process_batch"):
         super().__init__()
@@ -43,10 +44,11 @@ class _BatchWorker(QObject):
 
     def run(self):
         try:
-            successful, failed = getattr(self._processor, self._method)(**self._kwargs)
+            successful, failed, warnings = \
+                getattr(self._processor, self._method)(**self._kwargs)
         except Exception as e:
-            successful, failed = [], [("", str(e))]
-        self.finished.emit(successful, failed)
+            successful, failed, warnings = [], [("", str(e))], []
+        self.finished.emit(successful, failed, warnings)
 
 
 class BatchProcessorWidget(QWidget):
@@ -169,11 +171,46 @@ class BatchProcessorWidget(QWidget):
         )
         self.unit_pattern_edit.editingFinished.connect(self.rescan_frame_folder)
         pattern_row.addWidget(self.unit_pattern_edit, stretch=1)
-        self.rescan_btn = QPushButton("Scan")
+        self.suggest_btn = QPushButton(tr("Analyse"))
+        self.suggest_btn.setMaximumWidth(90)
+        self.suggest_btn.setToolTip(tr(
+            "Read the file names and offer the rules that fit them, each with "
+            "the number of GIFs it would actually produce."))
+        self.suggest_btn.clicked.connect(self.suggest_unit_rules)
+        pattern_row.addWidget(self.suggest_btn)
+        self.rescan_btn = QPushButton(tr("Scan"))
         self.rescan_btn.setMaximumWidth(90)
         self.rescan_btn.clicked.connect(self.rescan_frame_folder)
         pattern_row.addWidget(self.rescan_btn)
         folder_layout.addLayout(pattern_row)
+
+        # Filled by Analyse. Picking an entry writes its regex into the field
+        # above rather than replacing it, so the rule stays one editable thing:
+        # a suggestion is a starting point, not a separate mode.
+        self.suggestion_row = QWidget()
+        suggestion_layout = QHBoxLayout(self.suggestion_row)
+        suggestion_layout.setContentsMargins(0, 0, 0, 0)
+        suggestion_layout.addWidget(QLabel(tr("Suggestions:")))
+        self.suggestion_combo = QComboBox()
+        # Without this a combo asks for the width of its widest item, and these
+        # items are sentences: the panel grew past the window and pushed the
+        # buttons below it out of reach. Ask for a fixed number of characters
+        # instead and let the row's stretch hand it whatever is going spare.
+        # Twelve because that is the most that leaves the folder row above still
+        # the widest thing here, so this row never decides how wide the tab is.
+        self.suggestion_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.suggestion_combo.setMinimumContentsLength(12)
+        self.suggestion_combo.currentIndexChanged.connect(self.apply_suggested_rule)
+        suggestion_layout.addWidget(self.suggestion_combo, stretch=1)
+        self.suggestion_row.setVisible(False)
+        folder_layout.addWidget(self.suggestion_row)
+
+        self.suggestion_warning_label = QLabel()
+        self.suggestion_warning_label.setWordWrap(True)
+        self.suggestion_warning_label.setStyleSheet(f"color: {_T.WARNING};")
+        self.suggestion_warning_label.setVisible(False)
+        folder_layout.addWidget(self.suggestion_warning_label)
 
         self.unit_list = QListWidget()
         self.unit_list.setMaximumHeight(120)
@@ -601,6 +638,79 @@ class BatchProcessorWidget(QWidget):
             self.frames_dir_edit.setText(folder)
             self.rescan_frame_folder()
 
+    def suggest_unit_rules(self):
+        """Offer the rules that fit this folder's names, with what each produces.
+
+        A regex is a hard thing to ask of someone who only wants their frames
+        turned into GIFs, and there is no default that is right twice — so read
+        the names and show the choices, measured rather than guessed. The text
+        field stays authoritative: a suggestion writes into it and can then be
+        edited by hand."""
+        from ..core.frame_set import FrameSetError, suggest_unit_patterns
+
+        folder = self.frames_dir_edit.text().strip()
+        if not folder:
+            QMessageBox.information(self, tr("Analyse"),
+                                    tr("Pick a folder of frames first."))
+            return
+
+        try:
+            self._suggestions = suggest_unit_patterns(folder)
+        except FrameSetError as e:
+            self._suggestions = []
+            self.unit_count_label.setText(str(e))
+            return
+
+        if not self._suggestions:
+            self.suggestion_row.setVisible(False)
+            self.suggestion_warning_label.setVisible(False)
+            self.unit_count_label.setText(
+                tr("No rule fits these names — write one by hand"))
+            return
+
+        self.suggestion_combo.blockSignals(True)
+        self.suggestion_combo.clear()
+        for s in self._suggestions:
+            mark = "⚠ " if s.warnings else ""
+            counts = tr("{n} GIF(s), {lo}-{hi} frame(s) each").format(
+                n=s.units, lo=s.min_frames, hi=s.max_frames)
+            if s.skipped:
+                counts += tr(", {n} file(s) skipped").format(n=s.skipped)
+            # No worked example here: picking an entry scans with it, and the
+            # unit list right below then shows the real names and frame counts,
+            # which is the same answer only truer.
+            self.suggestion_combo.addItem(
+                f"{mark}{tr(s.label.template).format(**s.label.args)}  —  {counts}")
+            self.suggestion_combo.setItemData(
+                self.suggestion_combo.count() - 1,
+                f"{s.pattern or tr('The whole folder as one GIF')}\n{s.example}",
+                Qt.ItemDataRole.ToolTipRole)
+        self.suggestion_combo.setCurrentIndex(0)
+        self.suggestion_combo.blockSignals(False)
+        self._widen_suggestion_popup()
+        self.suggestion_row.setVisible(True)
+        self.apply_suggested_rule(0)
+
+    def _widen_suggestion_popup(self):
+        """Let the open list be as wide as it needs while the closed box is not.
+
+        The two are sized separately, which is the whole trick: the row keeps a
+        modest width so nothing below it is pushed off the panel, and the list
+        you are actually reading from still shows its entries in full."""
+        view = self.suggestion_combo.view()
+        needed = view.sizeHintForColumn(0) + 2 * view.frameWidth() + 24
+        view.setMinimumWidth(min(needed, 900))
+
+    def apply_suggested_rule(self, index: int):
+        """Write the chosen suggestion into the rule field and scan with it."""
+        suggestions = getattr(self, "_suggestions", [])
+        if not 0 <= index < len(suggestions):
+            return
+        chosen = suggestions[index]
+
+        self.unit_pattern_edit.setText(chosen.pattern or "")
+        self.rescan_frame_folder()          # which redraws the warnings too
+
     def rescan_frame_folder(self):
         """Re-read the folder and show the units the rule finds.
 
@@ -625,13 +735,73 @@ class BatchProcessorWidget(QWidget):
             self.update_button_states()
             return
 
-        for unit in self.frame_scan.units:
-            self.unit_list.addItem(QListWidgetItem(
-                f"{unit.unit}  —  {len(unit)} frame(s)   "
-                f"[{unit.paths[0].name} … {unit.paths[-1].name}]"
-            ))
-        self.unit_count_label.setText(self.frame_scan.summary())
+        self._show_rule_warnings()
+        self._render_unit_list(self._coverage_warnings())
         self.update_button_states()
+
+    def _show_rule_warnings(self):
+        """Say what looks wrong about the current grouping, however it was set.
+
+        A rule typed by hand gets this more than a suggested one does, because
+        nothing else has looked at it: 'org1_ 12' quietly dropped, or a
+        background still gathered in as a frame, both read as a clean scan."""
+        from ..core.frame_set import rule_warnings
+
+        notes = ([tr(w.template).format(**w.args)
+                  for w in rule_warnings(self.frame_scan)]
+                 if self.frame_scan else [])
+        self.suggestion_warning_label.setText("\n".join(f"⚠ {n}" for n in notes))
+        self.suggestion_warning_label.setVisible(bool(notes))
+
+    def _coverage_warnings(self) -> Dict[str, List[str]]:
+        """Which units the chosen template would leave a group of unfilled.
+
+        Answerable from file names alone, so it runs at scan time: knowing
+        before the run that twelve units will come out missing their org2 clip
+        is worth more than reading it in the summary afterwards."""
+        if not self.frame_scan or not self.selected_template:
+            return {}
+        from ..core.batch_processor import check_material_coverage
+
+        found: Dict[str, List[str]] = {}
+        for unit in self.frame_scan.units:
+            notes = check_material_coverage(
+                self.selected_template, [p.stem for p in unit.paths])
+            if notes:
+                found[unit.unit] = notes
+        return found
+
+    def _render_unit_list(self, warnings: Optional[Dict[str, List[str]]] = None):
+        """Draw the scanned units, marking the ones with something to check."""
+        warnings = warnings or {}
+        self.unit_list.clear()
+        if not self.frame_scan:
+            return
+
+        for unit in self.frame_scan.units:
+            notes = warnings.get(unit.unit, [])
+            text = (f"{'⚠ ' if notes else ''}{unit.unit}  —  {len(unit)} frame(s)   "
+                    f"[{unit.paths[0].name} … {unit.paths[-1].name}]")
+            if notes:
+                text += f"   ⚠ {'; '.join(notes)}"
+            item = QListWidgetItem(text)
+            if notes:
+                item.setForeground(QColor(_T.WARNING))
+            self.unit_list.addItem(item)
+
+        summary = self.frame_scan.summary()
+        if warnings:
+            summary += f"; {len(warnings)} unit(s) with warnings"
+        self.unit_count_label.setText(summary)
+
+    def _mark_warned_units(self, warnings: List[Tuple[str, str]]):
+        """Keep a run's warnings on screen after its message box is dismissed."""
+        if not self.frame_scan:
+            return
+        by_unit: Dict[str, List[str]] = {}
+        for key, note in warnings:
+            by_unit.setdefault(key, []).append(note)
+        self._render_unit_list(by_unit)
 
     def add_images(self):
         """Add images to the batch list"""
@@ -712,6 +882,11 @@ class BatchProcessorWidget(QWidget):
                     )
                 except Exception as e:
                     self.template_info_label.setText(f"Template info unavailable: {e}")
+
+        # Which units the template leaves a group of unfilled depends on the
+        # template, so the marks in the unit list go stale when it changes.
+        if self.frame_scan:
+            self._render_unit_list(self._coverage_warnings())
 
         self.update_button_states()
         if hasattr(self, '_gen_preview_btn'):
@@ -862,6 +1037,13 @@ class BatchProcessorWidget(QWidget):
         message = f"{units} GIF(s) from {frames} frame(s)"
         if skipped:
             message += f"; {skipped} file(s) skipped by the unit rule"
+
+        # Not a reason to refuse the run — those GIFs build, just short of an
+        # animation — but the one thing worth knowing before spending the time.
+        warned = self._coverage_warnings()
+        if warned:
+            message += (f"; ⚠ {len(warned)} unit(s) leave a group of the "
+                        f"template empty")
         self.show_validation_success(message)
         return True
 
@@ -1074,35 +1256,55 @@ class BatchProcessorWidget(QWidget):
             self.progress_bar.setValue(int(current / total * 100))
         self.progress_label.setText(f"{message} ({current}/{total})")
 
-    def _on_batch_finished(self, successful: list, failed: list):
+    def _on_batch_finished(self, successful: list, failed: list, warnings: list):
         """Called when the background worker finishes."""
         self.set_ui_enabled(True)
         self.progress_bar.setValue(100 if successful else 0)
         self.progress_label.setText("Ready to process")
-        self.show_results(successful, failed)
+        self.show_results(successful, failed, warnings)
         self.batch_complete.emit(len(successful), len(failed))
-    
-    def show_results(self, successful: List[str], failed: List[Tuple[str, str]]):
-        """Show batch processing results"""
-        success_count = len(successful)
-        fail_count = len(failed)
-        
-        message = f"Batch processing complete!\n\n"
-        message += f"✓ Successfully processed: {success_count}\n"
-        message += f"✗ Failed: {fail_count}\n"
-        
+
+    def show_results(self, successful: List[str], failed: List[Tuple[str, str]],
+                     warnings: Optional[List[Tuple[str, str]]] = None):
+        """Show batch processing results.
+
+        Three outcomes, not two. A warning means the GIF was written but a group
+        of the template found nothing to fill it, so that output is one
+        animation short — the failure that costs the most to find, because
+        nothing else about the run looks wrong. The full list goes in the
+        details pane rather than the summary so that thirty of them are still
+        readable, and so it can be copied out and worked through."""
+        warnings = warnings or []
+        warned_keys = {key for key, _ in warnings}
+
+        message = "Batch processing complete!\n\n"
+        message += f"✓ Successfully processed: {len(successful)}\n"
+        if warned_keys:
+            message += f"⚠ Built with warnings: {len(warned_keys)}\n"
+        message += f"✗ Failed: {len(failed)}\n"
+
         if failed:
             message += "\nFailed images:\n"
             for img_path, error in failed[:5]:  # Show first 5
                 message += f"• {Path(img_path).name}: {error}\n"
-            
+
             if len(failed) > 5:
                 message += f"... and {len(failed) - 5} more"
-        
-        if success_count > 0:
-            QMessageBox.information(self, "Batch Processing Complete", message)
-        else:
-            QMessageBox.warning(self, "Batch Processing Complete", message)
+
+        if warned_keys:
+            message += ("\nThe warned outputs were built but are missing part of "
+                        "the composition — see Details.")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Batch Processing Complete")
+        box.setIcon(QMessageBox.Icon.Information if successful
+                    else QMessageBox.Icon.Warning)
+        box.setText(message)
+        if warnings:
+            box.setDetailedText("\n".join(f"{key}: {note}" for key, note in warnings))
+        box.exec()
+
+        self._mark_warned_units(warnings)
     
     def set_ui_enabled(self, enabled: bool):
         """Enable or disable UI elements during processing"""
